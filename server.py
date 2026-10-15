@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import filecmp
 import json
 import os
 import re
@@ -306,6 +307,67 @@ def newest_fetched(tmp: str) -> str | None:
     return max(found, key=os.path.basename, default=None)
 
 
+def is_regular(path: str) -> bool:
+    return os.path.isfile(path) and not os.path.islink(path)
+
+
+def remove_quiet(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def link_identical(prev_path: str, new_path: str) -> int:
+    """Replace new_path with a hardlink to prev_path if both are identical regular files.
+    Returns the bytes saved, or 0 when nothing was linked."""
+    tmp = os.path.join(os.path.dirname(new_path), "." + os.path.basename(new_path) + ".link-tmp")
+    try:
+        if not (is_regular(prev_path) and is_regular(new_path)):
+            return 0
+        size = os.path.getsize(new_path)
+        if os.path.samefile(prev_path, new_path) or size != os.path.getsize(prev_path):
+            return 0
+        if not filecmp.cmp(prev_path, new_path, shallow=False):
+            return 0
+        os.link(prev_path, tmp)
+        os.replace(tmp, new_path)  # atomic: new_path is never missing
+        return size
+    except OSError:  # cross-device, permissions, unsupported FS: keep the file as it is
+        return 0
+    finally:
+        if os.path.lexists(tmp):
+            remove_quiet(tmp)
+
+
+def dedupe_with_previous(previous_dir: str, new_dir: str) -> tuple[int, int]:
+    """Hardlink unchanged .eml and .metadata.json files of new_dir to their twins in previous_dir.
+    Returns (files_linked, bytes_saved). The previous dir is only read."""
+    try:
+        names = os.listdir(new_dir)
+    except OSError:
+        return 0, 0
+    linked = saved = 0
+    for name in names:
+        if not name.endswith((".eml", META_SUFFIX)):
+            continue
+        size = link_identical(os.path.join(previous_dir, name), os.path.join(new_dir, name))
+        if size:
+            linked += 1
+            saved += size
+    return linked, saved
+
+
+def human_size(n: int) -> str:
+    """Byte count as a short German label with 1000-based units, e.g. "1,2 GB"."""
+    size = float(n)
+    for unit in ("B", "KB", "MB"):
+        if size < 1000:
+            return f"{size:.1f} {unit}".replace(".", ",")
+        size /= 1000
+    return f"{size:.1f} GB".replace(".", ",")
+
+
 def _text(body: Json, key: str) -> str:
     value = body.get(key)
     if value is None:
@@ -369,6 +431,7 @@ class Viewer:
 
     def _fetch(self, email: str, password: str, mailbox: str, totp: str) -> None:
         secrets = [s for s in (password, mailbox, totp) if s]
+        previous = self.index.export_dir  # the index about to be replaced
         tmp = None
         try:
             tmp = tempfile.mkdtemp(prefix=".fetch-", dir=self.account_dir)
@@ -381,6 +444,7 @@ class Viewer:
             name = free_name(self.account_dir, os.path.basename(found))
             dest = os.path.join(self.account_dir, name)
             os.rename(found, dest)
+            self._link_previous(previous, dest)
             self._set_index(build_index(dest))
             self._finish("done", export=name)
         except Exception as exc:  # the old index stays in place
@@ -396,6 +460,20 @@ class Viewer:
             for line in proc.stdout:
                 self._log(redact(line.rstrip("\r\n"), secrets))
             return proc.wait()
+
+    def _link_previous(self, previous: str, dest: str) -> None:
+        """Hardlink unchanged mails to the previous export. Failures only cost disk space, so never raise."""
+        if not os.path.isdir(previous):
+            return
+        try:
+            linked, saved = dedupe_with_previous(previous, dest)
+        except Exception as exc:
+            self._log(f"Hardlinks fehlgeschlagen: {exc}")
+            return
+        if linked:
+            self._log(f"Hardlinks: {linked} Dateien, {human_size(saved)} gespart")
+        else:
+            self._log("Hardlinks: keine identischen Dateien")
 
     def _log(self, line: str) -> None:
         with self._lock:

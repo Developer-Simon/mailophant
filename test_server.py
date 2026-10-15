@@ -355,7 +355,7 @@ ABSENT = {"ET_USER_MAILBOX_PASSWORD": None, "ET_TOTP_CODE": None}
 
 # Stand-in for the Proton CLI: checks env and argv, prints its secrets, writes a mail dir.
 FAKE_BODY = '''
-import json, os, sys, time
+import json, os, shutil, sys, time
 
 env = os.environ
 if any(PASSWORD in arg for arg in sys.argv):  # secrets must never be on argv
@@ -371,7 +371,7 @@ if MODE == "fail":
     sys.exit(3)
 if MODE == "sleep":
     time.sleep(1)
-if MODE in ("ok", "sleep"):
+if MODE in ("ok", "sleep", "dup"):
     out = os.path.join(env["ET_DIR"], env["ET_USER_EMAIL"], "mail_20261015T120000")
     os.makedirs(out)
     labels = {"Payload": [{"ID": "0", "Name": "Inbox", "Path": "Inbox", "Color": "#111", "Type": 3}]}
@@ -384,14 +384,19 @@ if MODE in ("ok", "sleep"):
         json.dump(meta, f)
     with open(os.path.join(out, "new_FFFF.eml"), "w", encoding="utf-8") as f:
         f.write("Subject: Frisch\\n\\nHallo\\n")
+        if MODE == "dup":  # unchanged mails, copied from the previous export
+            for name in DUP_FILES:
+                shutil.copy(os.path.join(DUP_FROM, name), out)
 '''
 
 
-def write_fake_cli(path: str, mode: str, expect: dict) -> None:
-    """mode: ok | sleep (ok after 1s) | fail (exit 3) | empty (exit 0, no output)."""
+def write_fake_cli(path: str, mode: str, expect: dict, dup_from: str | None = None) -> None:
+    """mode: ok | sleep (ok after 1s) | dup (ok, plus unchanged mails copied from dup_from)
+    | fail (exit 3) | empty (exit 0, no output)."""
     secrets = [s for s in (PW, expect.get("ET_USER_MAILBOX_PASSWORD"), expect.get("ET_TOTP_CODE")) if s]
     header = (f"#!/usr/bin/env python3\nPASSWORD = {PW!r}\nSECRETS = {secrets!r}\n"
-              f"EXPECT = {expect!r}\nMODE = {mode!r}\n")
+              f"EXPECT = {expect!r}\nMODE = {mode!r}\nDUP_FROM = {dup_from!r}\n"
+              f"DUP_FILES = {[ID_PLAIN + '.eml', ID_PLAIN + '.metadata.json']!r}\n")
     write(path, header + FAKE_BODY)
     os.chmod(path, 0o755)
 
@@ -481,6 +486,117 @@ class ResolveTests(unittest.TestCase):
                 server.parse_fetch_body(bad, "")
 
 
+def snapshot(d: str) -> dict:
+    """Name -> (bytes, inode, mtime) for every entry of d; used to prove a dir was not touched."""
+    out = {}
+    for name in os.listdir(d):
+        st = os.stat(os.path.join(d, name))
+        with open(os.path.join(d, name), "rb") as f:
+            out[name] = (f.read(), st.st_ino, st.st_mtime_ns)
+    return out
+
+
+class DedupeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.prev = os.path.join(self.tmp, "prev")
+        self.new = os.path.join(self.tmp, "new")
+        os.makedirs(self.prev)
+        os.makedirs(self.new)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def pair(self, name, prev_data, new_data=None):
+        """Same filename in both dirs; new_data defaults to prev_data."""
+        write(os.path.join(self.prev, name), prev_data)
+        write(os.path.join(self.new, name), prev_data if new_data is None else new_data)
+
+    def same_inode(self, name):
+        return os.path.samefile(os.path.join(self.prev, name), os.path.join(self.new, name))
+
+    def read(self, d, name):
+        with open(os.path.join(d, name), "rb") as f:
+            return f.read()
+
+    def test_identical_mails_are_hardlinked(self):
+        eml, meta_js = plain_eml(), b'{"Payload": {"ID": "a"}}'
+        self.pair("a.eml", eml)
+        self.pair("a.metadata.json", meta_js)
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (2, len(eml) + len(meta_js)))
+        for name in ("a.eml", "a.metadata.json"):
+            self.assertTrue(self.same_inode(name))
+            self.assertEqual(os.stat(os.path.join(self.new, name)).st_nlink, 2)
+        self.assertEqual(self.read(self.new, "a.eml"), eml)
+        self.assertEqual(self.read(self.new, "a.metadata.json"), meta_js)
+
+    def test_changed_metadata_not_linked(self):
+        self.pair("a.metadata.json", b'{"Unread": 1}', b'{"Unread": 0}')  # same size, other bytes
+        self.pair("b.metadata.json", b'{"Unread": 1}', b'{"Unread": 1, "LabelIDs": ["0"]}')  # other size
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertFalse(self.same_inode("a.metadata.json"))
+        self.assertFalse(self.same_inode("b.metadata.json"))
+        self.assertEqual(self.read(self.new, "a.metadata.json"), b'{"Unread": 0}')
+
+    def test_new_only_file_untouched(self):
+        write(os.path.join(self.new, "c.eml"), b"new mail")
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(os.stat(os.path.join(self.new, "c.eml")).st_nlink, 1)
+        self.assertEqual(self.read(self.new, "c.eml"), b"new mail")
+        self.assertFalse(os.path.exists(os.path.join(self.prev, "c.eml")))
+
+    def test_labels_and_other_files_untouched(self):
+        self.pair("labels.json", b'{"Payload": []}')
+        self.pair("notes.txt", b"same bytes")
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertFalse(self.same_inode("labels.json"))
+        self.assertFalse(self.same_inode("notes.txt"))
+
+    def test_previous_dir_not_modified(self):
+        self.pair("a.eml", plain_eml())
+        self.pair("a.metadata.json", b"{}")
+        write(os.path.join(self.prev, "old_only.eml"), b"gone")
+        before = snapshot(self.prev)
+        server.dedupe_with_previous(self.prev, self.new)
+        self.assertEqual(snapshot(self.prev), before)
+
+    def test_already_linked_not_counted_twice(self):
+        eml = plain_eml()
+        self.pair("a.eml", eml)
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (1, len(eml)))
+        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+
+    def test_oserror_on_link_skips_file_and_leaves_no_temp(self):
+        eml = plain_eml()
+        self.pair("a.eml", eml)
+        self.pair("a.metadata.json", b"{}")
+        before = sorted(os.listdir(self.new))
+        with mock.patch.object(server.os, "link", side_effect=OSError("cross-device")):
+            self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(sorted(os.listdir(self.new)), before)
+        self.assertEqual(self.read(self.new, "a.eml"), eml)
+        self.assertFalse(self.same_inode("a.eml"))
+
+    def test_oserror_on_replace_cleans_temp(self):
+        eml = plain_eml()
+        self.pair("a.eml", eml)
+        before = sorted(os.listdir(self.new))
+        with mock.patch.object(server.os, "replace", side_effect=OSError("busy")):
+            self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(sorted(os.listdir(self.new)), before)
+        self.assertEqual(self.read(self.new, "a.eml"), eml)
+        self.assertEqual(os.stat(os.path.join(self.new, "a.eml")).st_nlink, 1)
+
+    def test_missing_previous_dir_logs_nothing(self):
+        viewer = server.Viewer(server.Index(self.new, [], {}), self.tmp, None)
+        viewer._link_previous(os.path.join(self.tmp, "gone"), self.new)
+        self.assertEqual(viewer.status()["log"], [])
+
+    def test_human_size(self):
+        self.assertEqual(server.human_size(1_200_000_000), "1,2 GB")
+        self.assertEqual(server.human_size(561_000), "561,0 KB")
+
+
 class FetchTests(unittest.TestCase):
     """Fetch endpoints. Each test gets its own account dir and server, since fetches swap the index."""
 
@@ -500,12 +616,12 @@ class FetchTests(unittest.TestCase):
         finally:
             shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def serve(self, mode="ok", expect=ABSENT, account=None, cli="fake"):
+    def serve(self, mode="ok", expect=ABSENT, account=None, cli="fake", dup_from=None):
         """cli="fake" writes a stand-in CLI; None lets the server auto-detect; a path is used as is."""
         if cli == "fake":
             cli = os.path.join(self.tmp, "bin", CLI_NAME)
             os.makedirs(os.path.dirname(cli), exist_ok=True)
-            write_fake_cli(cli, mode, expect)
+            write_fake_cli(cli, mode, expect, dup_from)
         export = os.path.join(account or self.account, OLD)
         with contextlib.redirect_stderr(io.StringIO()):
             self.srv = server.make_server(export, 0, self.tmp, cli=cli)
@@ -592,6 +708,28 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertIn("error", data)
         self.assertEqual(self.wait_fetch()["state"], "done")
+
+    def test_unchanged_mails_hardlinked_into_new_export(self):
+        self.serve(mode="dup", dup_from=os.path.join(self.account, OLD))
+        self.post({"password": PW})
+        st = self.wait_fetch()
+        self.assertEqual(st["state"], "done")
+        old_eml = os.path.join(self.account, OLD, ID_PLAIN + ".eml")
+        new_eml = os.path.join(self.account, NEW, ID_PLAIN + ".eml")
+        self.assertTrue(os.path.samefile(old_eml, new_eml))
+        self.assertEqual(os.stat(os.path.join(self.account, NEW, "new_FFFF.eml")).st_nlink, 1)
+        self.assertTrue(any(line.startswith("Hardlinks:") for line in st["log"]), st["log"])
+        _, msgs = self.get("/api/messages")
+        self.assertEqual(sorted(m["id"] for m in msgs["messages"]), sorted([ID_PLAIN, "new_FFFF"]))
+
+    def test_dedupe_failure_does_not_fail_fetch(self):
+        self.serve()
+        with mock.patch.object(server, "dedupe_with_previous", side_effect=RuntimeError("boom")):
+            self.post({"password": PW})
+            st = self.wait_fetch()
+        self.assertEqual((st["state"], st["export"]), ("done", NEW))
+        self.assertTrue(any(line.startswith("Hardlinks") for line in st["log"]), st["log"])
+        self.assertEqual(self.get("/api/messages")[1]["total"], 1)
 
     def test_bad_origin_or_host_403(self):
         self.serve()
