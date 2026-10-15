@@ -89,6 +89,25 @@ button, input { font: inherit; color: inherit; }
 #m-body iframe { display: block; width: 100%; min-height: 300px; border: 0; border-radius: 8px; background: #ffffff; }
 #m-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: inherit; }
 
+/* ---------- Fetch (Abruf) ---------- */
+#fetch-area { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.fetch-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--panel); font-weight: 600; cursor: pointer; }
+.fetch-btn.busy { background: var(--hover); color: var(--muted); border-color: var(--border); }
+.stand { font-size: 12px; padding: 0 2px; }
+#fetch-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
+#fetch-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+#fetch-dialog h2 { font-size: 16px; margin: 0 0 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.field input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.hint { color: var(--muted); font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.btn { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 600; }
+.btn:disabled { opacity: .6; cursor: default; }
+#fetch-status { margin: 0 0 8px; }
+#fetch-log { margin: 0; height: 240px; max-height: 40vh; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- Narrow screens: stack the three panes ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
@@ -106,6 +125,10 @@ button, input { font: inherit; color: inherit; }
   <aside id="folders">
     <h2>Ordner</h2>
     <ul id="folder-list"></ul>
+    <div id="fetch-area" hidden>
+      <button id="fetch-btn" class="fetch-btn" type="button">Abrufen</button>
+      <div id="stand" class="muted stand"></div>
+    </div>
   </aside>
 
   <section id="list-pane">
@@ -137,6 +160,36 @@ button, input { font: inherit; color: inherit; }
     </article>
   </main>
 </div>
+
+<dialog id="fetch-dialog" aria-labelledby="fetch-title">
+  <h2 id="fetch-title">Mails abrufen</h2>
+  <div id="fetch-warn" class="warn" role="alert" hidden></div>
+
+  <form id="fetch-form">
+    <label class="field"><span>E-Mail</span>
+      <input name="email" type="email" autocomplete="username"></label>
+    <label class="field"><span>Passwort</span>
+      <input name="password" type="password" required autocomplete="current-password"></label>
+    <label class="field"><span>Mailbox-Passwort</span>
+      <input name="mailbox_password" type="password" autocomplete="off">
+      <span class="hint">nur bei 2-Passwort-Modus</span></label>
+    <label class="field"><span>2FA-Code (optional)</span>
+      <input name="totp" inputmode="numeric" autocomplete="one-time-code"></label>
+    <div class="actions">
+      <button id="fetch-cancel" class="btn" type="button">Abbrechen</button>
+      <button class="btn primary" type="submit">Abrufen starten</button>
+    </div>
+  </form>
+
+  <div id="fetch-progress" hidden>
+    <p id="fetch-status" class="muted">Abruf läuft…</p>
+    <pre id="fetch-log"></pre>
+    <div class="actions">
+      <button id="fetch-retry" class="btn" type="button" hidden>Erneut versuchen</button>
+      <button id="fetch-close" class="btn" type="button">Schließen</button>
+    </div>
+  </div>
+</dialog>
 
 <script>
 (() => {
@@ -219,7 +272,9 @@ const state = {
 const FRAME_HEAD = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><base target="_blank"><style>body{font-family:sans-serif;margin:12px;word-wrap:break-word}img{max-width:100%;height:auto}</style>`;
 
 /* ---------- Folders ---------- */
-async function loadFolders() {
+// keep: after a fetch, stay in the current folder if it still exists.
+async function loadFolders(keep = false) {
+  const prev = state.folder;
   try {
     state.folders = await api('/api/folders');
   } catch (e) {
@@ -227,6 +282,10 @@ async function loadFolders() {
     return;
   }
   renderFolders();
+  if (keep && state.folders.some((f) => f.id === prev)) {
+    selectFolder(prev);
+    return;
+  }
   const inbox = state.folders.find((f) => (f.name || '').toLowerCase() === 'inbox') || state.folders[0];
   selectFolder(inbox ? inbox.id : null);
 }
@@ -417,6 +476,206 @@ function fitFrame(frame) {
   } catch (_) { /* keep min-height */ }
 }
 
+/* ---------- Fetch (Abruf) ---------- */
+const FETCH_POLL_MS = 1000;
+let fetchTimer = 0;
+let closeTimer = 0;
+
+// "mail_20261015_224804" -> "15.10.2026, 22:48"; any other name is shown as is.
+function standText(name) {
+  const m = /^mail_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(name || '');
+  if (!m) return name || '';
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  return Number.isNaN(d.getTime()) ? name : d.toLocaleString('de-DE', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+// Returns true when the fetch feature is available on the server.
+async function loadConfig() {
+  try {
+    state.config = await api('/api/config');
+  } catch (_) {
+    state.config = null;
+  }
+  const ok = Boolean(state.config && state.config.fetch_available);
+  $('fetch-area').hidden = !ok;
+  if (ok) $('stand').textContent = state.config.export ? `Stand: ${standText(state.config.export)}` : '';
+  return ok;
+}
+
+function setFetchBusy(busy) {
+  const btn = $('fetch-btn');
+  btn.textContent = busy ? 'Abruf läuft…' : 'Abrufen';
+  btn.classList.toggle('busy', busy);
+}
+
+const progressVisible = () => !$('fetch-progress').hidden;
+
+function showForm() {
+  $('fetch-progress').hidden = true;
+  $('fetch-form').hidden = false;
+}
+
+function showProgress() {
+  $('fetch-form').hidden = true;
+  $('fetch-progress').hidden = false;
+  $('fetch-retry').hidden = true;
+  $('fetch-status').textContent = 'Abruf läuft…';
+}
+
+function showWarn(msg) {
+  $('fetch-warn').textContent = msg || '';
+  $('fetch-warn').hidden = !msg;
+}
+
+function renderLog(st) {
+  const pre = $('fetch-log');
+  pre.textContent = (st.log || []).join('\n');
+  pre.scrollTop = pre.scrollHeight;
+}
+
+// Form starts empty except for the email address; secrets are never kept.
+function resetFetchForm() {
+  const f = $('fetch-form');
+  f.reset();
+  f.elements.email.value = state.config?.email || '';
+}
+
+function clearSecrets() {
+  const f = $('fetch-form');
+  f.elements.password.value = '';
+  f.elements.mailbox_password.value = '';
+  f.elements.totp.value = '';
+}
+
+// Reads the status once and reacts. While the dialog shows progress, it keeps polling.
+async function checkFetchStatus() {
+  clearTimeout(fetchTimer);
+  fetchTimer = 0;
+  const dlg = $('fetch-dialog');
+  let st;
+  try {
+    st = await api('/api/fetch/status');
+  } catch (_) {
+    if (dlg.open && progressVisible()) fetchTimer = setTimeout(checkFetchStatus, FETCH_POLL_MS);
+    return;
+  }
+
+  if (st.state === 'running') {
+    setFetchBusy(true);
+    if (dlg.open) {
+      if (!progressVisible()) showProgress();
+      renderLog(st);
+      fetchTimer = setTimeout(checkFetchStatus, FETCH_POLL_MS);
+    }
+    return;
+  }
+
+  setFetchBusy(false);
+  if (!dlg.open || !progressVisible()) {
+    // Not watching the run: only refresh stale data if a newer export exists.
+    if (st.state === 'done' && st.export && st.export !== state.config?.export) refreshAfterFetch();
+    return;
+  }
+
+  renderLog(st);
+  if (st.state === 'done') {
+    $('fetch-status').textContent = 'Fertig – neue Mails geladen';
+    showWarn('');
+    refreshAfterFetch();
+    clearTimeout(closeTimer);
+    closeTimer = setTimeout(closeFetchDialog, 1500);
+  } else if (st.state === 'error') {
+    $('fetch-status').textContent = 'Abruf fehlgeschlagen.';
+    showWarn(st.message || 'Der Abruf ist fehlgeschlagen.');
+    $('fetch-retry').hidden = false;
+  } else {
+    showForm(); // idle: nothing is running any more
+  }
+}
+
+async function refreshAfterFetch() {
+  await loadConfig();
+  await loadFolders(true);
+}
+
+function openFetchDialog() {
+  clearTimeout(closeTimer);
+  closeTimer = 0;
+  resetFetchForm();
+  showWarn('');
+  showForm();
+  const dlg = $('fetch-dialog');
+  if (!dlg.open) dlg.showModal();
+  checkFetchStatus(); // switches to progress if a run is already going
+}
+
+function closeFetchDialog() {
+  clearTimeout(closeTimer);
+  closeTimer = 0;
+  $('fetch-dialog').close();
+}
+
+$('fetch-btn').addEventListener('click', openFetchDialog);
+$('fetch-cancel').addEventListener('click', closeFetchDialog);
+$('fetch-close').addEventListener('click', closeFetchDialog);
+
+$('fetch-dialog').addEventListener('close', () => {
+  clearTimeout(fetchTimer);
+  fetchTimer = 0;
+  clearTimeout(closeTimer);
+  closeTimer = 0;
+  clearSecrets();
+});
+
+$('fetch-retry').addEventListener('click', () => {
+  showWarn('');
+  resetFetchForm();
+  showForm();
+});
+
+$('fetch-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.currentTarget;
+  const submit = f.querySelector('button[type="submit"]');
+  const body = { email: f.elements.email.value.trim(), password: f.elements.password.value };
+  const mailboxPw = f.elements.mailbox_password.value;
+  const totp = f.elements.totp.value.trim();
+  if (mailboxPw) body.mailbox_password = mailboxPw;
+  if (totp) body.totp = totp;
+
+  showWarn('');
+  submit.disabled = true;
+  const req = fetch('/api/fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  clearSecrets();
+
+  let res;
+  let data = null;
+  try {
+    res = await req;
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    submit.disabled = false;
+    showWarn(`Abruf konnte nicht gestartet werden (${err.message}).`);
+    return;
+  }
+  submit.disabled = false;
+
+  if (res.status === 202 || res.status === 409) {
+    // 409: a run is already going, so show its progress.
+    setFetchBusy(true);
+    showProgress();
+    checkFetchStatus();
+  } else {
+    showWarn((data && data.error) || `Fehler ${res.status}`);
+  }
+});
+
 /* ---------- Events ---------- */
 $('more').addEventListener('click', () => {
   if (!state.loading) loadPage(false);
@@ -442,6 +701,7 @@ for (const b of document.querySelectorAll('#m-toggle button')) {
 
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if ($('fetch-dialog').open) return; // no list navigation behind the modal dialog
   const t = e.target;
   if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
@@ -450,6 +710,7 @@ document.addEventListener('keydown', (e) => {
 
 /* ---------- Start ---------- */
 loadFolders();
+loadConfig().then((ok) => { if (ok) checkFetchStatus(); });
 })();
 </script>
 </body>

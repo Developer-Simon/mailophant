@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from email.header import Header
 from email.mime.application import MIMEApplication
@@ -16,6 +17,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
+from unittest import mock
 from urllib.parse import quote
 
 import server
@@ -104,8 +106,8 @@ def write_json(path, obj):
     write(path, json.dumps(obj, ensure_ascii=False))
 
 
-def make_export(root: str) -> str:
-    export = os.path.join(root, "export")
+def make_export(root: str, name: str = "export") -> str:
+    export = os.path.join(root, name)
     os.makedirs(export)
     write_json(os.path.join(export, "labels.json"), LABELS)
     mails = {
@@ -339,6 +341,328 @@ class SecurityTests(Base):
 
     def test_bound_to_loopback(self):
         self.assertEqual(self.srv.server_address[0], "127.0.0.1")
+
+
+ACCOUNT = "simon.test@example.test"
+OLD = "mail_20260101T000000"
+NEW = "mail_20261015T120000"
+CLI_NAME = "proton-mail-export-cli"
+PW = "Hunter2-PW"
+MB = "mailbox-Pass9"
+TOTP = "481516"
+FULL = {"ET_USER_MAILBOX_PASSWORD": MB, "ET_TOTP_CODE": TOTP}
+ABSENT = {"ET_USER_MAILBOX_PASSWORD": None, "ET_TOTP_CODE": None}
+
+# Stand-in for the Proton CLI: checks env and argv, prints its secrets, writes a mail dir.
+FAKE_BODY = '''
+import json, os, sys, time
+
+env = os.environ
+if any(PASSWORD in arg for arg in sys.argv):  # secrets must never be on argv
+    sys.exit(9)
+if env.get("ET_OPERATION") != "backup" or env.get("ET_TELEMETRY_OFF") != "1":
+    sys.exit(8)
+for key, want in EXPECT.items():  # None means the variable must be absent
+    if env.get(key) != want:
+        sys.exit(7)
+print("login", env["ET_USER_EMAIL"], *SECRETS, flush=True)
+if MODE == "fail":
+    print("login failed", file=sys.stderr)
+    sys.exit(3)
+if MODE == "sleep":
+    time.sleep(1)
+if MODE in ("ok", "sleep"):
+    out = os.path.join(env["ET_DIR"], env["ET_USER_EMAIL"], "mail_20261015T120000")
+    os.makedirs(out)
+    labels = {"Payload": [{"ID": "0", "Name": "Inbox", "Path": "Inbox", "Color": "#111", "Type": 3}]}
+    meta = {"Version": 1, "Payload": {"ID": "new_FFFF", "LabelIDs": ["0"], "Subject": "Frisch",
+            "Sender": {"Name": "Neu", "Address": "neu@example.test"}, "ToList": [],
+            "Time": 1800000000, "Unread": 1, "NumAttachments": 0}}
+    with open(os.path.join(out, "labels.json"), "w", encoding="utf-8") as f:
+        json.dump(labels, f)
+    with open(os.path.join(out, "new_FFFF.metadata.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    with open(os.path.join(out, "new_FFFF.eml"), "w", encoding="utf-8") as f:
+        f.write("Subject: Frisch\\n\\nHallo\\n")
+'''
+
+
+def write_fake_cli(path: str, mode: str, expect: dict) -> None:
+    """mode: ok | sleep (ok after 1s) | fail (exit 3) | empty (exit 0, no output)."""
+    secrets = [s for s in (PW, expect.get("ET_USER_MAILBOX_PASSWORD"), expect.get("ET_TOTP_CODE")) if s]
+    header = (f"#!/usr/bin/env python3\nPASSWORD = {PW!r}\nSECRETS = {secrets!r}\n"
+              f"EXPECT = {expect!r}\nMODE = {mode!r}\n")
+    write(path, header + FAKE_BODY)
+    os.chmod(path, 0o755)
+
+
+def request(port, method, path, body=None, headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    hdrs = {"Host": f"127.0.0.1:{port}", **(headers or {})}
+    conn.request(method, path, body=body, headers=hdrs)
+    resp = conn.getresponse()
+    data = resp.read()
+    conn.close()
+    return resp.status, json.loads(data)
+
+
+class ResolveTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_newest_mail_dir_with_labels_wins(self):
+        account = os.path.join(self.tmp, "acct@x.test")
+        make_export(account, "mail_20250101T000000")
+        make_export(account, "mail_20260101T000000")
+        os.makedirs(os.path.join(account, "mail_20270101T000000"))  # no labels.json: skipped
+        os.makedirs(os.path.join(account, ".fetch-abc"))
+        self.assertEqual(server.resolve_mail_dir(account), os.path.join(account, "mail_20260101T000000"))
+
+    def test_mail_dir_used_as_is(self):
+        mail = make_export(self.tmp, "mail_20260101T000000")
+        self.assertEqual(server.resolve_mail_dir(mail), mail)
+        self.assertEqual(server.account_dir_of(mail), self.tmp)
+        plain = make_export(self.tmp)  # not named mail_*: the dir is its own account dir
+        self.assertEqual(server.account_dir_of(plain), plain)
+
+    def test_account_dir_of_account(self):
+        account = os.path.join(self.tmp, "acct@x.test")
+        self.assertEqual(server.account_dir_of(account), account)
+
+    def test_no_export_raises(self):
+        with self.assertRaises(ValueError):
+            server.resolve_mail_dir(self.tmp)
+        with self.assertRaises(ValueError):
+            server.resolve_mail_dir(os.path.join(self.tmp, "missing"))
+
+    def test_find_cli_levels(self):
+        root = self.tmp
+        deep = os.path.join(root, "a", "b", "c", "d", "acct@x")
+        near = os.path.join(root, "a", "b", "acct@x")
+        os.makedirs(os.path.join(root, "a", "b"))
+        cli = os.path.join(root, CLI_NAME)
+        write(cli, "#!/bin/sh\n")
+        os.chmod(cli, 0o755)
+        write(os.path.join(root, "a", "b", CLI_NAME), "not executable")  # skipped
+        self.assertEqual(server.find_cli(near), cli)
+        self.assertIsNone(server.find_cli(deep))
+
+    def test_free_name(self):
+        os.makedirs(os.path.join(self.tmp, "mail_1"))
+        os.makedirs(os.path.join(self.tmp, "mail_1_1"))
+        self.assertEqual(server.free_name(self.tmp, "mail_1"), "mail_1_2")
+        self.assertEqual(server.free_name(self.tmp, "mail_2"), "mail_2")
+
+    def test_redact(self):
+        self.assertEqual(server.redact("a pw b pw", ["pw"]), "a *** b ***")
+        self.assertEqual(server.redact("abc", ["", None]), "abc")
+        self.assertEqual(server.redact("xabcx", ["abc", "xabcx"]), "***")
+
+    def test_cli_env_only_sets_nonempty_secrets(self):
+        with mock.patch.dict(os.environ, {"ET_TOTP_CODE": "1", "ET_USER_MAILBOX_PASSWORD": "old"}):
+            env = server.cli_env("a@b.test", "/t", PW, "", "")
+        self.assertNotIn("ET_TOTP_CODE", env)
+        self.assertNotIn("ET_USER_MAILBOX_PASSWORD", env)
+        self.assertEqual((env["ET_OPERATION"], env["ET_DIR"], env["ET_TELEMETRY_OFF"]),
+                         ("backup", "/t", "1"))
+        self.assertEqual(env["ET_USER_PASSWORD"], PW)
+
+    def test_parse_fetch_body(self):
+        raw = json.dumps({"password": PW, "totp": " 123 "}).encode()
+        self.assertEqual(server.parse_fetch_body(raw, "def@x.test"), ("def@x.test", PW, "", "123"))
+        for bad, reason in ((b"{x", "invalid JSON body"), (b"[]", "body must be a JSON object"),
+                            (b'{"email": "a@b"}', "missing password"),
+                            (b'{"password": "p"}', "missing email"),
+                            (b'{"password": "p", "email": "../x"}', "invalid email")):
+            with self.assertRaisesRegex(ValueError, reason):
+                server.parse_fetch_body(bad, "")
+
+
+class FetchTests(unittest.TestCase):
+    """Fetch endpoints. Each test gets its own account dir and server, since fetches swap the index."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.account = os.path.join(self.tmp, ACCOUNT)
+        make_export(self.account, OLD)
+        self.old_files = sorted(os.listdir(os.path.join(self.account, OLD)))
+        self.srv = None
+
+    def tearDown(self):
+        try:
+            if self.srv is not None:
+                self.wait_fetch(("idle", "done", "error"))
+                self.srv.shutdown()
+                self.srv.server_close()
+        finally:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def serve(self, mode="ok", expect=ABSENT, account=None, cli="fake"):
+        """cli="fake" writes a stand-in CLI; None lets the server auto-detect; a path is used as is."""
+        if cli == "fake":
+            cli = os.path.join(self.tmp, "bin", CLI_NAME)
+            os.makedirs(os.path.dirname(cli), exist_ok=True)
+            write_fake_cli(cli, mode, expect)
+        export = os.path.join(account or self.account, OLD)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.srv = server.make_server(export, 0, self.tmp, cli=cli)
+        self.port = self.srv.server_port
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def get(self, path):
+        return request(self.port, "GET", path)
+
+    def post(self, body=None, origin="same", host=None, raw=None):
+        headers = {"Content-Type": "application/json", "Host": host or f"127.0.0.1:{self.port}"}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{self.port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        data = raw if raw is not None else json.dumps(body).encode("utf-8")
+        return request(self.port, "POST", "/api/fetch", data, headers)
+
+    def wait_fetch(self, states=("done", "error"), timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            _, st = self.get("/api/fetch/status")
+            if st["state"] in states:
+                return st
+            if time.monotonic() > deadline:
+                self.fail(f"fetch still {st['state']} after {timeout}s")
+            time.sleep(0.02)
+
+    def test_status_idle_initially(self):
+        self.serve()
+        _, st = self.get("/api/fetch/status")
+        self.assertEqual(st, {"state": "idle", "log": [], "message": None, "export": None, "started": None})
+
+    def test_success_swaps_index(self):
+        self.serve(expect=FULL)
+        status, data = self.post({"password": PW, "mailbox_password": MB, "totp": TOTP})
+        self.assertEqual((status, data), (202, {"state": "running"}))
+        st = self.wait_fetch()
+        self.assertEqual(st["state"], "done")
+        self.assertEqual(st["export"], NEW)
+        self.assertIsNone(st["message"])
+        self.assertIsInstance(st["started"], int)
+        # the CLI ran (and its argv/env checks passed) with the email taken from /api/config
+        self.assertEqual(self.get("/api/config")[1]["export"], NEW)
+        _, msgs = self.get("/api/messages")
+        self.assertEqual(msgs["total"], 1)
+        self.assertEqual(msgs["messages"][0]["id"], "new_FFFF")
+        self.assertTrue(os.path.isdir(os.path.join(self.account, NEW)))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.account, OLD))), self.old_files)
+        self.assertEqual([n for n in os.listdir(self.account) if n.startswith(".fetch-")], [])
+
+    def test_secrets_redacted_in_status(self):
+        self.serve(expect=FULL)
+        self.post({"password": PW, "mailbox_password": MB, "totp": TOTP})
+        st = self.wait_fetch()
+        text = json.dumps(st, ensure_ascii=False)
+        for secret in (PW, MB, TOTP):
+            self.assertNotIn(secret, text)
+        self.assertTrue(any(line.startswith("login ") and "***" in line for line in st["log"]), st["log"])
+
+    def test_failing_cli_keeps_old_index(self):
+        self.serve(mode="fail")
+        self.assertEqual(self.post({"password": PW})[0], 202)
+        st = self.wait_fetch()
+        self.assertEqual((st["state"], st["message"], st["export"]), ("error", "CLI exited with code 3", None))
+        self.assertIn("login failed", st["log"])
+        self.assertNotIn(PW, json.dumps(st))
+        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
+        self.assertEqual(self.get("/api/messages")[1]["total"], 4)
+        self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
+        self.assertEqual([n for n in os.listdir(self.account) if n.startswith(".fetch-")], [])
+
+    def test_cli_without_mail_output_is_error(self):
+        self.serve(mode="empty")
+        self.post({"password": PW})
+        st = self.wait_fetch()
+        self.assertEqual((st["state"], st["message"]), ("error", "CLI produced no mail export"))
+        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
+
+    def test_second_fetch_while_running_is_409(self):
+        self.serve(mode="sleep")
+        self.assertEqual(self.post({"password": PW})[0], 202)
+        status, data = self.post({"password": PW})
+        self.assertEqual(status, 409)
+        self.assertIn("error", data)
+        self.assertEqual(self.wait_fetch()["state"], "done")
+
+    def test_bad_origin_or_host_403(self):
+        self.serve()
+        cases = [
+            {"origin": None},
+            {"origin": "http://evil.example"},
+            {"origin": f"http://127.0.0.1:{self.port + 1}"},
+            {"origin": f"https://127.0.0.1:{self.port}"},
+            {"host": f"evil.example:{self.port}"},
+        ]
+        for kwargs in cases:
+            status, data = self.post({"password": PW}, **kwargs)
+            self.assertEqual(status, 403, kwargs)
+            self.assertIn("error", data)
+        self.assertEqual(self.get("/api/fetch/status")[1]["state"], "idle")
+
+    def test_localhost_origin_allowed(self):
+        self.serve()
+        status, _ = self.post({"password": PW}, origin=f"http://localhost:{self.port}")
+        self.assertEqual(status, 202)
+        self.assertEqual(self.wait_fetch()["state"], "done")
+
+    def test_bad_requests_400(self):
+        self.serve()
+        cases = [
+            {"email": ACCOUNT},
+            {"password": ""},
+        ]
+        for body in cases:
+            status, data = self.post(body)
+            self.assertEqual(status, 400, body)
+            self.assertIn("error", data)
+        for raw in (b"{not json", b"[]", json.dumps({"password": PW, "totp": "1" * 70000}).encode()):
+            status, data = self.post(raw=raw)
+            self.assertEqual(status, 400)
+            self.assertIn("error", data)
+        self.assertEqual(self.get("/api/fetch/status")[1]["state"], "idle")
+
+    def test_missing_email_400_without_at_in_account_name(self):
+        plain = os.path.join(self.tmp, "plain")
+        make_export(plain, OLD)
+        self.serve(account=plain)
+        _, cfg = self.get("/api/config")
+        self.assertEqual(cfg["email"], "")
+        self.assertTrue(cfg["fetch_available"])
+        status, data = self.post({"password": PW})
+        self.assertEqual(status, 400)
+        self.assertIn("missing email", data["error"])
+
+    def test_no_cli_404(self):
+        self.serve(cli="/nonexistent/" + CLI_NAME)
+        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
+        status, data = self.post({"password": PW})
+        self.assertEqual(status, 404)
+        self.assertIn("error", data)
+
+    def test_config_fields(self):
+        self.serve()
+        _, cfg = self.get("/api/config")
+        self.assertEqual(cfg, {"fetch_available": True, "email": ACCOUNT, "export": OLD})
+
+    def test_auto_detect_cli_next_to_account_dir(self):
+        cli = os.path.join(self.tmp, CLI_NAME)  # parent of the account dir
+        write(cli, "#!/bin/sh\n")
+        os.chmod(cli, 0o755)
+        self.serve(cli=None)
+        self.assertTrue(self.get("/api/config")[1]["fetch_available"])
+
+    def test_auto_detect_none_without_cli(self):
+        self.serve(cli=None)  # nothing near the account dir (the tmp dir's ancestors have no CLI)
+        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
 
 
 if __name__ == "__main__":
