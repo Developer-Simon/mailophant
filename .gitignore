@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 .superpowers/
-.docs/.claude/worktrees/
+.docs/
+.claude/worktrees/
+.venv/

@@ -36,10 +36,26 @@ button, input { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
 
 /* ---------- Layout ---------- */
-.app { display: grid; grid-template-columns: 200px minmax(260px, 360px) 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 52px 200px minmax(260px, 360px) 1fr; height: 100vh; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #folders, #list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); overflow: hidden; }
 #list-pane { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
 #reader { min-width: 0; min-height: 0; background: var(--panel); overflow: auto; padding: 20px 24px; }
+
+/* Source rail */
+#rail { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; background: var(--bg); border-right: 1px solid var(--border); min-height: 0; overflow: auto; }
+#rail-sources { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#rail button { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: none; cursor: pointer; flex: none; }
+#rail button:hover { background: var(--hover); }
+#rail button[aria-current="true"] { background: var(--sel); box-shadow: inset 0 0 0 2px var(--accent); }
+#rail button.unavailable { opacity: .4; }
+#rail-add, #rail-settings { font-size: 20px; color: var(--muted); }
+#rail-settings { margin-top: auto; }
+.src-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; color: #ffffff; font-weight: 700; font-size: 13px; line-height: 1; object-fit: cover; user-select: none; }
+.src-icon.glyph { background: none; color: inherit; font-size: 20px; font-weight: 400; }
+.src-icon.all { background: var(--accent); color: var(--panel); font-size: 18px; }
+.src-icon.list { width: 16px; height: 16px; border-radius: 4px; font-size: 8px; }
+.src-icon.list.glyph { font-size: 12px; }
 
 /* Folders */
 #folders { padding: 12px 8px; }
@@ -61,7 +77,8 @@ button, input { font: inherit; color: inherit; }
 .msg { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
 .msg:hover { background: var(--hover); }
 .msg.selected { background: var(--sel); }
-.msg .row { display: flex; align-items: baseline; gap: 8px; }
+.msg .row { display: flex; align-items: center; gap: 8px; }
+.msg .row .time { align-self: baseline; }
 .msg .sender { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .msg .subject { display: flex; align-items: center; gap: 4px; color: var(--muted); }
@@ -91,18 +108,20 @@ button, input { font: inherit; color: inherit; }
 
 /* ---------- Fetch (Abruf) ---------- */
 #side-foot { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+#side-foot .warn { margin: 0; font-size: 12px; }
+#job-status { font-size: 12px; }
+#job-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#job-warn-list { margin: 6px 0; padding-left: 18px; max-height: 120px; overflow: auto; overflow-wrap: anywhere; }
+#job-warn-close, #load-warn-close { padding: 4px 8px; font-size: 12px; }
 #fetch-area { display: flex; flex-direction: column; gap: 6px; }
-#workdir-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; cursor: pointer; }
-#workdir-btn:hover { background: var(--hover); }
-#workdir-btn span { font-size: 12px; }
-#workdir-path-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
 .fetch-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--panel); font-weight: 600; cursor: pointer; }
 .fetch-btn.busy { background: var(--hover); color: var(--muted); border-color: var(--border); }
 .stand { font-size: 12px; padding: 0 2px; }
-#fetch-dialog, #workdir-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
-#fetch-dialog::backdrop, #workdir-dialog::backdrop { background: rgba(0, 0, 0, .45); }
-#workdir-dialog { width: min(560px, calc(100vw - 32px)); }
-#fetch-dialog h2, #workdir-dialog h2 { font-size: 16px; margin: 0 0 12px; }
+#fetch-dialog, #library-dialog, #settings-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
+#fetch-dialog::backdrop, #library-dialog::backdrop, #settings-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+#library-dialog { width: min(560px, calc(100vw - 32px)); }
+#settings-dialog { width: min(560px, calc(100vw - 32px)); }
+#fetch-dialog h2, #library-dialog h2, #settings-dialog h2 { font-size: 16px; margin: 0 0 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -121,9 +140,25 @@ button, input { font: inherit; color: inherit; }
 #dir-list { list-style: none; margin: 0 0 10px; padding: 4px; height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 #dir-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
 #dir-list button:hover, #dir-list button:focus-visible { background: var(--hover); }
+#dir-list button.library { font-weight: 600; }
 #dir-list .tag { margin-left: auto; font-size: 11px; color: var(--accent); white-space: nowrap; }
 #dir-list .empty { padding: 8px; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+
+/* ---------- Einstellungen ---------- */
+.settings-section { margin-bottom: 18px; }
+.settings-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
+.settings-section > .hint { margin: 0 0 8px; }
+.pathtext { margin: 0 0 4px; overflow-wrap: anywhere; }
+.src-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.src-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.src-row .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.src-row .hint { margin: 0; }
+.src-row input[type="text"], .src-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0; }
+.src-row input.name { flex: 1 1 140px; }
+.src-row input.emoji { width: 72px; }
+.src-row input[type="file"] { max-width: 100%; font-size: 12px; }
+.btn.small { padding: 4px 8px; font-size: 12px; }
 
 /* ---------- Narrow screens: stack the three panes ---------- */
 @media (max-width: 900px) {
@@ -134,23 +169,42 @@ button, input { font: inherit; color: inherit; }
   .folder { width: auto; }
   #reader { overflow: visible; padding: 16px; border-top: 1px solid var(--border); }
   #folders { padding: 12px 16px; }
+  #rail { flex-direction: row; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; }
+  #rail-sources { flex-direction: row; }
+  #rail-settings { margin-top: 0; margin-left: auto; }
 }
 </style>
 </head>
 <body>
 <div class="app">
+  <nav id="rail" aria-label="Quellen">
+    <div id="rail-sources"></div>
+    <button id="rail-add" type="button" title="Quelle hinzufügen" aria-label="Quelle hinzufügen">＋</button>
+    <button id="rail-settings" type="button" title="Einstellungen" aria-label="Einstellungen">⚙</button>
+  </nav>
+
   <aside id="folders">
     <h2>Ordner</h2>
     <ul id="folder-list"></ul>
     <div id="side-foot">
+      <div id="load-warn" class="warn" role="alert" hidden>
+        <div id="load-warn-text"></div>
+        <button id="load-warn-close" class="btn" type="button">Ausblenden</button>
+      </div>
+      <div id="job-status" class="muted" role="status" hidden>
+        <div id="job-text"></div>
+        <div id="job-last"></div>
+      </div>
+      <div id="job-error" class="warn" role="alert" hidden></div>
+      <div id="job-warn" class="warn" hidden>
+        <div>Einzelne Quellen sind fehlgeschlagen:</div>
+        <ul id="job-warn-list"></ul>
+        <button id="job-warn-close" class="btn" type="button">Ausblenden</button>
+      </div>
       <div id="fetch-area" hidden>
         <button id="fetch-btn" class="fetch-btn" type="button">Abrufen</button>
         <div id="stand" class="muted stand"></div>
       </div>
-      <button id="workdir-btn" type="button" title="Verzeichnis wechseln">
-        <b>Verzeichnis wechseln…</b>
-        <span id="workdir-path-label" class="muted"></span>
-      </button>
     </div>
   </aside>
 
@@ -184,10 +238,10 @@ button, input { font: inherit; color: inherit; }
   </main>
 </div>
 
-<dialog id="workdir-dialog" aria-labelledby="workdir-title">
-  <h2 id="workdir-title">Mail-Verzeichnis wählen</h2>
-  <div id="workdir-warn" class="warn" role="alert" hidden></div>
-  <form id="workdir-form">
+<dialog id="library-dialog" aria-labelledby="library-title">
+  <h2 id="library-title">Bibliothek wählen</h2>
+  <div id="library-warn" class="warn" role="alert" hidden></div>
+  <form id="library-form">
     <div class="pathbar">
       <button id="dir-up" class="btn" type="button" title="Übergeordnetes Verzeichnis" aria-label="Übergeordnetes Verzeichnis">↑</button>
       <button id="dir-home" class="btn" type="button" title="Home-Verzeichnis" aria-label="Home-Verzeichnis">~</button>
@@ -195,11 +249,13 @@ button, input { font: inherit; color: inherit; }
       <button id="dir-go" class="btn" type="button">Gehe zu</button>
     </div>
     <ul id="dir-list" aria-label="Unterverzeichnisse"></ul>
-    <p class="hint" id="dir-hint">Wähle einen Mail-Ordner (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.</p>
-    <label class="check"><input id="dir-remember" type="checkbox"> <span>Auswahl merken</span></label>
+    <p class="hint" id="dir-hint"></p>
+    <label id="library-legacy-row" class="check" hidden><input id="library-legacy" type="checkbox" checked> <span>Bisheriges Verzeichnis <span id="library-legacy-path"></span> als erste Quelle übernehmen</span></label>
+    <label id="library-remember-row" class="check"><input id="library-remember" type="checkbox"> <span>Auswahl merken</span></label>
     <div class="actions">
-      <button id="workdir-cancel" class="btn" type="button">Abbrechen</button>
-      <button id="workdir-open" class="btn primary" type="submit" disabled>Dieses Verzeichnis öffnen</button>
+      <button id="library-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="library-create" class="btn" type="button">Hier neue Bibliothek anlegen</button>
+      <button id="library-submit" class="btn primary" type="submit" disabled>Öffnen</button>
     </div>
   </form>
 </dialog>
@@ -234,6 +290,47 @@ button, input { font: inherit; color: inherit; }
   </div>
 </dialog>
 
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+  <h2 id="settings-title" tabindex="-1">Einstellungen</h2>
+  <div id="settings-warn" class="warn" role="alert" hidden></div>
+
+  <section class="settings-section" aria-labelledby="settings-view-title">
+    <h3 id="settings-view-title">Ansicht</h3>
+    <div id="settings-view" role="radiogroup" aria-labelledby="settings-view-title">
+      <label class="check"><input type="radio" name="view" value="combined"> <span>Kombiniert: „∑“ zeigt alle sichtbaren Quellen</span></label>
+      <label class="check"><input type="radio" name="view" value="single"> <span>Einzeln: nur die gewählte Quelle, ohne „∑“</span></label>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-sources-title">
+    <h3 id="settings-sources-title">Quellen</h3>
+    <p class="hint">Reihenfolge wie in der Leiste. Ausgeblendete Quellen erscheinen weder in der Leiste noch in „∑“.</p>
+    <ul id="settings-sources" class="src-list" aria-label="Quellen"></ul>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-proton-title">
+    <h3 id="settings-proton-title">Proton-Abruf</h3>
+    <form id="settings-proton">
+      <label class="field"><span>E-Mail</span>
+        <input name="proton_email" type="email" autocomplete="off"></label>
+      <label class="field"><span>CLI-Pfad</span>
+        <input name="cli" type="text" spellcheck="false" autocomplete="off">
+        <span class="hint">Nur ein absoluter Pfad zu einer ausführbaren Datei wird verwendet.</span></label>
+      <p id="settings-cli-override" class="hint" hidden></p>
+      <p class="hint">Passwörter werden nie gespeichert. Sie werden bei jedem Abruf abgefragt.</p>
+      <div class="actions"><button class="btn primary" type="submit">Speichern</button></div>
+    </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-library-title">
+    <h3 id="settings-library-title">Bibliothek</h3>
+    <p class="pathtext">Aktuell: <span id="settings-library-path"></span></p>
+    <div class="actions"><button id="settings-library-change" class="btn" type="button">Bibliothek wechseln…</button></div>
+  </section>
+
+  <div class="actions"><button id="settings-close" class="btn" type="button">Schließen</button></div>
+</dialog>
+
 <script>
 (() => {
 'use strict';
@@ -254,8 +351,8 @@ function el(tag, attrs = {}, children = []) {
   return n;
 }
 
-async function api(path) {
-  const res = await fetch(path, { headers: { Accept: 'application/json' } });
+async function api(path, init = {}) {
+  const res = await fetch(path, { headers: { Accept: 'application/json' }, ...init });
   if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
   return res.json();
 }
@@ -303,50 +400,162 @@ function clipIcon() {
   return svg;
 }
 
+// Background colours for auto icons; white text works on all of them in light and dark mode.
+const ICON_COLORS = ['#0a66c2', '#2e7d32', '#7b3fb0', '#b03a2e', '#b35c00', '#00796b', '#4a5568', '#8a6d00'];
+
+// "Outlook 2015" -> "O15", "Mail" -> "Ma". A word starting with a digit contributes its last two digits.
+function initials(name) {
+  const words = (name || '').split(/[\s\-_.]+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  if (words.length === 0) return '?';
+  if (words.length === 1) return [...words[0]].slice(0, 2).join('').toLocaleUpperCase('de-DE');
+  const parts = words.map((w) => (/^\p{N}/u.test(w) ? w.match(/^\p{N}+/u)[0].slice(-2) : [...w][0]));
+  return parts.join('').slice(0, 3).toLocaleUpperCase('de-DE');
+}
+
+function colorFor(name) {
+  let h = 0;
+  for (const ch of name || '') h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return ICON_COLORS[h % ICON_COLORS.length];
+}
+
+// Source icon for the rail (cls "rail") or a message row (cls "list"). Server data goes in via textContent / src only.
+function sourceIcon(src, cls) {
+  const icon = src.icon || {};
+  if (icon.type === 'image') {
+    const ver = state.iconVer[src.id] || 0;
+    const img = el('img', { class: `src-icon ${cls}`, src: `/api/sources/${encodeURIComponent(src.id)}/icon?v=${ver}`, alt: '' });
+    img.addEventListener('error', () => img.replaceWith(autoIcon(src, cls)));
+    return img;
+  }
+  if (icon.type === 'emoji') return el('span', { class: `src-icon glyph ${cls}`, 'aria-hidden': 'true', text: icon.value || '' });
+  return autoIcon(src, cls);
+}
+
+function autoIcon(src, cls) {
+  const span = el('span', { class: `src-icon ${cls}`, 'aria-hidden': 'true', text: initials(src.name) });
+  span.style.background = colorFor(src.name);
+  return span;
+}
+
 /* ---------- State ---------- */
 const state = {
   folders: [], folder: null, q: '',
   messages: [], total: 0, loading: false, listSeq: 0,
-  selectedId: null, detailSeq: 0,
+  selectedKey: null, detailSeq: 0,
   mail: null, mode: 'html',
+  sources: [], settings: null, view: null, viewSeq: 0, config: null,
+  iconVer: {}, // per source: bumped after an icon upload, so the image URL changes
 };
+
+// Message identity across sources: the same mail id may exist in two sources.
+const msgKey = (source, id) => `${source}\n${id}`;
+const sourceById = (id) => state.sources.find((s) => s.id === id) || null;
+const visibleSources = () => state.sources.filter((s) => !s.hidden);
+// Source ids the rail selection covers: all visible sources, or the single one.
+const activeSourceIds = () => (state.view === 'all' ? visibleSources().map((s) => s.id) : (state.view ? [state.view] : []));
+
+const VIEW_KEY = 'mailviewer.view';
+function storedView() {
+  try { return localStorage.getItem(VIEW_KEY); } catch (_) { return null; }
+}
+function storeView(view) {
+  try { localStorage.setItem(VIEW_KEY, view); } catch (_) { /* not remembered, e.g. private window */ }
+}
 
 // Prepended to the mail HTML inside the sandboxed iframe (no scripts, strict CSP).
 const FRAME_HEAD = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><base target="_blank"><style>body{font-family:sans-serif;margin:12px;word-wrap:break-word}img{max-width:100%;height:auto}</style>`;
+
+/* ---------- Source rail and view ---------- */
+// Stored view if it still exists (and "all" only in the combined view), else "all" or the first source.
+function startView() {
+  const combined = state.settings?.view === 'combined';
+  const visible = visibleSources();
+  const stored = storedView();
+  if (stored && (stored === 'all' ? combined : visible.some((s) => s.id === stored))) return stored;
+  if (combined) return 'all';
+  return visible[0] ? visible[0].id : null;
+}
+
+function railButton(id, name, src) {
+  const title = src && !src.available ? `${name} (nicht erreichbar)` : name;
+  const btn = el('button', { type: 'button', title, 'aria-label': title });
+  btn.setAttribute('aria-current', String(state.view === id));
+  if (src && !src.available) btn.classList.add('unavailable');
+  btn.append(src ? sourceIcon(src, 'rail') : el('span', { class: 'src-icon all', 'aria-hidden': 'true', text: '∑' }));
+  btn.addEventListener('click', () => selectView(id));
+  return btn;
+}
+
+function renderRail() {
+  const buttons = [];
+  if (state.settings?.view === 'combined') buttons.push(railButton('all', 'Alle Quellen', null));
+  for (const s of visibleSources()) buttons.push(railButton(s.id, s.name, s));
+  $('rail-sources').replaceChildren(...buttons);
+}
+
+function updateFetchArea() {
+  const src = state.view && state.view !== 'all' ? sourceById(state.view) : null;
+  $('fetch-area').hidden = !(src && src.fetchable);
+}
+
+// Switching the view remembers it, reloads folders and list and clears the reader.
+function selectView(view) {
+  state.view = view;
+  storeView(view);
+  renderRail();
+  updateFetchArea();
+  loadFolders();
+}
 
 /* ---------- Folders ---------- */
 // keep: after a fetch, stay in the current folder if it still exists.
 async function loadFolders(keep = false) {
   const prev = state.folder;
+  const seq = ++state.viewSeq;
+  const ids = activeSourceIds();
+  if (ids.length === 0) {
+    state.folders = [];
+    state.folder = null;
+    $('folder-list').replaceChildren(el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' }));
+    state.messages = [];
+    state.total = 0;
+    showPlaceholder('Keine Nachricht ausgewählt.');
+    renderList();
+    return;
+  }
+  let folders;
   try {
-    state.folders = await api('/api/folders');
+    folders = await api(`/api/folders?sources=${encodeURIComponent(ids.join(','))}`);
   } catch (e) {
+    if (seq !== state.viewSeq) return;
     $('folder-list').replaceChildren(el('li', { class: 'warn', text: `Ordner konnten nicht geladen werden (${e.message}).` }));
     return;
   }
+  if (seq !== state.viewSeq) return; // the view changed meanwhile
+  state.folders = folders;
   renderFolders();
-  if (keep && state.folders.some((f) => f.id === prev)) {
+  if (keep && state.folders.some((f) => f.key === prev)) {
     selectFolder(prev);
     return;
   }
   const inbox = state.folders.find((f) => (f.name || '').toLowerCase() === 'inbox') || state.folders[0];
-  selectFolder(inbox ? inbox.id : null);
+  selectFolder(inbox ? inbox.key : null);
 }
 
 function renderFolders() {
   $('folder-list').replaceChildren(...state.folders.map((f) => {
     const btn = el('button', { class: 'folder', type: 'button' });
-    btn.setAttribute('aria-current', String(f.id === state.folder));
+    btn.setAttribute('aria-current', String(f.key === state.folder));
     btn.append(el('span', { class: 'name', text: f.name || '' }));
     if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
     btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
-    btn.addEventListener('click', () => selectFolder(f.id));
+    btn.addEventListener('click', () => selectFolder(f.key));
     return el('li', {}, [btn]);
   }));
 }
 
-function selectFolder(id) {
-  state.folder = id;
+function selectFolder(key) {
+  state.folder = key;
   renderFolders();
   reloadList();
 }
@@ -355,7 +564,7 @@ function selectFolder(id) {
 function reloadList() {
   state.messages = [];
   state.total = 0;
-  state.selectedId = null;
+  state.selectedKey = null;
   showPlaceholder('Keine Nachricht ausgewählt.');
   renderList();
   loadPage(true);
@@ -363,8 +572,15 @@ function reloadList() {
 
 async function loadPage(reset) {
   const seq = ++state.listSeq;
+  const ids = activeSourceIds();
+  if (ids.length === 0) {
+    state.messages = [];
+    state.total = 0;
+    renderList();
+    return;
+  }
   const offset = reset ? 0 : state.messages.length;
-  const params = new URLSearchParams({ offset: String(offset), limit: String(PAGE) });
+  const params = new URLSearchParams({ sources: ids.join(','), offset: String(offset), limit: String(PAGE) });
   if (state.folder) params.set('folder', state.folder);
   if (state.q) params.set('q', state.q);
   state.loading = true;
@@ -388,21 +604,26 @@ async function loadPage(reset) {
 
 function renderList() {
   $('count').textContent = `${state.total.toLocaleString('de-DE')} Mails`;
+  const combined = state.view === 'all';
   $('messages').replaceChildren(...state.messages.map((m) => {
-    const selected = String(m.id) === state.selectedId;
+    const key = msgKey(m.source, m.id);
+    const selected = key === state.selectedKey;
     const li = el('li', { class: 'msg' + (m.unread ? ' unread' : '') + (selected ? ' selected' : ''), role: 'option' });
-    li.dataset.id = String(m.id);
+    li.dataset.key = key;
     li.setAttribute('aria-selected', String(selected));
-    const row = el('div', { class: 'row' }, [
+    const row = el('div', { class: 'row' });
+    const src = combined ? sourceById(m.source) : null;
+    if (src) row.append(sourceIcon(src, 'list'));
+    row.append(
       el('span', { class: 'sender', text: senderText(m.sender) }),
       el('span', { class: 'time', text: listDate(m.time) }),
-    ]);
+    );
     const subject = el('div', { class: 'subject' }, [
       el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }),
     ]);
     if (m.attachments > 0) subject.append(clipIcon());
     li.append(row, subject);
-    li.addEventListener('click', () => selectMessage(m.id));
+    li.addEventListener('click', () => selectMessage(m.source, m.id));
     return li;
   }));
   updateMore();
@@ -418,30 +639,30 @@ function updateMore() {
 function move(delta) {
   const items = state.messages;
   if (!items.length) return;
-  let idx = items.findIndex((m) => String(m.id) === state.selectedId);
+  let idx = items.findIndex((m) => msgKey(m.source, m.id) === state.selectedKey);
   idx = idx < 0 ? 0 : Math.min(items.length - 1, Math.max(0, idx + delta));
-  selectMessage(items[idx].id);
+  selectMessage(items[idx].source, items[idx].id);
   $('messages').children[idx]?.scrollIntoView({ block: 'nearest' });
 }
 
 /* ---------- Reader ---------- */
-function selectMessage(id) {
-  state.selectedId = String(id);
+function selectMessage(source, id) {
+  state.selectedKey = msgKey(source, id);
   for (const li of $('messages').children) {
-    const selected = li.dataset.id === state.selectedId;
+    const selected = li.dataset.key === state.selectedKey;
     li.classList.toggle('selected', selected);
     li.setAttribute('aria-selected', String(selected));
   }
-  loadDetail(id);
+  loadDetail(source, id);
 }
 
-async function loadDetail(id) {
+async function loadDetail(source, id) {
   const seq = ++state.detailSeq;
   showPlaceholder('Lädt…');
   try {
-    const m = await api(`/api/message/${encodeURIComponent(id)}`);
+    const m = await api(`/api/message/${encodeURIComponent(source)}/${encodeURIComponent(id)}`);
     if (seq !== state.detailSeq) return; // a newer selection won
-    renderMail(m);
+    renderMail(source, m);
   } catch (e) {
     if (seq !== state.detailSeq) return;
     showPlaceholder(`Nachricht konnte nicht geladen werden (${e.message}).`);
@@ -454,7 +675,7 @@ function showPlaceholder(text) {
   $('mail').hidden = true;
 }
 
-function renderMail(m) {
+function renderMail(source, m) {
   state.mail = m;
   $('m-subject').textContent = m.subject || '(ohne Betreff)';
   $('m-from').textContent = addrText(m.from) || '(unbekannt)';
@@ -463,7 +684,7 @@ function renderMail(m) {
   $('row-cc').hidden = !cc;
   $('m-cc').textContent = cc;
   $('m-date').textContent = longDate(m.time);
-  renderAttachments(m);
+  renderAttachments(source, m);
 
   const err = $('m-error');
   err.hidden = !m.error;
@@ -478,10 +699,10 @@ function renderMail(m) {
   $('reader').scrollTop = 0;
 }
 
-function renderAttachments(m) {
+function renderAttachments(source, m) {
   const list = m.attachments || [];
   $('m-attachments').replaceChildren(...list.map((a) => {
-    const href = `/api/message/${encodeURIComponent(m.id)}/attachment/${encodeURIComponent(a.index)}`;
+    const href = `/api/message/${encodeURIComponent(source)}/${encodeURIComponent(m.id)}/attachment/${encodeURIComponent(a.index)}`;
     return el('a', { href }, [
       document.createTextNode(a.name || `Anhang ${a.index}`),
       el('small', { text: fileSize(a.size) }),
@@ -519,10 +740,14 @@ function fitFrame(frame) {
   } catch (_) { /* keep min-height */ }
 }
 
-/* ---------- Fetch (Abruf) ---------- */
-const FETCH_POLL_MS = 1000;
-let fetchTimer = 0;
+/* ---------- Job (index or fetch) ---------- */
+const JOB_POLL_MS = 1000;
+let jobTimer = 0;
+let jobSeq = 0;
+let lastJob = null; // last status read from /api/job
+let dismissedJob = null; // `started` of the job whose failure list was hidden
 let closeTimer = 0;
+let fetchWaiting = false; // the fetch dialog shows that another job is running
 
 // "mail_20261015_224804" -> "15.10.2026, 22:48"; any other name is shown as is.
 function standText(name) {
@@ -532,20 +757,6 @@ function standText(name) {
   return Number.isNaN(d.getTime()) ? name : d.toLocaleString('de-DE', {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
-}
-
-// Returns true when the fetch feature is available on the server.
-async function loadConfig() {
-  try {
-    state.config = await api('/api/config');
-  } catch (_) {
-    state.config = null;
-  }
-  $('workdir-path-label').textContent = state.config?.workdir || '';
-  const ok = Boolean(state.config && state.config.fetch_available);
-  $('fetch-area').hidden = !ok;
-  if (ok) $('stand').textContent = state.config.export ? `Stand: ${standText(state.config.export)}` : '';
-  return ok;
 }
 
 function setFetchBusy(busy) {
@@ -579,11 +790,9 @@ function renderLog(st) {
   pre.scrollTop = pre.scrollHeight;
 }
 
-// Form starts empty except for the email address; secrets are never kept.
+// Form starts empty; the server fills in the default email. Secrets are never kept.
 function resetFetchForm() {
-  const f = $('fetch-form');
-  f.reset();
-  f.elements.email.value = state.config?.email || '';
+  $('fetch-form').reset();
 }
 
 function clearSecrets() {
@@ -593,41 +802,59 @@ function clearSecrets() {
   f.elements.totp.value = '';
 }
 
-// Reads the status once and reacts. While the dialog shows progress, it keeps polling.
-async function checkFetchStatus() {
-  clearTimeout(fetchTimer);
-  fetchTimer = 0;
+// Footer of the folder pane: progress of a running job, its error, and failed sources of its log.
+function renderJob(st) {
+  const running = st.state === 'running';
+  const fetching = running && st.kind === 'fetch';
+  setFetchBusy(fetching);
+  $('job-status').hidden = !running;
+  if (running) {
+    $('job-text').textContent = fetching ? 'Abruf läuft…'
+      : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
+    $('job-last').textContent = (st.log || []).at(-1) || '';
+  }
+  $('job-error').hidden = st.state !== 'error';
+  $('job-error').textContent = st.state === 'error' ? (st.message || 'Der Auftrag ist fehlgeschlagen.') : '';
+  renderJobWarnings(st);
+}
+
+// Lines containing "Fehler" are sources that failed although the job itself finished.
+function renderJobWarnings(st) {
+  const failed = (st.log || []).filter((line) => line.includes('Fehler'));
+  $('job-warn').hidden = failed.length === 0 || dismissedJob === st.started;
+  $('job-warn-list').replaceChildren(...failed.map((line) => el('li', { text: line })));
+}
+
+// Follows the job while the fetch dialog is open: progress of a running fetch, a notice while another job runs.
+function updateFetchDialog(st) {
   const dlg = $('fetch-dialog');
-  let st;
-  try {
-    st = await api('/api/fetch/status');
-  } catch (_) {
-    if (dlg.open && progressVisible()) fetchTimer = setTimeout(checkFetchStatus, FETCH_POLL_MS);
-    return;
-  }
-
+  if (!dlg.open) return;
   if (st.state === 'running') {
-    setFetchBusy(true);
-    if (dlg.open) {
-      if (!progressVisible()) showProgress();
-      renderLog(st);
-      fetchTimer = setTimeout(checkFetchStatus, FETCH_POLL_MS);
+    if (st.kind !== 'fetch') {
+      if (!fetchWaiting) {
+        showForm();
+        showWarn('Es läuft gerade ein Auftrag.');
+        fetchWaiting = true;
+      }
+      return;
     }
+    fetchWaiting = false;
+    if (!progressVisible()) {
+      showProgress();
+      showWarn('');
+    }
+    renderLog(st);
     return;
   }
-
-  setFetchBusy(false);
-  if (!dlg.open || !progressVisible()) {
-    // Not watching the run: only refresh stale data if a newer export exists.
-    if (st.state === 'done' && st.export && st.export !== state.config?.export) refreshAfterFetch();
-    return;
+  if (fetchWaiting) {
+    fetchWaiting = false;
+    showWarn('');
   }
-
+  if (!progressVisible()) return;
   renderLog(st);
   if (st.state === 'done') {
     $('fetch-status').textContent = 'Fertig – neue Mails geladen';
     showWarn('');
-    refreshAfterFetch();
     clearTimeout(closeTimer);
     closeTimer = setTimeout(closeFetchDialog, 1500);
   } else if (st.state === 'error') {
@@ -639,8 +866,42 @@ async function checkFetchStatus() {
   }
 }
 
-async function refreshAfterFetch() {
-  await loadConfig();
+function scheduleJobPoll() {
+  clearTimeout(jobTimer);
+  jobTimer = setTimeout(pollJob, JOB_POLL_MS);
+}
+
+// Reads /api/job. It repeats every second while a job runs and reacts once when the job has ended.
+async function pollJob() {
+  const seq = ++jobSeq;
+  let st;
+  try {
+    st = await api('/api/job');
+  } catch (_) {
+    if (seq === jobSeq && lastJob?.state === 'running') scheduleJobPoll();
+    return;
+  }
+  if (seq !== jobSeq) return; // a newer read is under way
+  const wasRunning = lastJob?.state === 'running';
+  lastJob = st;
+  if (st.state === 'running') scheduleJobPoll();
+  else clearTimeout(jobTimer);
+  renderJob(st);
+  updateFetchDialog(st);
+  if (wasRunning && st.state !== 'running') jobFinished(st);
+}
+
+// The job has ended: reload what it may have changed. A finished fetch selects its source.
+async function jobFinished(st) {
+  await loadSources();
+  const fetched = st.kind === 'fetch' && st.state === 'done' ? st.result : null;
+  if (fetched && sourceById(fetched.source)) {
+    state.view = fetched.source;
+    storeView(fetched.source);
+  }
+  if (fetched?.export) $('stand').textContent = `Stand: ${standText(fetched.export)}`;
+  renderRail();
+  updateFetchArea();
   await loadFolders(true);
 }
 
@@ -652,7 +913,7 @@ function openFetchDialog() {
   showForm();
   const dlg = $('fetch-dialog');
   if (!dlg.open) dlg.showModal();
-  checkFetchStatus(); // switches to progress if a run is already going
+  pollJob(); // shows the progress if a fetch is already running
 }
 
 function closeFetchDialog() {
@@ -664,12 +925,15 @@ function closeFetchDialog() {
 $('fetch-btn').addEventListener('click', openFetchDialog);
 $('fetch-cancel').addEventListener('click', closeFetchDialog);
 $('fetch-close').addEventListener('click', closeFetchDialog);
+$('job-warn-close').addEventListener('click', () => {
+  dismissedJob = lastJob?.started ?? null;
+  if (lastJob) renderJobWarnings(lastJob);
+});
 
 $('fetch-dialog').addEventListener('close', () => {
-  clearTimeout(fetchTimer);
-  fetchTimer = 0;
   clearTimeout(closeTimer);
   closeTimer = 0;
+  fetchWaiting = false;
   clearSecrets();
 });
 
@@ -683,7 +947,12 @@ $('fetch-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.currentTarget;
   const submit = f.querySelector('button[type="submit"]');
-  const body = { email: f.elements.email.value.trim(), password: f.elements.password.value };
+  const source = state.view;
+  if (!sourceById(source)) {
+    showWarn('Keine Quelle gewählt.');
+    return;
+  }
+  const body = { source, email: f.elements.email.value.trim(), password: f.elements.password.value };
   const mailboxPw = f.elements.mailbox_password.value;
   const totp = f.elements.totp.value.trim();
   if (mailboxPw) body.mailbox_password = mailboxPw;
@@ -710,22 +979,41 @@ $('fetch-form').addEventListener('submit', async (e) => {
   }
   submit.disabled = false;
 
-  if (res.status === 202 || res.status === 409) {
-    // 409: a run is already going, so show its progress.
-    setFetchBusy(true);
+  if (res.status === 202) {
     showProgress();
-    checkFetchStatus();
+    pollJob();
+  } else if (res.status === 409) {
+    // Another job holds the slot: the poll shows the fetch if it is one, else the notice.
+    showWarn('Es läuft gerade ein Auftrag.');
+    pollJob();
   } else {
     showWarn((data && data.error) || `Fehler ${res.status}`);
   }
 });
 
-/* ---------- Verzeichnis-Auswahl ---------- */
-const dirState = { path: '', parent: null, home: '', openable: false, seq: 0 };
+/* ---------- Bibliothek und Quelle hinzufügen (Verzeichnis-Auswahl) ---------- */
+// Outlook import (Folgeplan) will be offered next to this picker when it lands.
+const dirState = { path: '', parent: null, home: '', openable: false, library: false, seq: 0 };
+let libBusy = false;
 
-function showDirWarn(msg) {
-  $('workdir-warn').textContent = msg || '';
-  $('workdir-warn').hidden = !msg;
+function showLibWarn(msg) {
+  $('library-warn').textContent = msg || '';
+  $('library-warn').hidden = !msg;
+}
+
+const libMode = () => $('library-dialog').dataset.mode;
+
+// Opening needs a library in the folder, adding a source needs a mail folder. Creating is always possible.
+function updateLibSubmit() {
+  const ok = libMode() === 'library' ? dirState.library : dirState.openable;
+  $('library-submit').disabled = libBusy || !ok;
+  $('library-create').disabled = libBusy;
+}
+
+function setLibBusy(busy) {
+  libBusy = busy;
+  $('library-cancel').disabled = busy;
+  updateLibSubmit();
 }
 
 // Loads one directory into the picker. Late answers of superseded requests are dropped.
@@ -736,43 +1024,129 @@ async function browseTo(path) {
     data = await api(`/api/browse?path=${encodeURIComponent(path)}`);
   } catch (e) {
     if (seq !== dirState.seq) return;
-    showDirWarn(e.status === 400 ? 'Dieses Verzeichnis kann nicht gelesen werden.' : `Fehler beim Lesen (${e.message}).`);
+    showLibWarn(e.status === 400 ? 'Dieses Verzeichnis kann nicht gelesen werden.' : `Fehler beim Lesen (${e.message}).`);
     return;
   }
   if (seq !== dirState.seq) return;
-  showDirWarn('');
-  Object.assign(dirState, { path: data.path, parent: data.parent, home: data.home, openable: data.openable });
+  showLibWarn('');
+  Object.assign(dirState, {
+    path: data.path, parent: data.parent, home: data.home, openable: data.openable, library: data.library,
+  });
   $('dir-path').value = data.path;
   $('dir-up').disabled = data.parent === null;
-  $('workdir-open').disabled = !data.openable;
-  $('dir-hint').textContent = data.openable
-    ? 'Hier liegt ein Mail-Export – „Dieses Verzeichnis öffnen“ übernimmt ihn.'
-    : 'Wähle einen Mail-Ordner (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.';
+  $('dir-hint').textContent = libMode() === 'library'
+    ? (data.library
+      ? 'Hier liegt eine Bibliothek – „Öffnen“ übernimmt sie.'
+      : 'Wähle eine Bibliothek (enthält library.json) oder ein Verzeichnis, in dem eine neue angelegt wird.')
+    : (data.openable
+      ? 'Hier liegt ein Mail-Export – „Hinzufügen“ nimmt ihn als Quelle auf.'
+      : 'Wähle ein Mail-Verzeichnis (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.');
+  updateLibSubmit();
   $('dir-list').replaceChildren(...(data.dirs.length ? data.dirs.map((d) => {
     const btn = el('button', { type: 'button' }, [el('span', { text: '📁' }), el('span', { text: d.name })]);
-    if (d.openable) btn.append(el('span', { class: 'tag', text: 'Mail-Export' }));
+    if (d.library) {
+      btn.classList.add('library');
+      btn.append(el('span', { class: 'tag', text: 'Bibliothek' }));
+    } else if (d.openable) {
+      btn.append(el('span', { class: 'tag', text: 'Mail-Export' }));
+    }
     btn.addEventListener('click', () => browseTo(`${data.path.replace(/\/$/, '')}/${d.name}`));
     return el('li', {}, [btn]);
   }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })]));
 }
 
-// required: first start without a directory, so the dialog cannot be dismissed.
-function openWorkdirDialog(required) {
-  const dlg = $('workdir-dialog');
+// mode "library": open or create a library. mode "source": add the folder as a source.
+// required: first start without a library, so the dialog cannot be dismissed.
+function openPicker(mode, required) {
+  const dlg = $('library-dialog');
   const cfg = state.config || {};
+  const isLib = mode === 'library';
+  dlg.dataset.mode = mode;
   dlg.dataset.required = required ? '1' : '';
-  $('workdir-cancel').hidden = required;
-  $('dir-remember').checked = Boolean(cfg.saved) && cfg.saved === cfg.workdir;
-  showDirWarn(cfg.saved_error ? `Gespeichertes Verzeichnis nicht verfügbar: ${cfg.saved_error}` : '');
+  $('library-title').textContent = isLib ? 'Bibliothek wählen' : 'Verzeichnis als Quelle hinzufügen';
+  $('library-submit').textContent = isLib ? 'Öffnen' : 'Hinzufügen';
+  $('library-create').hidden = !isLib;
+  $('library-cancel').hidden = required;
+  $('library-remember-row').hidden = !isLib;
+  $('library-remember').checked = isLib && Boolean(cfg.saved) && cfg.saved === cfg.library;
+  const legacy = isLib && Boolean(cfg.legacy);
+  $('library-legacy-row').hidden = !legacy;
+  $('library-legacy').checked = legacy;
+  $('library-legacy-path').textContent = legacy ? cfg.legacy : '';
+  showLibWarn('');
+  setLibBusy(false);
   if (!dlg.open) dlg.showModal();
-  const warn = cfg.saved_error;
-  browseTo(cfg.workdir || cfg.saved || cfg.home || '~').then(() => { if (warn) showDirWarn(`Gespeichertes Verzeichnis nicht verfügbar: ${warn}`); });
+  const savedError = isLib ? cfg.saved_error : null;
+  browseTo(cfg.library || cfg.saved || cfg.home || '~').then(() => {
+    if (savedError) showLibWarn(`Gespeichertes Verzeichnis nicht verfügbar: ${savedError}`);
+  });
 }
 
-$('workdir-btn').addEventListener('click', () => openWorkdirDialog(false));
-$('workdir-cancel').addEventListener('click', () => $('workdir-dialog').close());
-$('workdir-dialog').addEventListener('cancel', (e) => {
-  if ($('workdir-dialog').dataset.required) e.preventDefault(); // Esc must not skip the initial choice
+// Global for the settings dialog (Task 8).
+function openLibraryDialog(required) {
+  openPicker('library', Boolean(required));
+}
+window.openLibraryDialog = openLibraryDialog;
+
+// POST for the picker. Resolves to the JSON answer, or to null after the error is shown in the dialog.
+async function postPicker(url, body) {
+  setLibBusy(true);
+  let res;
+  let data = null;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    setLibBusy(false);
+    showLibWarn(`Verzeichnis konnte nicht übernommen werden (${err.message}).`);
+    return null;
+  }
+  if (res.ok) return data;
+  setLibBusy(false);
+  showLibWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+  return null;
+}
+
+async function submitLibrary(create) {
+  const ok = await postPicker('/api/library', {
+    path: dirState.path,
+    create,
+    remember: $('library-remember').checked,
+    add_legacy: !$('library-legacy-row').hidden && $('library-legacy').checked,
+  });
+  if (ok) location.reload(); // simplest way to drop all state of the previous library
+}
+
+// The new source is selected; its index job runs and the poll reloads everything when it ends.
+async function addSource() {
+  const before = new Set(state.sources.map((s) => s.id));
+  const list = await postPicker('/api/sources', { path: dirState.path });
+  if (!list) return;
+  state.sources = list;
+  const added = list.find((s) => !before.has(s.id));
+  $('library-dialog').close();
+  setLibBusy(false);
+  renderRail();
+  if (added) selectView(added.id);
+  pollJob();
+}
+
+$('library-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  if (libBusy) return;
+  if (libMode() === 'library') submitLibrary(false);
+  else addSource();
+});
+$('library-create').addEventListener('click', () => {
+  if (!libBusy) submitLibrary(true);
+});
+$('library-cancel').addEventListener('click', () => $('library-dialog').close());
+$('library-dialog').addEventListener('cancel', (e) => {
+  if ($('library-dialog').dataset.required) e.preventDefault(); // Esc must not skip the initial choice
 });
 $('dir-up').addEventListener('click', () => { if (dirState.parent) browseTo(dirState.parent); });
 $('dir-home').addEventListener('click', () => browseTo(dirState.home || '~'));
@@ -780,32 +1154,311 @@ $('dir-go').addEventListener('click', () => browseTo($('dir-path').value.trim())
 $('dir-path').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); browseTo($('dir-path').value.trim()); }
 });
+$('rail-add').addEventListener('click', () => openPicker('source', false));
 
-$('workdir-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const open = $('workdir-open');
-  open.disabled = true;
-  let res, data;
+/* ---------- Einstellungen ---------- */
+const ICON_MAX_BYTES = 512 * 1024;
+const ICON_FILE_TYPES = ['image/png', 'image/svg+xml'];
+const REQUEST_TIMEOUT_MS = 30000;
+const TIMEOUT_TEXT = 'Zeitüberschreitung. Bitte erneut versuchen.';
+const jsonPost = (obj) => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+const timeoutSignal = () => AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+const isTimeout = (err) => err?.name === 'TimeoutError';
+
+function showSettingsWarn(msg) {
+  $('settings-warn').textContent = msg || '';
+  $('settings-warn').hidden = !msg;
+  if (msg) $('settings-warn').scrollIntoView({ block: 'nearest' }); // the list may be scrolled down
+}
+
+// All settings work (changes, reloads) runs in one queue, one after another. A stalled request times out, so the queue moves on.
+let settingsChain = Promise.resolve();
+function queueSettings(task) {
+  const run = settingsChain.then(task);
+  settingsChain = run.catch(() => ({ ok: false }));
+  return run;
+}
+
+// Each change builds its request when its turn comes, from the state then,
+// so two quick clicks on ↑ or ↓ never send the same position twice.
+function changeSettings(build) {
+  return queueSettings(() => runChange(build));
+}
+
+async function runChange(build) {
+  const req = build();
+  if (!req) return { ok: false };
+  showSettingsWarn('');
+  let res;
+  let data = null;
   try {
-    res = await fetch('/api/workdir', {
+    res = await fetch(req.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ path: dirState.path, remember: $('dir-remember').checked }),
+      headers: { Accept: 'application/json', ...req.init.headers },
+      body: req.init.body,
+      signal: timeoutSignal(),
     });
     data = await res.json().catch(() => null);
   } catch (err) {
-    open.disabled = !dirState.openable;
-    showDirWarn(`Verzeichnis konnte nicht geöffnet werden (${err.message}).`);
+    if (isTimeout(err)) {
+      // The server may have applied the change anyway: show what it holds now.
+      showSettingsWarn(TIMEOUT_TEXT);
+      await reloadAdmin();
+    } else {
+      showSettingsWarn(`Änderung konnte nicht gespeichert werden (${err.message}).`);
+      renderSettingsSources(); // back to the stored values
+    }
+    return { ok: false };
+  }
+  if (!res.ok) {
+    showSettingsWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+    renderSettingsSources();
+    return { ok: false };
+  }
+  req.done?.(); // before the reload redraws, so the new icon URL is used
+  await reloadAdmin(); // a failed reload keeps the state and shows its own warning
+  return { ok: true, data };
+}
+
+// Reads sources and config together. On failure nothing is replaced, so rail and dialog keep what they show.
+async function fetchAdminState() {
+  const [sources, config] = await Promise.all([
+    api('/api/sources', { signal: timeoutSignal() }),
+    api('/api/config', { signal: timeoutSignal() }),
+  ]);
+  state.sources = sources;
+  state.config = config;
+  state.settings = config.settings || null;
+  loadWarnings.delete('config');
+  loadWarnings.delete('sources');
+  renderLoadWarn();
+}
+
+// The view stays if it is still shown (∑ only in the combined view), else the first entry of the rail.
+function validView(view) {
+  const combined = state.settings?.view === 'combined';
+  if (view === 'all' && combined) return 'all';
+  if (view && view !== 'all' && visibleSources().some((s) => s.id === view)) return view;
+  if (combined) return 'all';
+  return visibleSources()[0]?.id ?? null;
+}
+
+// Reloads sources and config and redraws rail and dialog. Proton fields are left alone, so typing is kept.
+async function reloadAdmin() {
+  const before = activeSourceIds().join(',');
+  try {
+    await fetchAdminState();
+  } catch (err) {
+    showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Liste konnte nicht aktualisiert werden (${err.message}).`);
+    return false;
+  }
+  const next = validView(state.view);
+  renderSettingsView();
+  renderSettingsSources();
+  renderSettingsLibrary();
+  if (next !== state.view) {
+    if (next) {
+      selectView(next);
+    } else {
+      state.view = null;
+      renderRail();
+      updateFetchArea();
+      loadFolders();
+    }
+    return true;
+  }
+  renderRail();
+  updateFetchArea();
+  if (activeSourceIds().join(',') !== before) loadFolders(true);
+  return true;
+}
+
+function renderSettingsView() {
+  const view = state.settings?.view === 'single' ? 'single' : 'combined';
+  for (const r of $('settings-view').querySelectorAll('input')) r.checked = r.value === view;
+}
+
+function renderSettingsProton(settings = state.settings) {
+  const f = $('settings-proton').elements;
+  f.proton_email.value = settings?.proton_email || '';
+  f.cli.value = settings?.cli || '';
+  const override = state.config?.cli_override || '';
+  const note = $('settings-cli-override');
+  note.textContent = override ? `Wird ignoriert: Der Viewer wurde mit --cli ${override} gestartet.` : '';
+  note.hidden = !override;
+}
+
+function renderSettingsLibrary() {
+  $('settings-library-path').textContent = state.config?.library || '(keine)';
+}
+
+// Focus survives a redraw of the list: the same control of the same source, else the same control of
+// the neighbouring source, else the dialog heading.
+function focusKey() {
+  const a = document.activeElement;
+  const row = a?.closest?.('#settings-sources li[data-id]');
+  if (!row || !a.dataset.action) return null;
+  return { id: row.dataset.id, action: a.dataset.action, index: [...row.parentNode.children].indexOf(row) };
+}
+
+function restoreFocus(key) {
+  if (!key) return;
+  const rows = [...$('settings-sources').children].filter((li) => li.dataset.id);
+  const row = rows.find((li) => li.dataset.id === key.id) || rows[key.index] || rows[key.index - 1];
+  const usable = (c) => c && !c.disabled && !c.hidden;
+  const target = row && [key.action, 'name', 'select']
+    .map((action) => row.querySelector(`[data-action="${action}"]`))
+    .find(usable);
+  if (target) target.focus();
+  else $('settings-title').focus();
+}
+
+function moveReq(id, delta) {
+  return () => {
+    const i = state.sources.findIndex((s) => s.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= state.sources.length) return null;
+    return { url: `/api/sources/${encodeURIComponent(id)}`, init: jsonPost({ position: j }) };
+  };
+}
+
+async function uploadIcon(src, input) {
+  const file = input.files?.[0];
+  input.value = ''; // choosing the same file again must fire change
+  if (!file) return;
+  if (!ICON_FILE_TYPES.includes(file.type)) {
+    showSettingsWarn('Das Icon muss PNG oder SVG sein.');
     return;
   }
-  if (res.ok) {
-    location.reload(); // simplest way to drop all state of the previous directory
+  if (file.size > ICON_MAX_BYTES) {
+    showSettingsWarn('Das Icon ist größer als 512 KiB.');
     return;
   }
-  open.disabled = !dirState.openable;
-  showDirWarn(res.status === 409 ? 'Während eines Abrufs kann das Verzeichnis nicht gewechselt werden.'
-    : (data && data.error) || `Fehler ${res.status}`);
+  let bytes;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch (err) {
+    showSettingsWarn(`Datei konnte nicht gelesen werden (${err.message}).`);
+    return;
+  }
+  changeSettings(() => ({
+    url: `/api/sources/${encodeURIComponent(src.id)}/icon`,
+    init: { headers: { 'Content-Type': file.type }, body: bytes },
+    done: () => { state.iconVer[src.id] = (state.iconVer[src.id] || 0) + 1; },
+  }));
+}
+
+function settingsRow(src, i, count) {
+  const url = `/api/sources/${encodeURIComponent(src.id)}`;
+  const icon = src.icon || {};
+  const kind = icon.type === 'emoji' || icon.type === 'image' ? icon.type : 'auto';
+  const li = el('li', { class: 'src-row', 'data-id': src.id });
+
+  const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', autocomplete: 'off', 'data-action': 'name' });
+  name.value = src.name;
+  name.addEventListener('change', () => {
+    const v = name.value.trim();
+    if (!v) {
+      name.value = src.name;
+      showSettingsWarn('Der Name darf nicht leer sein.');
+      return;
+    }
+    if (v !== src.name) changeSettings(() => ({ url, init: jsonPost({ name: v }) }));
+  });
+  const up = el('button', { class: 'btn small', type: 'button', title: 'Nach oben', 'aria-label': `${src.name} nach oben`, text: '↑', 'data-action': 'up' });
+  up.disabled = i === 0;
+  up.addEventListener('click', () => changeSettings(moveReq(src.id, -1)));
+  const down = el('button', { class: 'btn small', type: 'button', title: 'Nach unten', 'aria-label': `${src.name} nach unten`, text: '↓', 'data-action': 'down' });
+  down.disabled = i === count - 1;
+  down.addEventListener('click', () => changeSettings(moveReq(src.id, 1)));
+  li.append(el('div', { class: 'line' }, [sourceIcon(src, 'rail'), name, up, down]));
+
+  const select = el('select', { 'aria-label': `Icon von ${src.name}`, 'data-action': 'select' }, [
+    el('option', { value: 'auto', text: 'Kürzel und Farbe' }),
+    el('option', { value: 'emoji', text: 'Emoji' }),
+    el('option', { value: 'image', text: 'Bild-Datei' }),
+  ]);
+  select.value = kind;
+  const emoji = el('input', { type: 'text', class: 'emoji', 'aria-label': 'Emoji', autocomplete: 'off', 'data-action': 'emoji' });
+  emoji.value = icon.type === 'emoji' ? icon.value : '';
+  emoji.hidden = kind !== 'emoji';
+  // An empty value is sent too: the server refuses it and the list is redrawn with the stored emoji.
+  emoji.addEventListener('change', () => {
+    const v = emoji.value.trim();
+    changeSettings(() => ({ url, init: jsonPost({ icon: { type: 'emoji', value: v } }) }));
+  });
+  const file = el('input', { type: 'file', accept: 'image/png,image/svg+xml', 'aria-label': `Bild-Datei für ${src.name}`, 'data-action': 'file' });
+  file.hidden = kind !== 'image';
+  file.addEventListener('change', () => uploadIcon(src, file));
+  select.addEventListener('change', () => {
+    emoji.hidden = select.value !== 'emoji';
+    file.hidden = select.value !== 'image';
+    if (select.value === 'auto') changeSettings(() => ({ url, init: jsonPost({ icon: { type: 'auto' } }) }));
+    else if (select.value === 'emoji') emoji.focus();
+  });
+
+  const hide = el('button', { class: 'btn small', type: 'button', text: src.hidden ? 'Einblenden' : 'Ausblenden', 'data-action': 'hide' });
+  hide.addEventListener('click', () => changeSettings(() => ({ url, init: jsonPost({ hidden: !src.hidden }) })));
+  const removeBtn = el('button', { class: 'btn small', type: 'button', text: 'Entfernen', 'data-action': 'remove' });
+  removeBtn.addEventListener('click', () => {
+    if (confirm('Quelle aus der Bibliothek entfernen? Die Mail-Dateien bleiben erhalten.')) {
+      changeSettings(() => ({ url: `${url}/remove`, init: jsonPost({}) }));
+    }
+  });
+  li.append(el('div', { class: 'line' }, [select, emoji, file, hide, removeBtn]));
+
+  const info = [
+    `${src.count ?? 0} Mails`,
+    src.hidden ? 'ausgeblendet' : '',
+    src.available ? '' : 'nicht erreichbar',
+  ].filter(Boolean).join(' · ');
+  li.append(el('div', { class: 'hint', text: info }));
+  return li;
+}
+
+// Redraws the source list from state and restores the focused control if it still exists.
+function renderSettingsSources() {
+  const key = focusKey();
+  const list = state.sources;
+  $('settings-sources').replaceChildren(...(list.length
+    ? list.map((src, i) => settingsRow(src, i, list.length))
+    : [el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' })]));
+  restoreFocus(key);
+}
+
+function renderSettingsAll() {
+  renderSettingsView();
+  renderSettingsProton();
+  renderSettingsSources();
+  renderSettingsLibrary();
+}
+
+async function openSettings() {
+  showSettingsWarn('');
+  renderSettingsAll();
+  const dlg = $('settings-dialog');
+  if (!dlg.open) dlg.showModal();
+  await queueSettings(() => reloadAdmin());
+}
+
+$('rail-settings').addEventListener('click', openSettings);
+$('settings-view').addEventListener('change', async (e) => {
+  const view = e.target.value;
+  if (!(await changeSettings(() => ({ url: '/api/settings', init: jsonPost({ view }) }))).ok) renderSettingsView();
 });
+$('settings-proton').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.currentTarget.elements;
+  const body = { proton_email: f.proton_email.value.trim(), cli: f.cli.value.trim() };
+  const res = await changeSettings(() => ({ url: '/api/settings', init: jsonPost(body) }));
+  // On failure the typed values stay; on success the fields show what the server stored.
+  if (res.ok && res.data?.settings) renderSettingsProton(res.data.settings);
+});
+$('settings-library-change').addEventListener('click', () => {
+  $('settings-dialog').close();
+  openLibraryDialog(false);
+});
+$('settings-close').addEventListener('click', () => $('settings-dialog').close());
 
 /* ---------- Events ---------- */
 $('more').addEventListener('click', () => {
@@ -840,13 +1493,58 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- Start ---------- */
-loadConfig().then((ok) => {
-  if (state.config && !state.config.configured) {
-    openWorkdirDialog(true);
+// Failed reads keep what is loaded, so a failed refresh never empties rail, folders or dialog.
+const loadWarnings = new Map(); // key -> message of a failed read, shown until dismissed
+function renderLoadWarn() {
+  const msgs = [...loadWarnings.values()];
+  $('load-warn-text').textContent = msgs.join(' ');
+  $('load-warn').hidden = msgs.length === 0;
+}
+$('load-warn-close').addEventListener('click', () => {
+  loadWarnings.clear();
+  renderLoadWarn();
+});
+
+async function loadConfig() {
+  let config;
+  try {
+    config = await api('/api/config');
+  } catch (_) {
+    loadWarnings.set('config', 'Konfiguration konnte nicht geladen werden.');
+    renderLoadWarn();
     return;
   }
+  state.config = config;
+  state.settings = config.settings || null;
+  loadWarnings.delete('config');
+  renderLoadWarn();
+}
+
+async function loadSources() {
+  let sources;
+  try {
+    sources = await api('/api/sources');
+  } catch (_) {
+    loadWarnings.set('sources', 'Quellen konnten nicht geladen werden.');
+    renderLoadWarn();
+    return;
+  }
+  state.sources = sources;
+  loadWarnings.delete('sources');
+  renderLoadWarn();
+}
+
+loadConfig().then(async () => {
+  if (state.config && !state.config.configured) {
+    openPicker('library', true);
+    return;
+  }
+  await loadSources();
+  state.view = startView();
+  renderRail();
+  updateFetchArea();
   loadFolders();
-  if (ok) checkFetchStatus();
+  pollJob();
 });
 })();
 </script>

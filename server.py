@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Read-only local web viewer for mail backups (stdlib only); currently reads Proton Mail exports.
+"""Read-only local web viewer for a library of mail backups (stdlib only).
 
-Usage: python server.py [EXPORT_DIR] [--port 8025] [--cli PATH] [--config FILE]
+Usage: python server.py [LIBRARY_DIR] [--port 8025] [--cli PATH] [--config FILE]
 
-EXPORT_DIR is a mail dir (contains labels.json) or an account dir (its newest mail_* is shown).
-Without EXPORT_DIR the saved choice from the config file is used; if there is none, the page
-shows a directory browser and the user picks one (optionally remembering it).
-With the export CLI available, POST /api/fetch fetches fresh mail into the account dir.
+LIBRARY_DIR holds library.json, which lists the mail sources (Proton accounts or maildirs) shown
+together. Its messages are indexed in archive.db (a cache next to library.json). Without
+LIBRARY_DIR the library remembered in the config file is opened; if there is none, the page
+asks for a library folder (optionally creating one or remembering the choice).
+Mail files are only read, never written.
 """
 
 from __future__ import annotations
@@ -18,12 +19,14 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import asdict
 from email import policy
 from email.message import Message
 from email.parser import BytesParser
@@ -31,46 +34,32 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_library
+from store import META_SUFFIX, Store, addr, addr_list, to_int
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-SYSTEM_FOLDER_ORDER = ["0", "7", "5", "4", "3", "6", "8"]
 MAX_LIMIT = 200
-META_SUFFIX = ".metadata.json"
-MSG_RE = re.compile(r"^/api/message/([^/]+)$")
-ATT_RE = re.compile(r"^/api/message/([^/]+)/attachment/(\d+)$")
+MSG_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)$")
+ATT_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/attachment/(\d+)$")
+SOURCE_RE = re.compile(r"^/api/sources/([^/]+)(?:/(remove|icon))?$")
+ICON_RE = re.compile(r"^/api/sources/([^/]+)/icon$")
 CID_RE = re.compile(r"cid:([^\s\"'<>()]+)")
 CLI_NAME = "proton-mail-export-cli"
 MAX_BROWSE_ENTRIES = 2000
 MAX_BODY = 64 * 1024
-FETCH_LOG_LINES = 50
+MAX_ICON = 512 * 1024
+ICON_TYPES = {"image/png": "png", "image/svg+xml": "svg"}  # Content-Type -> file extension
+ICON_CTYPES = {ext: ctype for ctype, ext in ICON_TYPES.items()}
+# an SVG is only ever shown as an image document: no scripts, no external loads
+ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; sandbox"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+SOURCE_FIELDS = ("name", "icon", "hidden", "position")
+SETTINGS_FIELDS = tuple(asdict(Settings()))
+POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings")
+LOG_LINES = 50
+INDEX_DB = "archive.db"
 
 Json = dict[str, Any]
-
-
-@dataclass
-class Index:
-    export_dir: str
-    labels: list[Json]
-    messages: dict[str, Json]  # filename stem (= message ID) -> metadata Payload
-
-
-def build_index(export_dir: str) -> Index:
-    """Load labels.json and all *.metadata.json; broken metadata files are skipped."""
-    with open(os.path.join(export_dir, "labels.json"), encoding="utf-8") as f:
-        labels = json.load(f)["Payload"]
-    messages: dict[str, Json] = {}
-    for name in sorted(os.listdir(export_dir)):
-        if not name.endswith(META_SUFFIX):
-            continue
-        try:
-            with open(os.path.join(export_dir, name), encoding="utf-8") as f:
-                payload = json.load(f)["Payload"]
-            if not isinstance(payload, dict):
-                raise ValueError("Payload is not an object")
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            print(f"skipping {name}: {exc}", file=sys.stderr)
-            continue
-        messages[name[: -len(META_SUFFIX)]] = payload
-    return Index(export_dir, labels, messages)
 
 
 def mail_dirs(parent: str) -> list[str]:
@@ -139,7 +128,7 @@ def browse(path: str) -> Json:
         full = os.path.join(p, name)
         if name.startswith(".") or not os.path.isdir(full):
             continue
-        dirs.append({"name": name, "openable": is_openable(full)})
+        dirs.append({"name": name, "openable": is_openable(full), "library": is_library(full)})
         if len(dirs) >= MAX_BROWSE_ENTRIES:
             break
     return {
@@ -147,6 +136,7 @@ def browse(path: str) -> Json:
         "parent": None if p == os.path.dirname(p) else os.path.dirname(p),
         "home": os.path.expanduser("~"),
         "openable": is_openable(p),
+        "library": is_library(p),
         "dirs": dirs,
     }
 
@@ -156,25 +146,52 @@ def default_config_path() -> str:
     return os.path.join(base, "mail-backup-viewer", "config.json")
 
 
-def load_saved(config_path: str) -> str | None:
+def _config_value(config_path: str, key: str) -> str | None:
     try:
         with open(config_path, encoding="utf-8") as f:
-            value = json.load(f).get("export_dir")
+            value = json.load(f).get(key)
     except (OSError, ValueError, AttributeError):
         return None
     return value if isinstance(value, str) and value else None
 
 
-def save_saved(config_path: str, export_dir: str | None) -> None:
-    """Persist the chosen directory; None forgets it. The file is replaced atomically."""
-    if export_dir is None:
+def load_saved(config_path: str) -> str | None:
+    return _config_value(config_path, "library")
+
+
+def load_legacy(config_path: str) -> str | None:
+    """Export dir of the viewer before libraries existed; offered once, then added as a source."""
+    return _config_value(config_path, "export_dir")
+
+
+def _update_config(config_path: str, updates: dict[str, str | None]) -> None:
+    """Set or (value None) remove keys of the config file; unknown keys are kept. The file is
+    replaced atomically, and removed when nothing is left in it."""
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    for key, value in updates.items():
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
+    if not data:
         remove_quiet(config_path)
         return
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     tmp = f"{config_path}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"export_dir": export_dir}, f)
+        json.dump(data, f)
     os.replace(tmp, config_path)
+
+
+def save_saved(config_path: str, library_dir: str | None) -> None:
+    """Persist the library folder; None forgets it."""
+    _update_config(config_path, {"library": library_dir})
 
 
 def free_name(parent: str, name: str) -> str:
@@ -185,71 +202,9 @@ def free_name(parent: str, name: str) -> str:
     return candidate
 
 
-def addr(d: Any) -> Json:
-    d = d or {}
-    return {"name": d.get("Name") or "", "address": d.get("Address") or ""}
-
-
-def addr_list(items: Any) -> list[Json]:
-    return [addr(x) for x in items or []]
-
-
-def folder_key(f: Json) -> tuple[int, int, str]:
-    if f["id"] in SYSTEM_FOLDER_ORDER:
-        return (0, SYSTEM_FOLDER_ORDER.index(f["id"]), "")
-    return (1, 0, f["name"].casefold())
-
-
-def list_folders(index: Index) -> list[Json]:
-    out = []
-    for label in index.labels:
-        members = [m for m in index.messages.values() if label["ID"] in (m.get("LabelIDs") or [])]
-        if members:
-            out.append({
-                "id": label["ID"],
-                "name": label.get("Name", ""),
-                "path": label.get("Path", ""),
-                "color": label.get("Color", ""),
-                "count": len(members),
-                "unread": sum(m.get("Unread") == 1 for m in members),
-            })
-    return sorted(out, key=folder_key)
-
-
-def summarize(mid: str, meta: Json) -> Json:
-    return {
-        "id": mid,
-        "subject": meta.get("Subject") or "",
-        "sender": addr(meta.get("Sender")),
-        "to": addr_list(meta.get("ToList")),
-        "time": int(meta.get("Time") or 0),
-        "unread": meta.get("Unread") == 1,
-        "attachments": int(meta.get("NumAttachments") or 0),
-    }
-
-
-def matches(meta: Json, needle: str) -> bool:
-    """needle must already be casefolded."""
-    fields = [meta.get("Subject") or ""]
-    for person in [meta.get("Sender"), *(meta.get("ToList") or [])]:
-        fields.extend(addr(person).values())
-    return any(needle in f.casefold() for f in fields)
-
-
-def list_messages(index: Index, folder: str | None, needle: str, offset: int, limit: int) -> Json:
-    items = [
-        (mid, m) for mid, m in index.messages.items()
-        if (not folder or folder in (m.get("LabelIDs") or []))
-        and (not needle or matches(m, needle))
-    ]
-    items.sort(key=lambda it: (int(it[1].get("Time") or 0), it[0]), reverse=True)
-    page = items[offset : offset + limit]
-    return {"total": len(items), "messages": [summarize(mid, m) for mid, m in page]}
-
-
-def load_eml(index: Index, mid: str) -> Message:
-    # mid must already be validated against index.messages, so no path escapes export_dir
-    with open(os.path.join(index.export_dir, mid + ".eml"), "rb") as f:
+def load_eml(mail_dir: str, mid: str) -> Message:
+    # mid must already be confirmed by Store.message, so no path escapes mail_dir
+    with open(os.path.join(mail_dir, mid + ".eml"), "rb") as f:
         return BytesParser(policy=policy.default).parsebytes(f.read())
 
 
@@ -310,22 +265,21 @@ def parse_body(msg: Message) -> Json:
     }
 
 
-def load_message(index: Index, mid: str) -> Json:
-    meta = index.messages[mid]
+def load_message(mail_dir: str, mid: str, payload: Json) -> Json:
     out: Json = {
         "id": mid,
-        "subject": meta.get("Subject") or "",
-        "from": addr(meta.get("Sender")),
-        "to": addr_list(meta.get("ToList")),
-        "cc": addr_list(meta.get("CCList")),
-        "time": int(meta.get("Time") or 0),
+        "subject": payload.get("Subject") or "",
+        "from": addr(payload.get("Sender")),
+        "to": addr_list(payload.get("ToList")),
+        "cc": addr_list(payload.get("CCList")),
+        "time": to_int(payload.get("Time")),
         "text": None,
         "html": None,
         "attachments": [],
         "error": None,
     }
     try:
-        out.update(parse_body(load_eml(index, mid)))
+        out.update(parse_body(load_eml(mail_dir, mid)))
     except FileNotFoundError:
         out["error"] = "message file (.eml) not found"
     except Exception as exc:  # untrusted input: any parser failure becomes an error field
@@ -333,9 +287,9 @@ def load_message(index: Index, mid: str) -> Json:
     return out
 
 
-def get_attachment(index: Index, mid: str, n: int) -> Message | None:
+def get_attachment(mail_dir: str, mid: str, n: int) -> Message | None:
     try:
-        parts = attachment_parts(load_eml(index, mid))
+        parts = attachment_parts(load_eml(mail_dir, mid))
     except Exception:  # missing or unparsable .eml: nothing to serve
         return None
     return parts[n] if 0 <= n < len(parts) else None
@@ -356,9 +310,15 @@ def cli_env(email: str, tmp: str, password: str, mailbox: str, totp: str) -> dic
 
 
 def redact(text: str, secrets: list[str]) -> str:
-    # longest first, so a secret that contains another one is fully hidden
-    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
-        text = text.replace(secret, "***")
+    """Hide each secret, also as the CLI may echo it: URL-quoted or JSON-escaped. Longest first, so a
+    secret that contains another one is fully hidden."""
+    forms: set[str] = set()
+    for secret in secrets:
+        if secret:
+            forms.update((secret, quote(secret, safe=""), json.dumps(secret)[1:-1],
+                          json.dumps(secret, ensure_ascii=False)[1:-1]))
+    for form in sorted((f for f in forms if f), key=len, reverse=True):
+        text = text.replace(form, "***")
     return text
 
 
@@ -438,153 +398,444 @@ def _text(body: Json, key: str) -> str:
     return value
 
 
-def parse_fetch_body(raw: bytes, default_email: str) -> tuple[str, str, str, str]:
-    """Return (email, password, mailbox_password, totp); ValueError messages are shown to the client."""
+def has_control(value: str) -> bool:
+    return any(ord(c) < 32 or ord(c) == 127 for c in value)
+
+
+def check_text(value: str, what: str) -> str:
+    if has_control(value):
+        raise ValueError(f"invalid {what}")
+    return value
+
+
+def check_email(email: str) -> str:
+    """The email becomes a directory name (the CLI's output dir), so no separators, dot names,
+    control characters or surrounding spaces; RFC 5321 caps an address at 254 characters."""
+    if (len(email) > 254 or has_control(email) or email != email.strip()
+            or "/" in email or "\\" in email or email in (".", "..")):
+        raise ValueError("invalid email")
+    return email
+
+
+def parse_fetch_body(raw: bytes) -> tuple[str, str, str, str, str]:
+    """Return (source, email, password, mailbox_password, totp). An empty email means the source's
+    default, which only the viewer knows. ValueError messages are shown to the client."""
+    body = load_json_object(raw)
+    source = _text(body, "source").strip()
+    if not source:
+        raise ValueError("missing source")
+    password = check_text(_text(body, "password"), "password")
+    if not password:
+        raise ValueError("missing password")
+    email = check_email(_text(body, "email"))
+    mailbox = check_text(_text(body, "mailbox_password"), "mailbox_password")
+    return source, email, password, mailbox, check_text(_text(body, "totp"), "totp").strip()
+
+
+def load_json_object(raw: bytes) -> Json:
+    """Parse a request body that must be a JSON object. ValueError messages are shown to the client."""
     try:
         body = json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:  # nesting too deep is just as invalid
         raise ValueError("invalid JSON body") from exc
     if not isinstance(body, dict):
         raise ValueError("body must be a JSON object")
-    email = _text(body, "email").strip() or default_email
-    password = _text(body, "password")
-    if not password:
-        raise ValueError("missing password")
-    if not email:
-        raise ValueError("missing email")
-    if "/" in email or "\\" in email or email in (".", ".."):
-        raise ValueError("invalid email")
-    return email, password, _text(body, "mailbox_password"), _text(body, "totp").strip()
+    return body
 
 
-def _idle_status() -> Json:
-    return {"state": "idle", "log": [], "message": None, "export": None, "started": None}
+def only_keys(body: Json, allowed: tuple[str, ...]) -> None:
+    """Refuse fields the endpoint does not know, instead of silently ignoring them."""
+    unknown = sorted(set(body) - set(allowed))
+    if unknown:
+        raise ValueError(f"Unbekanntes Feld: {', '.join(unknown)}")
+
+
+def valid_icon(ext: str, data: bytes) -> bool:
+    """Cheap content check before an upload is stored: a PNG signature, or SVG-looking UTF-8 text."""
+    if ext == "png":
+        return data.startswith(PNG_SIGNATURE)
+    try:
+        text = data.decode("utf-8-sig").strip()
+    except UnicodeDecodeError:
+        return False
+    return text.startswith("<") and "<svg" in text
 
 
 class Busy(Exception):
-    """The working directory cannot change while a fetch is running."""
+    """The job slot is taken: the library cannot be switched or a second job started meanwhile."""
+
+
+class FetchUnavailable(Exception):
+    """No export CLI is known for the source."""
+
+
+class Job:
+    """The one background job (index or fetch). Its state is served at /api/job."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: Json = {"state": "idle", "kind": None, "log": [], "message": None,
+                             "progress": None, "started": None, "result": None}
+
+    def start(self, kind: str, target: Callable[[Job], None]) -> bool:
+        """Run target in a thread unless a job is running. An exception ends in state "error"."""
+        with self._lock:
+            if self._state["state"] == "running":
+                return False
+            self._state = {"state": "running", "kind": kind, "log": [], "message": None,
+                           "progress": None, "started": int(time.time()), "result": None}
+        threading.Thread(target=self._run, args=(target,), daemon=True).start()
+        return True
+
+    def _run(self, target: Callable[[Job], None]) -> None:
+        try:
+            target(self)
+        except Exception as exc:  # reported in the status, never raised into the thread
+            self._finish("error", str(exc) or type(exc).__name__)
+        else:
+            self._finish("done")
+
+    def log(self, line: str) -> None:
+        with self._lock:
+            log = self._state["log"]
+            log.append(line)
+            del log[:-LOG_LINES]
+
+    def progress(self, done: int, total: int) -> None:
+        with self._lock:
+            self._state["progress"] = {"done": done, "total": total}
+
+    def status(self) -> Json:
+        with self._lock:
+            return {**self._state, "log": list(self._state["log"])}
+
+    def running(self) -> bool:
+        with self._lock:
+            return self._state["state"] == "running"
+
+    def set_result(self, result: Json) -> None:
+        with self._lock:
+            self._state["result"] = result
+
+    def _finish(self, state: str, message: str | None = None) -> None:
+        with self._lock:
+            self._state.update(state=state, message=message)
+
+
+def _open_store(lib: Library) -> Store:
+    """Open <root>/archive.db and drop the index rows of sources that left library.json."""
+    try:
+        store = Store(os.path.join(lib.root, INDEX_DB))
+        try:
+            kept = {s.id for s in lib.sources}
+            for n in range(1, lib.next_id):  # source ids are never reused, so this covers every removed one
+                sid = f"s{n}"
+                if sid not in kept and store.mail_dir(sid) is not None:
+                    store.drop_source(sid)
+        finally:
+            store.close()  # this thread's connection; readers reconnect lazily
+    except sqlite3.Error as exc:
+        raise LibraryError(f"Der Index kann nicht geöffnet werden: {exc}") from exc
+    return store
+
+
+def _has_path(lib: Library, path: str) -> bool:
+    real = os.path.realpath(path)
+    return any(os.path.realpath(lib.abspath(s)) == real for s in lib.sources)
 
 
 class Viewer:
-    """State shared by all handler threads: the current index (None until a directory is
-    chosen), the single fetch slot and the remembered choice."""
+    """State shared by all handler threads: the open library with its index, the background job
+    and the remembered choice. A new library replaces library and store as a whole."""
 
-    def __init__(self, index: Index | None, account_dir: str, cli: str | None,
-                 explicit_cli: bool = False, config_path: str | None = None) -> None:
-        self.account_dir = account_dir
+    def __init__(self, cli: str | None = None, explicit_cli: bool = False,
+                 config_path: str | None = None) -> None:
         self.cli = cli
         self.explicit_cli = explicit_cli
         self.config_path = config_path
         self.saved: str | None = load_saved(config_path) if config_path else None
         self.saved_error: str | None = None
-        self._index = index
-        self._lock = threading.Lock()  # guards _index, _status and the directory fields
-        self._status = _idle_status()
+        self.library: Library | None = None
+        self.store: Store | None = None
+        self.job = Job()
+        self._lock = threading.Lock()  # serializes open_library
 
-    @property
-    def index(self) -> Index | None:
+    def open_library(self, path: str, create: bool = False, remember: bool | None = None,
+                     add_legacy: bool = False) -> None:
+        """Open or create the library at path and index all its sources in the background.
+
+        Everything is prepared before the current library is replaced, so a failure leaves the
+        old one in place. remember=True saves the choice, False forgets a saved one, None leaves
+        it alone. Raises LibraryError, or Busy while an index job runs."""
+        root = os.path.abspath(os.path.expanduser(path))
         with self._lock:
-            return self._index
+            if self.job.status()["state"] == "running":
+                raise Busy("index job running")
+            legacy = load_legacy(self.config_path) if add_legacy and self.config_path else None
+            if legacy:  # checked before anything is written, so a failed request leaves no library.json
+                try:
+                    detect_kind(os.path.abspath(os.path.expanduser(legacy)))
+                except LibraryError as exc:
+                    raise LibraryError(f"Bisheriges Verzeichnis {legacy} nicht gefunden. "
+                                       "Haken entfernen oder Verzeichnis anschließen.") from exc
+            lib = Library.create(root) if create else Library.open(root)
+            if legacy and not _has_path(lib, legacy):
+                lib.add_source(legacy)
+            store = _open_store(lib)
+            updates: dict[str, str | None] = {}
+            if remember is not None:
+                updates["library"] = root if remember else None
+            if legacy:  # consumed: stop offering it
+                updates["export_dir"] = None
+            if updates and self.config_path:
+                try:
+                    _update_config(self.config_path, updates)
+                except OSError as exc:
+                    raise LibraryError(f"Die Auswahl kann nicht gespeichert werden: "
+                                       f"{exc.strerror or exc}") from exc
+            if remember is not None:
+                self.saved = root if remember else None
+                self.saved_error = None
+            self.library, self.store = lib, store
+            self.start_index()
 
-    def open_dir(self, path: str, remember: bool | None = None) -> None:
-        """Make path (a mail dir or account dir) the working directory.
+    def _admin_library(self, idle: bool) -> tuple[Library, Store]:
+        """Library and store for an admin change; the caller holds _lock. Busy while a job runs if idle."""
+        lib, store = self.library, self.store
+        if lib is None or store is None:
+            raise Busy("no library chosen")
+        if idle and self.job.running():
+            raise Busy("index job running")
+        return lib, store
 
-        remember=True saves the choice, False forgets a saved one, None leaves it alone.
-        Raises ValueError for an unusable directory and Busy during a fetch."""
-        mail_dir = resolve_mail_dir(os.path.abspath(os.path.expanduser(path)))
-        index = build_index(mail_dir)
-        account = account_dir_of(mail_dir)
+    def add_source(self, path: str, name: str) -> Source:
+        """Add a source and index only it. Busy while a job runs, and then nothing is added."""
         with self._lock:
-            if self._status["state"] == "running":
-                raise Busy("fetch running")
-            self._index = index
-            self.account_dir = account
-            if not self.explicit_cli:
-                self.cli = find_cli(account)
-            self._status = _idle_status()
-        if remember is not None and self.config_path:
+            lib, _ = self._admin_library(idle=True)
+            src = lib.add_source(os.path.abspath(os.path.expanduser(path)), name)
+            self.start_index([src.id])
+            return src
+
+    def update_source(self, source_id: str, *, name: str | None, icon: Json | None,
+                      hidden: bool | None, position: int | None) -> None:
+        """Rename, icon, hide and reorder touch library.json only, so they may run during a job."""
+        with self._lock:
+            lib, _ = self._admin_library(idle=False)
+            lib.update_source(source_id, name=name, icon=icon, hidden=hidden)
+            if position is not None:
+                lib.move_source(source_id, position)
+
+    def remove_source(self, source_id: str) -> None:
+        """Forget the source and its index rows. Its mail files are never touched."""
+        with self._lock:
+            lib, store = self._admin_library(idle=True)
+            lib.get(source_id)  # KeyError before anything changes
+            store.drop_source(source_id)  # first: if it fails, library.json and the icons stay as they are
+            lib.remove_source(source_id)
+
+    def set_icon(self, source_id: str, ext: str, data: bytes) -> None:
+        """Store the image as icons/<id>.<ext>, replacing the other type's file, and point the source at it."""
+        with self._lock:
+            lib, _ = self._admin_library(idle=True)
+            src = lib.get(source_id)  # KeyError for unknown ids: the file name never comes from the client
+            icons = os.path.join(lib.root, ICON_DIR)
+            os.makedirs(icons, exist_ok=True)
+            name = f"{src.id}.{ext}"
+            path = os.path.join(icons, name)
+            tmp = f"{path}.tmp"
             try:
-                save_saved(self.config_path, os.path.abspath(os.path.expanduser(path)) if remember else None)
-            except OSError as exc:
-                raise ValueError(f"cannot save the choice: {exc.strerror or exc}") from exc
-            self.saved = os.path.abspath(os.path.expanduser(path)) if remember else None
-            self.saved_error = None
+                with open(tmp, "wb") as f:
+                    f.write(data)
+                os.replace(tmp, path)
+            except BaseException:
+                remove_quiet(tmp)
+                raise
+            lib.update_source(src.id, icon={"type": "image", "file": name})
+            for other in ICON_CTYPES:
+                if other != ext:
+                    remove_quiet(os.path.join(icons, f"{src.id}.{other}"))
 
-    def status(self) -> Json:
+    def update_settings(self, fields: Json) -> None:
         with self._lock:
-            return {**self._status, "log": list(self._status["log"])}
+            lib, _ = self._admin_library(idle=False)
+            lib.update_settings(**fields)
 
-    def start_fetch(self, email: str, password: str, mailbox: str, totp: str) -> bool:
-        """Start a background fetch unless one is running. Secrets are passed on, not stored."""
-        with self._lock:
-            if self._status["state"] == "running":
-                return False
-            self._status = {"state": "running", "log": [], "message": None, "export": None,
-                            "started": int(time.time())}
-        threading.Thread(target=self._fetch, args=(email, password, mailbox, totp), daemon=True).start()
+    def available(self, source: Source) -> bool:
+        if self.library is None:
+            return False
+        try:
+            detect_kind(self.library.abspath(source))
+        except LibraryError:
+            return False
         return True
 
-    def _fetch(self, email: str, password: str, mailbox: str, totp: str) -> None:
+    def mail_dir_for(self, source: Source) -> str:
+        path = self.library.abspath(source)
+        return resolve_mail_dir(path) if source.kind == "proton" else path
+
+    def cli_for(self, source: Source) -> str | None:
+        """--cli if given, else the library's cli setting if it is an absolute executable path, else a CLI
+        found near the source."""
+        if self.explicit_cli and self.cli:
+            return self.cli
+        lib = self.library
+        setting = lib.settings.cli if lib is not None else ""
+        if os.path.isabs(setting) and is_executable(setting):
+            return setting
+        return find_cli(lib.abspath(source))
+
+    def start_index(self, source_ids: list[str] | None = None) -> bool:
+        """Index the given sources (all if None) in the background. False if a job is running or
+        no library is open. Unavailable sources are logged and skipped."""
+        lib, store = self.library, self.store
+        if lib is None or store is None:
+            return False
+        sources = list(lib.sources) if source_ids is None else [lib.get(sid) for sid in source_ids]
+
+        def index(job: Job) -> None:
+            try:
+                for src in sources:
+                    if not self.available(src):
+                        job.log(f"{src.name}: nicht erreichbar")
+                        continue
+                    try:  # one broken source must not stop the others
+                        result = store.sync_source(src.id, self.mail_dir_for(src), job.progress)
+                    except (OSError, ValueError, sqlite3.Error) as exc:
+                        job.log(f"{src.name}: Fehler: {exc}")
+                        continue
+                    job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+            finally:
+                store.close()  # the job thread's connection would otherwise be left unclosed
+
+        return self.job.start("index", index)
+
+    def start_fetch(self, source_id: str, email: str, password: str, mailbox: str, totp: str) -> None:
+        """Fetch fresh mail for one proton source as the job. Raises ValueError (bad request),
+        FetchUnavailable (no CLI), or Busy while another job runs. Secrets are passed on, never stored.
+        Checked and started under _lock, like open_library, so no job can start in between."""
+        with self._lock:
+            lib, store = self.library, self.store
+            if lib is None or store is None:
+                raise Busy("no library chosen")
+            try:
+                src = lib.get(source_id)
+            except KeyError as exc:
+                raise ValueError("unknown source") from exc
+            if src.kind != "proton":
+                raise ValueError("not a proton source")
+            cli = self.cli_for(src)
+            if cli is None:
+                raise FetchUnavailable("fetch not available")
+            account = account_dir_of(lib.abspath(src))
+            email = email or lib.settings.proton_email or account_email(account)
+            if not email:
+                raise ValueError("missing email")
+            check_email(email)
+
+            def fetch(job: Job) -> None:
+                try:
+                    self._fetch(job, store, src, cli, account, email, password, mailbox, totp)
+                finally:
+                    store.close()  # the job thread's connection, as in start_index
+
+            if not self.job.start("fetch", fetch):
+                raise Busy("job running")
+
+    def _fetch(self, job: Job, store: Store, src: Source, cli: str, account: str, email: str,
+               password: str, mailbox: str, totp: str) -> None:
+        """Run the CLI into a temp dir below the account dir, then move the export in, link unchanged
+        mails to the previous export and index it. Any failure leaves the old index and exports as they are."""
         secrets = [s for s in (password, mailbox, totp) if s]
-        previous = self.index.export_dir if self.index else ""  # the index about to be replaced
+        try:
+            previous = self.mail_dir_for(src)
+        except ValueError:  # no export yet
+            previous = None
         tmp = None
         try:
-            tmp = tempfile.mkdtemp(prefix=".fetch-", dir=self.account_dir)
-            code = self._run_cli(cli_env(email, tmp, password, mailbox, totp), secrets)
+            tmp = tempfile.mkdtemp(prefix=".fetch-", dir=account)
+            code = self._run_cli(cli, cli_env(email, tmp, password, mailbox, totp), secrets)
             if code != 0:
                 raise RuntimeError(f"CLI exited with code {code}")
             found = newest_fetched(tmp)
             if found is None:
                 raise RuntimeError("CLI produced no mail export")
-            name = free_name(self.account_dir, os.path.basename(found))
-            dest = os.path.join(self.account_dir, name)
+            dest = os.path.join(account, free_name(account, os.path.basename(found)))
             os.rename(found, dest)
             self._link_previous(previous, dest)
-            self._set_index(build_index(dest))
-            self._finish("done", export=name)
-        except Exception as exc:  # the old index stays in place
-            self._finish("error", message=redact(str(exc) or type(exc).__name__, secrets))
+            try:
+                result = store.sync_source(src.id, dest, job.progress)
+            except Exception:
+                self._restore_index(job, store, src, previous, secrets)
+                shutil.rmtree(dest, ignore_errors=True)  # only links and copies of the new export
+                raise
+            job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+            job.set_result({"source": src.id, "export": os.path.basename(dest)})
+        except Exception as exc:  # the message may echo a secret
+            raise RuntimeError(redact(str(exc) or type(exc).__name__, secrets)) from None
         finally:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
 
-    def _run_cli(self, env: dict[str, str], secrets: list[str]) -> int:
+    def _restore_index(self, job: Job, store: Store, src: Source, previous: str | None,
+                       secrets: list[str]) -> None:
+        """A failed sync may have committed part of the new export: point the index back at the
+        previous export, or drop the source's rows if there is none. Best effort, logged on failure."""
+        try:
+            if previous is None:
+                store.drop_source(src.id)
+            else:
+                store.sync_source(src.id, previous)
+        except Exception as exc:
+            job.log(redact(f"{src.name}: Index konnte nicht wiederhergestellt werden: {exc}", secrets))
+
+    def _run_cli(self, cli: str, env: dict[str, str], secrets: list[str]) -> int:
         # CLI 1.0.7 ignores ET_DIR for backups and would prompt for the path on stdin,
         # so pass it as --dir too (a path is no secret)
-        proc = subprocess.Popen([self.cli, "--dir", env["ET_DIR"]], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        proc = subprocess.Popen([cli, "--dir", env["ET_DIR"]], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace")
         with proc:
             for line in proc.stdout:
-                self._log(redact(line.rstrip("\r\n"), secrets))
+                self.job.log(redact(line.rstrip("\r\n"), secrets))
             return proc.wait()
 
-    def _link_previous(self, previous: str, dest: str) -> None:
+    def _link_previous(self, previous: str | None, dest: str) -> None:
         """Hardlink unchanged mails to the previous export. Failures only cost disk space, so never raise."""
-        if not os.path.isdir(previous):
+        if previous is None or not os.path.isdir(previous):
             return
         try:
             linked, saved = dedupe_with_previous(previous, dest)
         except Exception as exc:
-            self._log(f"Hardlinks fehlgeschlagen: {exc}")
+            self.job.log(f"Hardlinks fehlgeschlagen: {exc}")
             return
         if linked:
-            self._log(f"Hardlinks: {linked} Dateien, {human_size(saved)} gespart")
+            self.job.log(f"Hardlinks: {linked} Dateien, {human_size(saved)} gespart")
         else:
-            self._log("Hardlinks: keine identischen Dateien")
+            self.job.log("Hardlinks: keine identischen Dateien")
 
-    def _log(self, line: str) -> None:
-        with self._lock:
-            log = self._status["log"]
-            log.append(line)
-            del log[:-FETCH_LOG_LINES]
 
-    def _finish(self, state: str, message: str | None = None, export: str | None = None) -> None:
-        with self._lock:
-            self._status.update(state=state, message=message, export=export)
+def selected_sources(lib: Library, query: dict[str, list[str]]) -> list[str] | None:
+    """Ids from ?sources=s1,s2; without the parameter all visible sources. None if an id is unknown."""
+    if "sources" not in query:
+        return [s.id for s in lib.sources if not s.hidden]
+    ids = [x for x in _arg(query, "sources").split(",") if x]
+    known = {s.id for s in lib.sources}
+    return None if any(x not in known for x in ids) else ids
 
-    def _set_index(self, index: Index) -> None:
-        with self._lock:
-            self._index = index
+
+def source_list(viewer: Viewer, lib: Library, store: Store) -> list[Json]:
+    """All sources in library order, hidden ones included, with their index counts."""
+    stats = store.source_stats([s.id for s in lib.sources])
+    out = []
+    for src in lib.sources:
+        count, unread = stats[src.id]
+        out.append({
+            "id": src.id, "name": src.name, "kind": src.kind, "icon": src.icon, "hidden": src.hidden,
+            "available": viewer.available(src),
+            "fetchable": src.kind == "proton" and viewer.cli_for(src) is not None,
+            "count": count, "unread": unread,
+        })
+    return out
 
 
 def _arg(query: dict[str, list[str]], key: str) -> str:
@@ -606,85 +857,232 @@ def _origins(port: int) -> set[str]:
     return {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
 
+LIBRARY_ROUTES = ("/api/sources", "/api/folders", "/api/messages")
+
+
 def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         server_version = "MailViewer/1.0"
         sys_version = ""
 
+        def finish(self) -> None:
+            try:
+                super().finish()
+            finally:
+                # Request threads come and go; their SQLite connection is closed with the request
+                if viewer.store is not None:
+                    viewer.store.close()
+
         def do_GET(self) -> None:
             if self.headers.get("Host") not in _hosts(self.server.server_port):  # DNS-rebinding protection
                 return self._json(403, {"error": "host not allowed"})
-            index = viewer.index
             url = urlsplit(self.path)
-            query = parse_qs(url.query)
             if url.path == "/":
                 return self._index_page()
             if url.path == "/api/config":
-                return self._json(200, self._config(index))
+                return self._json(200, self._config())
             if url.path == "/api/browse":
                 try:
-                    return self._json(200, browse(_arg(query, "path") or viewer.saved or "~"))
+                    return self._json(200, browse(_arg(parse_qs(url.query), "path") or viewer.saved or "~"))
                 except ValueError as exc:
                     return self._json(400, {"error": str(exc)})
-            if url.path == "/api/fetch/status":
-                return self._json(200, viewer.status())
-            if index is None:
-                return self._json(409, {"error": "no directory chosen"})
-            if url.path == "/api/folders":
-                return self._json(200, list_folders(index))
-            if url.path == "/api/messages":
-                return self._json(200, self._list(index, query))
-            if m := ATT_RE.match(url.path):
-                return self._attachment(index, unquote(m[1]), int(m[2]))
-            if m := MSG_RE.match(url.path):
-                mid = unquote(m[1])
-                if mid not in index.messages:
-                    return self._json(404, {"error": "unknown message"})
-                return self._json(200, load_message(index, mid))
+            if url.path == "/api/job":
+                return self._json(200, viewer.job.status())
+            if url.path in LIBRARY_ROUTES or url.path.startswith("/api/message/") or ICON_RE.match(url.path):
+                lib, store = viewer.library, viewer.store  # one snapshot, even if a switch happens meanwhile
+                if lib is None or store is None:
+                    return self._json(409, {"error": "no library chosen"})
+                return self._library_get(lib, store, url)
             self._json(404, {"error": "not found"})
 
+        def _library_get(self, lib: Library, store: Store, url: Any) -> None:
+            query = parse_qs(url.query)
+            if m := ICON_RE.match(url.path):
+                return self._icon(lib, unquote(m[1]))
+            if url.path == "/api/sources":
+                return self._json(200, source_list(viewer, lib, store))
+            if url.path in ("/api/folders", "/api/messages"):
+                source_ids = selected_sources(lib, query)
+                if source_ids is None:
+                    return self._json(400, {"error": "unknown source"})
+                if url.path == "/api/folders":
+                    return self._json(200, store.folders(source_ids))
+                folder = _arg(query, "folder") or None
+                needle = _arg(query, "q").strip().casefold()
+                offset = max(0, _int(_arg(query, "offset"), 0))
+                limit = min(MAX_LIMIT, max(1, _int(_arg(query, "limit"), 50)))
+                return self._json(200, store.messages(source_ids, folder, needle, offset, limit))
+            if m := ATT_RE.match(url.path):
+                return self._attachment(store, unquote(m[1]), unquote(m[2]), int(m[3]))
+            if m := MSG_RE.match(url.path):
+                src, mid = unquote(m[1]), unquote(m[2])
+                hit = store.message(src, mid)  # the id must be indexed, so no path escapes a mail dir
+                if hit is None:
+                    return self._json(404, {"error": "unknown message"})
+                return self._json(200, load_message(hit[0], mid, hit[1]))
+            self._json(404, {"error": "not found"})
+
+        def _attachment(self, store: Store, src: str, mid: str, n: int) -> None:
+            hit = store.message(src, mid)
+            part = get_attachment(hit[0], mid, n) if hit is not None else None
+            if part is None:
+                return self._json(404, {"error": "no such attachment"})
+            name = quote(attachment_name(part, n), safe="")
+            self._send(200, attachment_payload(part), part.get_content_type(),
+                       (("Content-Disposition", f"attachment; filename*=UTF-8''{name}"),))
+
         def do_POST(self) -> None:
-            raw = self._read_body()  # read first, so refused requests leave no unread body behind
+            path = urlsplit(self.path).path
+            m = SOURCE_RE.match(path)
+            limit = MAX_ICON if m is not None and m[2] == "icon" else MAX_BODY
+            raw = self._read_body(limit)  # read first, so refused requests leave no unread body behind
             port = self.server.server_port
             if self.headers.get("Host") not in _hosts(port):
                 return self._json(403, {"error": "host not allowed"})
             if self.headers.get("Origin") not in _origins(port):  # a missing Origin is refused too
                 return self._json(403, {"error": "origin not allowed"})
-            path = urlsplit(self.path).path
-            if path not in ("/api/fetch", "/api/workdir"):
+            if m is None and path not in POST_ROUTES:
                 return self._json(404, {"error": "not found"})
-            if len(raw) > MAX_BODY:
+            if len(raw) > limit:
                 return self._json(400, {"error": "body too large"})
-            if path == "/api/workdir":
-                return self._set_workdir(raw)
-            if viewer.cli is None or viewer.index is None:
-                return self._json(404, {"error": "fetch not available"})
+            if m is None:
+                if path == "/api/fetch":
+                    return self._fetch(raw)
+                if path == "/api/library":
+                    return self._set_library(raw)
+                if path == "/api/sources":
+                    return self._add_source(raw)
+                return self._settings(raw)
+            source_id = unquote(m[1])
+            if m[2] == "icon":
+                return self._set_icon(source_id, raw)
+            if m[2] == "remove":
+                return self._remove_source(source_id)
+            self._update_source(source_id, raw)
+
+        def _admin(self, change: Callable[[], None], reply: Callable[[], Any]) -> None:
+            """Run an admin change, then answer with reply(). Busy is 409, unknown ids 404, bad input 400."""
             try:
-                email, password, mailbox, totp = parse_fetch_body(raw, account_email(viewer.account_dir))
-            except ValueError as exc:
+                change()
+                body = reply()
+            except Busy as exc:
+                return self._json(409, {"error": str(exc)})
+            except KeyError:
+                return self._json(404, {"error": "unknown source"})
+            except sqlite3.Error as exc:
+                return self._json(500, {"error": f"index error: {exc}"})
+            except (ValueError, OSError) as exc:  # LibraryError included
                 return self._json(400, {"error": str(exc)})
-            if not viewer.start_fetch(email, password, mailbox, totp):
-                return self._json(409, {"error": "fetch already running"})
+            self._json(200, body)
+
+        def _sources_reply(self) -> list[Json]:
+            lib, store = viewer.library, viewer.store
+            if lib is None or store is None:
+                raise Busy("no library chosen")
+            return source_list(viewer, lib, store)
+
+        def _add_source(self, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                path = body.get("path")
+                if not isinstance(path, str) or not path.strip():
+                    raise ValueError("path required")
+                viewer.add_source(path.strip(), check_text(_text(body, "name"), "name"))
+            self._admin(change, self._sources_reply)
+
+        def _update_source(self, source_id: str, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, SOURCE_FIELDS)
+                icon = body.get("icon")
+                if isinstance(icon, dict) and icon.get("type") == "image":
+                    raise ValueError("Bild-Icons werden über den Upload gesetzt.")
+                position = body.get("position")
+                if "position" in body and type(position) is not int:
+                    raise ValueError("position muss eine ganze Zahl sein.")
+                viewer.update_source(source_id, name=body.get("name"), icon=icon,
+                                     hidden=body.get("hidden"), position=position)
+            self._admin(change, self._sources_reply)
+
+        def _remove_source(self, source_id: str) -> None:
+            self._admin(lambda: viewer.remove_source(source_id), self._sources_reply)
+
+        def _set_icon(self, source_id: str, raw: bytes) -> None:
+            ext = ICON_TYPES.get(self.headers.get("Content-Type") or "")
+            if ext is None:
+                return self._json(400, {"error": "Das Icon muss PNG oder SVG sein."})
+            if not valid_icon(ext, raw):
+                return self._json(400, {"error": "invalid image"})
+            self._admin(lambda: viewer.set_icon(source_id, ext, raw), self._sources_reply)
+
+        def _settings(self, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, SETTINGS_FIELDS)
+                viewer.update_settings(body)
+            self._admin(change, self._config)
+
+        def _icon(self, lib: Library, source_id: str) -> None:
+            """Serve the stored icon only. The file must be <id>.png|svg and resolve directly inside icons/."""
+            try:
+                src = lib.get(source_id)
+            except KeyError:
+                return self._json(404, {"error": "unknown source"})
+            if src.icon.get("type") != "image":
+                return self._json(404, {"error": "no image icon"})
+            ctype = {f"{src.id}.{ext}": ct for ext, ct in ICON_CTYPES.items()}.get(src.icon.get("file"))
+            if ctype is None:
+                return self._json(404, {"error": "no image icon"})
+            icons = os.path.realpath(os.path.join(lib.root, ICON_DIR))
+            path = os.path.realpath(os.path.join(icons, src.icon["file"]))
+            if os.path.dirname(path) != icons or not os.path.isfile(path):  # e.g. a symlink out of icons/
+                return self._json(404, {"error": "no image icon"})
+            try:
+                with open(path, "rb") as f:
+                    body = f.read()
+            except OSError:
+                return self._json(404, {"error": "no image icon"})
+            self._send(200, body, ctype, (("Content-Security-Policy", ICON_CSP),))
+
+        def _fetch(self, raw: bytes) -> None:
+            if viewer.library is None:
+                return self._json(409, {"error": "no library chosen"})
+            try:
+                source, email, password, mailbox, totp = parse_fetch_body(raw)
+                viewer.start_fetch(source, email, password, mailbox, totp)
+            except Busy as exc:
+                return self._json(409, {"error": str(exc)})
+            except FetchUnavailable as exc:
+                return self._json(404, {"error": str(exc)})
+            except ValueError as exc:  # LibraryError included
+                return self._json(400, {"error": str(exc)})
             self._json(202, {"state": "running"})
 
-        def _set_workdir(self, raw: bytes) -> None:
+        def _set_library(self, raw: bytes) -> None:
             try:
                 data = json.loads(raw.decode("utf-8"))
-                path, remember = data["path"], bool(data.get("remember"))
+            except (ValueError, RecursionError):  # invalid UTF-8 and nesting too deep included
+                return self._json(400, {"error": "invalid JSON body"})
+            try:
+                path = data["path"]
                 if not isinstance(path, str) or not path.strip():
                     raise ValueError
             except (ValueError, KeyError, TypeError):
                 return self._json(400, {"error": "path required"})
             try:
-                viewer.open_dir(path.strip(), remember)
+                # an absent "remember" leaves the saved choice alone
+                remember = bool(data["remember"]) if "remember" in data else None
+                viewer.open_library(path.strip(), create=bool(data.get("create")),
+                                    remember=remember,
+                                    add_legacy=bool(data.get("add_legacy")))
             except Busy:
-                return self._json(409, {"error": "fetch running"})
+                return self._json(409, {"error": "index job running"})
             except (ValueError, OSError) as exc:
                 return self._json(400, {"error": str(exc)})
-            self._json(200, self._config(viewer.index))
+            self._json(200, self._config())
 
-        def _read_body(self) -> bytes:
-            """Drain the declared request body, keeping at most MAX_BODY + 1 bytes."""
+        def _read_body(self, limit: int = MAX_BODY) -> bytes:
+            """Drain the declared request body, keeping at most limit + 1 bytes."""
             left = max(0, _int(self.headers.get("Content-Length") or "", 0))
             kept = b""
             while left > 0:
@@ -692,35 +1090,21 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 if not chunk:
                     break
                 left -= len(chunk)
-                kept = (kept + chunk)[: MAX_BODY + 1]
+                kept = (kept + chunk)[: limit + 1]
             return kept
 
-        def _config(self, index: Index | None) -> Json:
+        def _config(self) -> Json:
+            lib = viewer.library
             return {
-                "configured": index is not None,
-                "fetch_available": index is not None and viewer.cli is not None,
-                "email": account_email(viewer.account_dir),
-                "export": os.path.basename(index.export_dir) if index else "",
-                "workdir": viewer.account_dir,
+                "configured": lib is not None,
+                "library": lib.root if lib is not None else None,
                 "saved": viewer.saved,
                 "saved_error": viewer.saved_error,
+                "legacy": load_legacy(viewer.config_path) if viewer.config_path else None,
+                "cli_override": viewer.cli if viewer.explicit_cli else None,  # --cli wins over the setting
                 "home": os.path.expanduser("~"),
+                "settings": asdict(lib.settings) if lib is not None else None,
             }
-
-        def _list(self, index: Index, query: dict[str, list[str]]) -> Json:
-            folder = _arg(query, "folder") or None
-            needle = _arg(query, "q").strip().casefold()
-            offset = max(0, _int(_arg(query, "offset"), 0))
-            limit = min(MAX_LIMIT, max(1, _int(_arg(query, "limit"), 50)))
-            return list_messages(index, folder, needle, offset, limit)
-
-        def _attachment(self, index: Index, mid: str, n: int) -> None:
-            part = get_attachment(index, mid, n) if mid in index.messages else None
-            if part is None:
-                return self._json(404, {"error": "no such attachment"})
-            name = quote(attachment_name(part, n), safe="")
-            self._send(200, attachment_payload(part), part.get_content_type(),
-                       (("Content-Disposition", f"attachment; filename*=UTF-8''{name}"),))
 
         def _index_page(self) -> None:
             try:
@@ -747,38 +1131,41 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
     return Handler
 
 
-def make_server(export_dir: str | None = None, port: int = 0, static_dir: str = HERE,
+def make_server(library_dir: str | None = None, port: int = 0, static_dir: str = HERE,
                 cli: str | None = None, config_path: str | None = None) -> ThreadingHTTPServer:
-    """Bind 127.0.0.1:port. cli=None auto-detects the export CLI (see find_cli).
+    """Bind 127.0.0.1:port. cli=None auto-detects the export CLI per source (see Viewer.cli_for).
 
-    Without export_dir the choice saved in config_path is opened; if that fails or nothing is
-    saved, the viewer starts empty and the page asks for a directory."""
+    An explicit library_dir must hold a library (LibraryError otherwise). Without it the library
+    saved in config_path is opened; if that fails or none is saved, the viewer starts empty and
+    the page asks for a library folder."""
     config_path = config_path or default_config_path()
     explicit_cli = cli is not None
     cli_path = os.path.abspath(cli) if cli is not None else None
     if cli_path is not None and not is_executable(cli_path):
         cli_path = None  # fetching is simply unavailable
-    viewer = Viewer(None, "", cli_path, explicit_cli, config_path)
-    if export_dir is not None:
-        viewer.open_dir(export_dir)
+    viewer = Viewer(cli_path, explicit_cli, config_path)
+    if library_dir is not None:
+        viewer.open_library(library_dir)
     elif viewer.saved:
         try:
-            viewer.open_dir(viewer.saved)
+            viewer.open_library(viewer.saved)
         except (ValueError, OSError) as exc:
             viewer.saved_error = f"{viewer.saved}: {exc}"
-    return ThreadingHTTPServer(("127.0.0.1", port), make_handler(viewer, static_dir))
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(viewer, static_dir))
+    httpd.viewer = viewer  # the state, for tests and tooling
+    return httpd
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Read-only local viewer for a mail export.")
-    parser.add_argument("export_dir", nargs="?",
-                        help="mail or account dir (default: the saved choice, else pick in the browser)")
+    parser = argparse.ArgumentParser(description="Read-only local viewer for a library of mail exports.")
+    parser.add_argument("library_dir", nargs="?",
+                        help="library folder with library.json (default: the remembered library)")
     parser.add_argument("--port", type=int, default=8025)
-    parser.add_argument("--cli", help="path to proton-mail-export-cli (default: look near the account dir)")
+    parser.add_argument("--cli", help="path to proton-mail-export-cli (default: look near each source)")
     parser.add_argument("--config", help=f"config file (default: {default_config_path()})")
     args = parser.parse_args(argv)
     try:
-        server = make_server(args.export_dir, args.port, cli=args.cli, config_path=args.config)
+        server = make_server(args.library_dir, args.port, cli=args.cli, config_path=args.config)
     except (OSError, ValueError) as exc:
         sys.exit(f"error: {exc}")
     print(f"Serving on http://127.0.0.1:{server.server_port}/ (Ctrl+C to stop)", file=sys.stderr)

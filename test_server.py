@@ -7,6 +7,7 @@ import io
 import json
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -18,12 +19,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from unittest import mock
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import server
+from library import LIBRARY_FILE, Library
 
 PDF = b"%PDF-1.4 synthetic fixture\n%%EOF"
 PNG = bytes(range(64))
+ICON_PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(64))  # carries the PNG signature the upload checks
 
 ID_PLAIN = "id1_AAAA"
 ID_ALT = "id2-BBBB=="
@@ -130,6 +133,8 @@ def make_export(root: str, name: str = "export") -> str:
 
 
 class Base(unittest.TestCase):
+    """One library with the synthetic export as source s1, served for the whole class."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp()
@@ -137,17 +142,23 @@ class Base(unittest.TestCase):
         cls.static = os.path.join(cls.tmp, "static")
         os.makedirs(cls.static)
         write(os.path.join(cls.static, "index.html"), "<!doctype html><title>synthetic</title>")
-        with contextlib.redirect_stderr(io.StringIO()):
-            cls.index = server.build_index(cls.export)
-            cls.srv = server.make_server(cls.export, 0, cls.static)
-        cls.port = cls.srv.server_port
-        cls.thread = threading.Thread(target=cls.srv.serve_forever, daemon=True)
-        cls.thread.start()
+        library = make_library(cls.tmp, cls.export)
+        config = os.path.join(cls.tmp, "config.json")
+        with contextlib.redirect_stderr(io.StringIO()):  # the index job logs the broken metadata file
+            cls.srv = server.make_server(library, 0, cls.static, config_path=config)
+            cls.port = cls.srv.server_port
+            cls.thread = threading.Thread(target=cls.srv.serve_forever, daemon=True)
+            cls.thread.start()
+            wait_job(cls.port)
+
+    def setUp(self):
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # silences the HTTP access log
 
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
         cls.srv.server_close()
+        cls.srv.viewer.store.close()
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def get(self, path, host=None):
@@ -164,70 +175,83 @@ class Base(unittest.TestCase):
         status, _, body = self.get(path)
         return status, json.loads(body)
 
+    def detail(self, mid):
+        status, m = self.get_json(f"/api/message/s1/{quote(mid, safe='')}")
+        self.assertEqual(status, 200, mid)
+        return m
 
-class IndexTests(Base):
-    def test_message_ids_are_filename_stems(self):
-        self.assertEqual(set(self.index.messages), {ID_PLAIN, ID_ALT, ID_RICH, ID_GHOST})
 
-    def test_labels_loaded(self):
-        self.assertEqual(len(self.index.labels), len(LABELS["Payload"]))
-
-    def test_broken_metadata_skipped_and_logged(self):
-        buf = io.StringIO()
-        with contextlib.redirect_stderr(buf):
-            idx = server.build_index(self.export)
-        self.assertIn("broken_EEEE.metadata.json", buf.getvalue())
-        self.assertNotIn("broken_EEEE", idx.messages)
+class SourceTests(Base):
+    def test_sources_listing(self):
+        status, data = self.get_json("/api/sources")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data), 1)
+        src = data[0]
+        self.assertEqual(set(src), {"id", "name", "kind", "icon", "hidden", "available",
+                                    "fetchable", "count", "unread"})
+        self.assertEqual((src["id"], src["kind"], src["available"], src["count"], src["unread"]),
+                         ("s1", "maildir", True, 4, 2))
+        self.assertFalse(src["fetchable"])  # maildirs are never fetched
 
 
 class FolderTests(Base):
-    def test_counts_unread_and_order(self):
-        folders = [(f["id"], f["count"], f["unread"]) for f in server.list_folders(self.index)]
-        # system IDs first in fixed order, then the rest by name; empty labels omitted
-        self.assertEqual(folders, [("0", 3, 2), ("7", 1, 1), ("5", 2, 1), ("X3", 1, 0), ("X1", 2, 0)])
-
     def test_http_folders(self):
         status, folders = self.get_json("/api/folders")
         self.assertEqual(status, 200)
-        self.assertEqual(set(folders[0]), {"id", "name", "path", "color", "count", "unread"})
-        self.assertEqual(folders[0]["id"], "0")
+        self.assertEqual(set(folders[0]), {"key", "name", "path", "color", "count", "unread"})
+        # system folders first in fixed order, then the rest by name; empty labels omitted
+        self.assertEqual([(f["key"], f["count"], f["unread"]) for f in folders],
+                         [("sys:0", 3, 2), ("sys:7", 1, 1), ("sys:5", 2, 1), ("path:beta", 1, 0),
+                          ("path:projects", 2, 0)])
+
+    def test_unknown_source_400(self):
+        status, data = self.get_json("/api/folders?sources=nope")
+        self.assertEqual((status, data), (400, {"error": "unknown source"}))
 
 
 class ListTests(Base):
-    def ids(self, **kw):
-        args = dict(folder=None, needle="", offset=0, limit=50)
-        args.update(kw)
-        res = server.list_messages(self.index, args["folder"], args["needle"], args["offset"], args["limit"])
-        return res["total"], [m["id"] for m in res["messages"]]
+    def ids(self, **params):
+        status, data = self.get_json("/api/messages?" + urlencode({"sources": "s1", **params}))
+        self.assertEqual(status, 200)
+        return data["total"], [m["id"] for m in data["messages"]]
 
     def test_all_sorted_by_time_desc(self):
         self.assertEqual(self.ids(), (4, [ID_PLAIN, ID_ALT, ID_RICH, ID_GHOST]))
 
+    def test_default_sources_are_all_visible(self):
+        status, data = self.get_json("/api/messages")
+        self.assertEqual((status, data["total"]), (200, 4))
+
     def test_folder_filter(self):
-        self.assertEqual(self.ids(folder="0"), (3, [ID_PLAIN, ID_RICH, ID_GHOST]))
+        self.assertEqual(self.ids(folder="sys:0"), (3, [ID_PLAIN, ID_RICH, ID_GHOST]))
 
     def test_search_umlaut_case_insensitive(self):
-        self.assertEqual(self.ids(needle="MÜLLER".casefold()), (1, [ID_PLAIN]))
+        self.assertEqual(self.ids(q="MÜLLER"), (1, [ID_PLAIN]))
+
+    def test_search_sharp_s_found(self):
+        self.assertEqual(self.ids(q="Grüße"), (1, [ID_PLAIN]))
 
     def test_search_to_address(self):
-        self.assertEqual(self.ids(needle="bob@example.TEST".casefold()), (1, [ID_RICH]))
+        self.assertEqual(self.ids(q="bob@example.TEST"), (1, [ID_RICH]))
 
     def test_search_subject(self):
-        self.assertEqual(self.ids(needle="ghost"), (1, [ID_GHOST]))
+        self.assertEqual(self.ids(q="ghost"), (1, [ID_GHOST]))
 
     def test_pagination(self):
         self.assertEqual(self.ids(offset=0, limit=2), (4, [ID_PLAIN, ID_ALT]))
         self.assertEqual(self.ids(offset=2, limit=2), (4, [ID_RICH, ID_GHOST]))
 
     def test_summary_fields(self):
-        msgs = {m["id"]: m for m in server.list_messages(self.index, None, "", 0, 50)["messages"]}
+        status, data = self.get_json("/api/messages?sources=s1")
+        msgs = {m["id"]: m for m in data["messages"]}
         self.assertTrue(msgs[ID_PLAIN]["unread"])
         self.assertFalse(msgs[ID_ALT]["unread"])
         self.assertEqual(msgs[ID_RICH]["attachments"], 1)
+        self.assertEqual(msgs[ID_RICH]["source"], "s1")
         self.assertEqual(msgs[ID_PLAIN]["sender"], {"name": "Jürgen Müller", "address": "juergen@example.test"})
 
     def test_http_query_params(self):
-        status, data = self.get_json("/api/messages?folder=0&q=" + quote("MÜLLER") + "&limit=2")
+        status, data = self.get_json("/api/messages?folder=sys:0&q=" + quote("MÜLLER") + "&limit=2")
         self.assertEqual(status, 200)
         self.assertEqual(data["total"], 1)
         self.assertEqual(data["messages"][0]["id"], ID_PLAIN)
@@ -241,7 +265,7 @@ class ListTests(Base):
 
 class DetailTests(Base):
     def test_plain_with_umlauts(self):
-        m = server.load_message(self.index, ID_PLAIN)
+        m = self.detail(ID_PLAIN)
         self.assertIsNone(m["error"])
         self.assertIn("Grüße aus Köln", m["text"])
         self.assertIsNone(m["html"])
@@ -251,12 +275,12 @@ class DetailTests(Base):
         self.assertEqual(m["to"], [{"name": "Ann", "address": "ann@example.test"}])
 
     def test_multipart_alternative(self):
-        m = server.load_message(self.index, ID_ALT)
+        m = self.detail(ID_ALT)
         self.assertIn("Plain part: Hallo Welt", m["text"])
         self.assertIn("<b>Hallo</b>", m["html"])
 
     def test_cid_rewritten_and_attachment_listed(self):
-        m = server.load_message(self.index, ID_RICH)
+        m = self.detail(ID_RICH)
         self.assertIn("data:image/png;base64," + base64.b64encode(PNG).decode(), m["html"])
         self.assertNotIn("cid:", m["html"])
         self.assertIn("HTML Ünïcode", m["html"])
@@ -264,38 +288,30 @@ class DetailTests(Base):
             "index": 0, "name": "Rechnung ü.pdf", "size": len(PDF), "mime": "application/pdf"}])
 
     def test_error_mail_without_eml(self):
-        m = server.load_message(self.index, ID_GHOST)
-        self.assertIsNotNone(m["error"])
+        m = self.detail(ID_GHOST)
+        self.assertEqual(m["error"], "message file (.eml) not found")
         self.assertEqual((m["text"], m["html"], m["attachments"]), (None, None, []))
         self.assertEqual(m["subject"], "Ghost")
         self.assertEqual(m["from"]["address"], "gus@example.test")
 
-    def test_http_detail_and_error_mail(self):
-        status, m = self.get_json("/api/message/" + quote(ID_ALT, safe=""))
-        self.assertEqual(status, 200)
-        self.assertIn("Hallo", m["html"])
-        status, m = self.get_json("/api/message/" + quote(ID_GHOST, safe=""))
-        self.assertEqual(status, 200)
-        self.assertIsNotNone(m["error"])
-
     def test_unknown_message_404(self):
-        status, data = self.get_json("/api/message/nope")
+        status, data = self.get_json("/api/message/s1/nope")
         self.assertEqual(status, 404)
         self.assertIn("error", data)
 
 
 class AttachmentTests(Base):
     def test_download(self):
-        status, headers, body = self.get(f"/api/message/{ID_RICH}/attachment/0")
+        status, headers, body = self.get(f"/api/message/s1/{ID_RICH}/attachment/0")
         self.assertEqual(status, 200)
         self.assertEqual(body, PDF)
         self.assertEqual(headers["Content-Type"], "application/pdf")
         self.assertIn("filename*=UTF-8''Rechnung%20%C3%BC.pdf", headers["Content-Disposition"])
 
     def test_bad_index_and_missing_eml_404(self):
-        for path in (f"/api/message/{ID_RICH}/attachment/1",
-                     f"/api/message/{ID_RICH}/attachment/abc",
-                     f"/api/message/{quote(ID_GHOST, safe='')}/attachment/0"):
+        for path in (f"/api/message/s1/{ID_RICH}/attachment/1",
+                     f"/api/message/s1/{ID_RICH}/attachment/abc",
+                     f"/api/message/s1/{quote(ID_GHOST, safe='')}/attachment/0"):
             status, data = self.get_json(path)
             self.assertEqual(status, 404, path)
             self.assertIn("error", data)
@@ -308,11 +324,21 @@ class SecurityTests(Base):
         self.assertIn("error", json.loads(body))
 
     def test_path_traversal_ids_rejected(self):
-        self.assert_404("/api/message/" + quote("../labels.json", safe=""))
-        self.assert_404("/api/message/..%2Flabels.json")
-        self.assert_404("/api/message/%2e%2e%2flabels.json")
+        self.assert_404("/api/message/s1/" + quote("../labels.json", safe=""))
+        self.assert_404("/api/message/s1/..%2F..%2Fetc")
+        self.assert_404("/api/message/s1/%2e%2e%2flabels.json")
+        self.assert_404("/api/message/s1/..%2Flabels.json/attachment/0")
+        self.assert_404("/api/message/s1/../labels.json")
         self.assert_404("/api/message/../labels.json")
-        self.assert_404("/api/message/..%2Flabels.json/attachment/0")
+        self.assert_404("/api/message/..%2Fs1/" + ID_PLAIN)
+        self.assert_404("/api/message/%2e%2e%2fs1/" + ID_PLAIN)
+        self.assert_404("/api/message/..%2Fs1/" + ID_PLAIN + "/attachment/0")
+        self.assert_404("/api/message/s9/" + ID_PLAIN)  # unknown source
+
+    def test_unknown_source_400(self):
+        status, _, body = self.get("/api/messages?sources=nope")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(body), {"error": "unknown source"})
 
     def test_unknown_route_404(self):
         self.assert_404("/api/unknown")
@@ -329,7 +355,7 @@ class SecurityTests(Base):
         self.assertEqual(status, 200)
 
     def test_nosniff_on_all_responses(self):
-        for path in ("/", "/api/folders", "/api/message/nope"):
+        for path in ("/", "/api/folders", "/api/message/s1/nope"):
             _, headers, _ = self.get(path)
             self.assertEqual(headers["X-Content-Type-Options"], "nosniff", path)
 
@@ -341,6 +367,7 @@ class SecurityTests(Base):
 
     def test_bound_to_loopback(self):
         self.assertEqual(self.srv.server_address[0], "127.0.0.1")
+
 
 
 ACCOUNT = "simon.test@example.test"
@@ -356,6 +383,7 @@ ABSENT = {"ET_USER_MAILBOX_PASSWORD": None, "ET_TOTP_CODE": None}
 # Stand-in for the Proton CLI: checks env and argv, prints its secrets, writes a mail dir.
 FAKE_BODY = '''
 import json, os, shutil, sys, time
+from urllib.parse import quote
 
 env = os.environ
 if any(PASSWORD in arg for arg in sys.argv):  # secrets must never be on argv
@@ -366,6 +394,8 @@ for key, want in EXPECT.items():  # None means the variable must be absent
     if env.get(key) != want:
         sys.exit(7)
 print("login", env["ET_USER_EMAIL"], *SECRETS, flush=True)
+pw = env["ET_USER_PASSWORD"]
+print("echo", pw, quote(pw, safe=""), json.dumps(pw)[1:-1], flush=True)
 if MODE == "fail":
     print("login failed", file=sys.stderr)
     sys.exit(3)
@@ -412,6 +442,16 @@ def request(port, method, path, body=None, headers=None):
     data = resp.read()
     conn.close()
     return resp.status, json.loads(data)
+
+
+def request_raw(port, method, path, body=b"", headers=None):
+    """Like request, for responses that are not JSON: returns (status, headers, bytes)."""
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
+    resp = conn.getresponse()
+    data = resp.read()
+    conn.close()
+    return resp.status, resp.headers, data
 
 
 class ResolveTests(unittest.TestCase):
@@ -466,6 +506,9 @@ class ResolveTests(unittest.TestCase):
 
     def test_redact(self):
         self.assertEqual(server.redact("a pw b pw", ["pw"]), "a *** b ***")
+        pw = 'p@ss "w/d'
+        text = f"{pw} | {quote(pw, safe='')} | {json.dumps(pw)[1:-1]}"
+        self.assertEqual(server.redact(text, [pw]), "*** | *** | ***")
         self.assertEqual(server.redact("abc", ["", None]), "abc")
         self.assertEqual(server.redact("xabcx", ["abc", "xabcx"]), "***")
 
@@ -479,14 +522,14 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(env["ET_USER_PASSWORD"], PW)
 
     def test_parse_fetch_body(self):
-        raw = json.dumps({"password": PW, "totp": " 123 "}).encode()
-        self.assertEqual(server.parse_fetch_body(raw, "def@x.test"), ("def@x.test", PW, "", "123"))
+        raw = json.dumps({"source": "s1", "password": PW, "totp": " 123 "}).encode()
+        self.assertEqual(server.parse_fetch_body(raw), ("s1", "", PW, "", "123"))
         for bad, reason in ((b"{x", "invalid JSON body"), (b"[]", "body must be a JSON object"),
-                            (b'{"email": "a@b"}', "missing password"),
-                            (b'{"password": "p"}', "missing email"),
-                            (b'{"password": "p", "email": "../x"}', "invalid email")):
+                            (b'{"password": "p"}', "missing source"),
+                            (b'{"source": "s1", "email": "a@b"}', "missing password"),
+                            (b'{"source": "s1", "password": "p", "email": "../x"}', "invalid email")):
             with self.assertRaisesRegex(ValueError, reason):
-                server.parse_fetch_body(bad, "")
+                server.parse_fetch_body(bad)
 
 
 def snapshot(d: str) -> dict:
@@ -591,9 +634,9 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(os.stat(os.path.join(self.new, "a.eml")).st_nlink, 1)
 
     def test_missing_previous_dir_logs_nothing(self):
-        viewer = server.Viewer(server.Index(self.new, [], {}), self.tmp, None)
+        viewer = server.Viewer()
         viewer._link_previous(os.path.join(self.tmp, "gone"), self.new)
-        self.assertEqual(viewer.status()["log"], [])
+        self.assertEqual(viewer.job.status()["log"], [])
 
     def test_human_size(self):
         self.assertEqual(server.human_size(1_200_000_000), "1,2 GB")
@@ -601,10 +644,12 @@ class DedupeTests(unittest.TestCase):
 
 
 class FetchTests(unittest.TestCase):
-    """Fetch endpoints. Each test gets its own account dir and server, since fetches swap the index."""
+    """Fetch per proton source through the job slot. Each test gets its own account dir and server,
+    since a fetch swaps the source's index."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # silences the HTTP access log
         self.account = os.path.join(self.tmp, ACCOUNT)
         make_export(self.account, OLD)
         self.old_files = sorted(os.listdir(os.path.join(self.account, OLD)))
@@ -616,65 +661,81 @@ class FetchTests(unittest.TestCase):
                 self.wait_fetch(("idle", "done", "error"))
                 self.srv.shutdown()
                 self.srv.server_close()
+                self.srv.viewer.store.close()
         finally:
             shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def serve(self, mode="ok", expect=ABSENT, account=None, cli="fake", dup_from=None):
-        """cli="fake" writes a stand-in CLI; None lets the server auto-detect; a path is used as is."""
+    def serve(self, mode="ok", expect=ABSENT, account=None, cli="fake", dup_from=None, settings=None):
+        """cli="fake" writes a stand-in CLI and passes it as --cli; None lets the server use settings
+        or auto-detect; a path is used as is. account is the source dir (default: the account dir)."""
         if cli == "fake":
             cli = os.path.join(self.tmp, "bin", CLI_NAME)
             os.makedirs(os.path.dirname(cli), exist_ok=True)
             write_fake_cli(cli, mode, expect, dup_from)
-        export = os.path.join(account or self.account, OLD)
+        library = make_library(self.tmp, account or self.account)
+        if settings:
+            Library.open(library).update_settings(**settings)
+        config = os.path.join(self.tmp, "config.json")
         with contextlib.redirect_stderr(io.StringIO()):
-            self.srv = server.make_server(export, 0, self.tmp, cli=cli)
+            self.srv = server.make_server(library, 0, self.tmp, cli=cli, config_path=config)
         self.port = self.srv.server_port
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        wait_job(self.port)  # the initial index job must finish before a fetch can start
 
     def get(self, path):
         return request(self.port, "GET", path)
 
-    def post(self, body=None, origin="same", host=None, raw=None):
+    def post(self, body=None, origin="same", host=None, raw=None, source="s1"):
+        if raw is None:
+            payload = dict(body or {})
+            if source is not None:
+                payload.setdefault("source", source)
+            raw = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json", "Host": host or f"127.0.0.1:{self.port}"}
         if origin == "same":
             origin = f"http://127.0.0.1:{self.port}"
         if origin is not None:
             headers["Origin"] = origin
-        data = raw if raw is not None else json.dumps(body).encode("utf-8")
-        return request(self.port, "POST", "/api/fetch", data, headers)
+        return request(self.port, "POST", "/api/fetch", raw, headers)
 
     def wait_fetch(self, states=("done", "error"), timeout=10.0):
         deadline = time.monotonic() + timeout
         while True:
-            _, st = self.get("/api/fetch/status")
+            _, st = self.get("/api/job")
             if st["state"] in states:
                 return st
             if time.monotonic() > deadline:
                 self.fail(f"fetch still {st['state']} after {timeout}s")
             time.sleep(0.02)
 
-    def test_status_idle_initially(self):
+    def test_job_idle_after_index(self):
         self.serve()
-        _, st = self.get("/api/fetch/status")
-        self.assertEqual(st, {"state": "idle", "log": [], "message": None, "export": None, "started": None})
+        _, st = self.get("/api/job")
+        self.assertEqual((st["state"], st["kind"], st["result"]), ("done", "index", None))
 
     def test_success_swaps_index(self):
         self.serve(expect=FULL)
         status, data = self.post({"password": PW, "mailbox_password": MB, "totp": TOTP})
         self.assertEqual((status, data), (202, {"state": "running"}))
         st = self.wait_fetch()
-        self.assertEqual(st["state"], "done")
-        self.assertEqual(st["export"], NEW)
+        self.assertEqual((st["state"], st["kind"]), ("done", "fetch"))
+        self.assertEqual(st["result"], {"source": "s1", "export": NEW})
         self.assertIsNone(st["message"])
         self.assertIsInstance(st["started"], int)
-        # the CLI ran (and its argv/env checks passed) with the email taken from /api/config
-        self.assertEqual(self.get("/api/config")[1]["export"], NEW)
+        self.assertTrue(any(line.startswith(f"login {ACCOUNT} ") for line in st["log"]), st["log"])
         _, msgs = self.get("/api/messages")
         self.assertEqual(msgs["total"], 1)
         self.assertEqual(msgs["messages"][0]["id"], "new_FFFF")
         self.assertTrue(os.path.isdir(os.path.join(self.account, NEW)))
         self.assertEqual(sorted(os.listdir(os.path.join(self.account, OLD))), self.old_files)
         self.assertEqual([n for n in os.listdir(self.account) if n.startswith(".fetch-")], [])
+
+    def test_fetch_syncs_index_so_new_mail_is_listed(self):
+        self.serve()
+        self.post({"password": PW})
+        self.assertEqual(self.wait_fetch()["state"], "done")
+        _, msgs = self.get("/api/messages?sources=s1")
+        self.assertEqual([m["id"] for m in msgs["messages"]], ["new_FFFF"])
 
     def test_secrets_redacted_in_status(self):
         self.serve(expect=FULL)
@@ -689,10 +750,9 @@ class FetchTests(unittest.TestCase):
         self.serve(mode="fail")
         self.assertEqual(self.post({"password": PW})[0], 202)
         st = self.wait_fetch()
-        self.assertEqual((st["state"], st["message"], st["export"]), ("error", "CLI exited with code 3", None))
+        self.assertEqual((st["state"], st["message"], st["result"]), ("error", "CLI exited with code 3", None))
         self.assertIn("login failed", st["log"])
         self.assertNotIn(PW, json.dumps(st))
-        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
         self.assertEqual(self.get("/api/messages")[1]["total"], 4)
         self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
         self.assertEqual([n for n in os.listdir(self.account) if n.startswith(".fetch-")], [])
@@ -702,7 +762,7 @@ class FetchTests(unittest.TestCase):
         self.post({"password": PW})
         st = self.wait_fetch()
         self.assertEqual((st["state"], st["message"]), ("error", "CLI produced no mail export"))
-        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
+        self.assertEqual(self.get("/api/messages")[1]["total"], 4)
 
     def test_second_fetch_while_running_is_409(self):
         self.serve(mode="sleep")
@@ -711,6 +771,20 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertIn("error", data)
         self.assertEqual(self.wait_fetch()["state"], "done")
+
+    def test_fetch_while_index_job_running_409(self):
+        self.serve()
+        gate = threading.Event()
+        self.assertTrue(self.srv.viewer.job.start("index", lambda j: gate.wait(5)))
+        try:
+            status, data = self.post({"password": PW})
+            self.assertEqual(status, 409)
+            self.assertIn("error", data)
+        finally:
+            gate.set()
+        self.assertEqual(self.wait_fetch()["kind"], "index")
+        self.assertEqual(self.get("/api/messages")[1]["total"], 4)
+        self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
 
     def test_unchanged_mails_hardlinked_into_new_export(self):
         self.serve(mode="dup", dup_from=os.path.join(self.account, OLD))
@@ -730,7 +804,7 @@ class FetchTests(unittest.TestCase):
         with mock.patch.object(server, "dedupe_with_previous", side_effect=RuntimeError("boom")):
             self.post({"password": PW})
             st = self.wait_fetch()
-        self.assertEqual((st["state"], st["export"]), ("done", NEW))
+        self.assertEqual((st["state"], st["result"]["export"]), ("done", NEW))
         self.assertTrue(any(line.startswith("Hardlinks") for line in st["log"]), st["log"])
         self.assertEqual(self.get("/api/messages")[1]["total"], 1)
 
@@ -747,7 +821,7 @@ class FetchTests(unittest.TestCase):
             status, data = self.post({"password": PW}, **kwargs)
             self.assertEqual(status, 403, kwargs)
             self.assertIn("error", data)
-        self.assertEqual(self.get("/api/fetch/status")[1]["state"], "idle")
+        self.assertNotEqual(self.get("/api/job")[1]["kind"], "fetch")
 
     def test_localhost_origin_allowed(self):
         self.serve()
@@ -758,182 +832,821 @@ class FetchTests(unittest.TestCase):
     def test_bad_requests_400(self):
         self.serve()
         cases = [
-            {"email": ACCOUNT},
-            {"password": ""},
+            ({"password": ""}, "s1"),
+            ({"email": ACCOUNT}, "s1"),  # no password
+            ({"password": PW}, None),  # no source
+            ({"password": PW}, "nope"),  # unknown source
+            ({"password": PW, "email": "../x"}, "s1"),
         ]
-        for body in cases:
-            status, data = self.post(body)
-            self.assertEqual(status, 400, body)
+        for body, source in cases:
+            status, data = self.post(body, source=source)
+            self.assertEqual(status, 400, (body, source))
             self.assertIn("error", data)
-        for raw in (b"{not json", b"[]", json.dumps({"password": PW, "totp": "1" * 70000}).encode()):
+        for raw in (b"{not json", b"[]", json.dumps({"source": "s1", "password": PW, "totp": "1" * 70000}).encode()):
             status, data = self.post(raw=raw)
             self.assertEqual(status, 400)
             self.assertIn("error", data)
-        self.assertEqual(self.get("/api/fetch/status")[1]["state"], "idle")
+        self.assertNotEqual(self.get("/api/job")[1]["kind"], "fetch")
+
+    def test_fetch_non_proton_source_400(self):
+        self.serve(account=make_export(self.tmp, "maildir"))
+        status, data = self.post({"password": PW})
+        self.assertEqual(status, 400)
+        self.assertIn("not a proton source", data["error"])
 
     def test_missing_email_400_without_at_in_account_name(self):
         plain = os.path.join(self.tmp, "plain")
         make_export(plain, OLD)
         self.serve(account=plain)
-        _, cfg = self.get("/api/config")
-        self.assertEqual(cfg["email"], "")
-        self.assertTrue(cfg["fetch_available"])
+        _, data = self.get("/api/sources")
+        self.assertTrue(data[0]["fetchable"])
         status, data = self.post({"password": PW})
         self.assertEqual(status, 400)
         self.assertIn("missing email", data["error"])
 
+    def test_settings_cli_and_email_used(self):
+        cli = os.path.join(self.tmp, "bin", CLI_NAME)  # not near the account dir: only settings can find it
+        os.makedirs(os.path.dirname(cli))
+        write_fake_cli(cli, "ok", ABSENT)
+        self.serve(cli=None, settings={"cli": cli, "proton_email": "other@example.test"})
+        self.post({"password": PW})
+        st = self.wait_fetch()
+        self.assertEqual((st["state"], st["result"]), ("done", {"source": "s1", "export": NEW}))
+        self.assertTrue(any(line.startswith("login other@example.test ") for line in st["log"]), st["log"])
+
     def test_no_cli_404(self):
         self.serve(cli="/nonexistent/" + CLI_NAME)
-        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
+        _, data = self.get("/api/sources")
+        self.assertFalse(data[0]["fetchable"])
         status, data = self.post({"password": PW})
         self.assertEqual(status, 404)
         self.assertIn("error", data)
-
-    def test_config_fields(self):
-        self.serve()
-        _, cfg = self.get("/api/config")
-        self.assertEqual({k: cfg[k] for k in ("configured", "fetch_available", "email", "export")},
-                         {"configured": True, "fetch_available": True, "email": ACCOUNT, "export": OLD})
-        self.assertEqual(cfg["workdir"], self.account)
 
     def test_auto_detect_cli_next_to_account_dir(self):
         cli = os.path.join(self.tmp, CLI_NAME)  # parent of the account dir
         write(cli, "#!/bin/sh\n")
         os.chmod(cli, 0o755)
         self.serve(cli=None)
-        self.assertTrue(self.get("/api/config")[1]["fetch_available"])
+        _, data = self.get("/api/sources")
+        self.assertTrue(data[0]["fetchable"])
 
     def test_auto_detect_none_without_cli(self):
         self.serve(cli=None)  # nothing near the account dir (the tmp dir's ancestors have no CLI)
-        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
+        _, data = self.get("/api/sources")
+        self.assertFalse(data[0]["fetchable"])
+
+    def test_failed_sync_restores_previous_index(self):
+        self.serve()
+        real = server.Store.sync_source
+        calls = []
+
+        def flaky(store, source_id, mail_dir, progress=None):
+            calls.append(mail_dir)
+            result = real(store, source_id, mail_dir, progress)  # commits the new export, then fails
+            if len(calls) == 1:
+                raise OSError("boom")
+            return result
+
+        with mock.patch.object(server.Store, "sync_source", flaky):
+            self.post({"password": PW})
+            st = self.wait_fetch()
+        self.assertEqual((st["state"], st["message"]), ("error", "boom"))
+        self.assertEqual(len(calls), 2)  # the new export, then the restore of the previous one
+        self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
+        self.assertTrue(os.path.isdir(os.path.join(self.account, OLD)))
+        _, msgs = self.get("/api/messages?sources=s1")
+        self.assertEqual(msgs["total"], 4)
+        self.assertNotIn("new_FFFF", [m["id"] for m in msgs["messages"]])
+        self.assertEqual(self.srv.viewer.store.mail_dir("s1"), os.path.join(self.account, OLD))
+
+    def test_failed_sync_without_previous_export_drops_rows(self):
+        self.serve()
+        shutil.rmtree(os.path.join(self.account, OLD))  # no export left to fall back to
+        real = server.Store.sync_source
+
+        def failing(store, source_id, mail_dir, progress=None):
+            real(store, source_id, mail_dir, progress)
+            raise OSError("boom")
+
+        with mock.patch.object(server.Store, "sync_source", failing):
+            self.post({"password": PW})
+            st = self.wait_fetch()
+        self.assertEqual(st["state"], "error")
+        self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
+        _, msgs = self.get("/api/messages?sources=s1")
+        self.assertEqual(msgs["total"], 0)
+        self.assertIsNone(self.srv.viewer.store.mail_dir("s1"))
+
+    def test_control_chars_and_bad_email_400_without_job(self):
+        self.serve()
+        cases = [
+            ({"password": PW, "email": "a\x00b@example.test"}, "invalid email"),
+            ({"password": PW, "email": " " + ACCOUNT}, "invalid email"),
+            ({"password": PW, "email": "   "}, "invalid email"),
+            ({"password": PW, "email": "x" * 250 + "@example.test"}, "invalid email"),
+            ({"password": "pw\x00x"}, "invalid password"),
+            ({"password": PW, "mailbox_password": "m\x7f"}, "invalid mailbox_password"),
+            ({"password": PW, "totp": "12\x003"}, "invalid totp"),
+        ]
+        for body, reason in cases:
+            status, data = self.post(body)
+            self.assertEqual((status, data), (400, {"error": reason}), body)
+        self.assertNotEqual(self.get("/api/job")[1]["kind"], "fetch")
+
+    def test_secret_in_every_encoding_redacted(self):
+        pw = 'p@ss "w/d'
+        self.serve(mode="fail")
+        self.post({"password": pw})
+        st = self.wait_fetch()
+        text = "\n".join([*st["log"], st["message"] or ""])
+        for form in (pw, quote(pw, safe=""), json.dumps(pw)[1:-1]):
+            self.assertNotIn(form, text)
+        self.assertTrue(any(line.startswith("echo ") and "***" in line for line in st["log"]), st["log"])
+
+    def test_deeply_nested_json_400(self):
+        self.serve()
+        raw = b"[" * 60000  # deep enough to exceed the recursion limit, within MAX_BODY
+        self.assertEqual(self.post(raw=raw), (400, {"error": "invalid JSON body"}))
+        headers = {"Content-Type": "application/json", "Host": f"127.0.0.1:{self.port}",
+                   "Origin": f"http://127.0.0.1:{self.port}"}
+        self.assertEqual(request(self.port, "POST", "/api/library", raw, headers),
+                         (400, {"error": "invalid JSON body"}))
 
 
-class WorkdirTests(unittest.TestCase):
-    """Directory picker: browse API, choosing a directory at runtime, remembering the choice."""
+class JobTests(unittest.TestCase):
+    def wait_idle(self, job, timeout=10.0):
+        deadline = time.monotonic() + timeout
+        while job.status()["state"] == "running":
+            if time.monotonic() > deadline:
+                self.fail("job still running")
+            time.sleep(0.01)
+        return job.status()
+
+    def test_error_in_target_sets_state_and_message(self):
+        job = server.Job()
+
+        def boom(j):
+            j.log("start")
+            raise RuntimeError("kaputt")
+
+        self.assertTrue(job.start("index", boom))
+        st = self.wait_idle(job)
+        self.assertEqual((st["state"], st["kind"], st["message"], st["log"]),
+                         ("error", "index", "kaputt", ["start"]))
+
+    def test_one_slot_while_running(self):
+        job = server.Job()
+        gate = threading.Event()
+        self.assertTrue(job.start("index", lambda j: gate.wait(5)))
+        self.assertFalse(job.start("fetch", lambda j: None))
+        gate.set()
+        self.assertEqual(self.wait_idle(job)["state"], "done")
+
+
+class CliForTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.export = make_export(self.tmp, "export")
+
+    def executable(self, name):
+        path = os.path.join(self.tmp, name)
+        write(path, "#!/bin/sh\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def test_relative_settings_cli_ignored(self):
+        lib = Library.open(make_library(self.tmp, self.export))
+        src = lib.get("s1")
+        near = self.executable(CLI_NAME)
+        self.executable("rel-cli")  # runs only if the relative setting were resolved against the cwd
+        old = os.getcwd()
+        os.chdir(self.tmp)
+        self.addCleanup(os.chdir, old)
+        lib.update_settings(cli="rel-cli")
+        viewer = server.Viewer()
+        viewer.library = lib
+        self.assertEqual(viewer.cli_for(src), near)
+
+    def test_precedence_explicit_then_settings_then_nearby(self):
+        lib = Library.open(make_library(self.tmp, self.export))
+        src = lib.get("s1")
+        near = self.executable(CLI_NAME)  # found next to the export by find_cli
+        setting = self.executable("setting-cli")
+        explicit = self.executable("explicit-cli")
+        viewer = server.Viewer()
+        viewer.library = lib
+        self.assertEqual(viewer.cli_for(src), near)
+        lib.update_settings(cli=setting)
+        self.assertEqual(viewer.cli_for(src), setting)
+        viewer = server.Viewer(explicit, True)
+        viewer.library = lib
+        self.assertEqual(viewer.cli_for(src), explicit)
+
+
+class LibraryTests(unittest.TestCase):
+    """Library folder: open, create, remember, legacy export, index job (port of WorkdirTests)."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.account = os.path.join(self.tmp, "root", ACCOUNT)
-        make_export(self.account, OLD)
-        os.makedirs(os.path.join(self.tmp, "root", "plain", "sub"))
-        os.makedirs(os.path.join(self.tmp, "root", ".hidden"))
-        write(os.path.join(self.tmp, "root", "file.txt"), "x")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the index logs skipped files
+        self.servers = []
+        self.addCleanup(self.stop_all)  # runs before the redirect ends, so the jobs stay quiet
+        self.export = make_export(self.tmp, "export")
         self.config = os.path.join(self.tmp, "cfg", "config.json")
-        self.srv = None
+        os.makedirs(os.path.dirname(self.config))
 
-    def tearDown(self):
-        if self.srv is not None:
-            self.srv.shutdown()
-            self.srv.server_close()
-        shutil.rmtree(self.tmp, ignore_errors=True)
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            self.stop(srv)
 
-    def serve(self, export=None):
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.srv = server.make_server(export, 0, self.tmp, config_path=self.config)
-        self.port = self.srv.server_port
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+    def serve(self, library_dir=None):
+        srv = server.make_server(library_dir, 0, self.tmp, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv
 
-    def get(self, path):
-        return request(self.port, "GET", path)
+    def stop(self, srv):
+        if srv in self.servers:
+            self.servers.remove(srv)
+        srv.shutdown()
+        srv.server_close()
+        if srv.viewer.store is not None:
+            srv.viewer.store.close()  # this thread's connection, opened by the test's reads
 
-    def post(self, body, origin="same"):
-        headers = {"Content-Type": "application/json"}
-        if origin == "same":
-            origin = f"http://127.0.0.1:{self.port}"
-        if origin is not None:
-            headers["Origin"] = origin
-        return request(self.port, "POST", "/api/workdir", json.dumps(body).encode("utf-8"), headers)
-
-    def saved(self):
-        return server.load_saved(self.config)
+    def post(self, srv, body):
+        return request(srv.server_port, "POST", "/api/library", json.dumps(body).encode("utf-8"),
+                       {"Content-Type": "application/json",
+                        "Origin": f"http://127.0.0.1:{srv.server_port}"})
 
     def test_starts_unconfigured_and_refuses_data(self):
-        self.serve()
-        self.assertFalse(self.get("/api/config")[1]["configured"])
+        srv = self.serve()
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["configured"], False)
         for path in ("/api/folders", "/api/messages", "/api/message/x"):
-            self.assertEqual(self.get(path)[0], 409)
+            status, data = request(srv.server_port, "GET", path)
+            self.assertEqual((status, data), (409, {"error": "no library chosen"}), path)
+        self.assertEqual(request(srv.server_port, "GET", "/api/job")[1]["state"], "idle")
 
-    def test_browse_lists_visible_dirs_only(self):
-        self.serve()
-        status, data = self.get("/api/browse?path=" + os.path.join(self.tmp, "root"))
+    def test_create_open_and_remember(self):
+        root = os.path.join(self.tmp, "lib")
+        srv = self.serve()
+        status, cfg = self.post(srv, {"path": root, "create": True, "remember": True})
         self.assertEqual(status, 200)
-        self.assertEqual({d["name"]: d["openable"] for d in data["dirs"]}, {ACCOUNT: True, "plain": False})
-        self.assertFalse(data["openable"])
-        self.assertEqual(data["parent"], self.tmp)
+        self.assertEqual((cfg["configured"], cfg["library"], cfg["saved"]), (True, root, root))
+        self.assertTrue(os.path.isfile(os.path.join(root, LIBRARY_FILE)))
+        self.assertEqual(server.load_saved(self.config), root)
+        self.stop(srv)
+        srv = self.serve()  # the saved library is opened at start
+        cfg = request(srv.server_port, "GET", "/api/config")[1]
+        self.assertEqual((cfg["configured"], cfg["library"], cfg["saved_error"]), (True, root, None))
 
-    def test_browse_flags_openable_dir_and_root_has_no_parent(self):
-        self.serve()
-        self.assertTrue(self.get("/api/browse?path=" + self.account)[1]["openable"])
-        self.assertIsNone(self.get("/api/browse?path=/")[1]["parent"])
-
-    def test_browse_errors(self):
-        self.serve()
-        self.assertEqual(self.get("/api/browse?path=" + os.path.join(self.tmp, "nope"))[0], 400)
-        self.assertEqual(self.get("/api/browse?path=" + os.path.join(self.tmp, "root", "file.txt"))[0], 400)
-
-    def test_open_dir_without_remember(self):
-        self.serve()
-        status, cfg = self.post({"path": self.account})
-        self.assertEqual(status, 200)
-        self.assertTrue(cfg["configured"])
-        self.assertEqual(cfg["export"], OLD)
-        self.assertIsNone(self.saved())
-        self.assertEqual(self.get("/api/folders")[0], 200)
-
-    def test_remember_persists_and_next_start_uses_it(self):
-        self.serve()
-        self.post({"path": self.account, "remember": True})
-        self.assertEqual(self.saved(), self.account)
-        self.srv.shutdown()
-        self.srv.server_close()
-        self.serve()
-        cfg = self.get("/api/config")[1]
-        self.assertTrue(cfg["configured"])
-        self.assertEqual(cfg["saved"], self.account)
-
-    def test_forget_removes_saved_choice(self):
-        self.serve()
-        self.post({"path": self.account, "remember": True})
-        self.post({"path": self.account, "remember": False})
-        self.assertIsNone(self.saved())
-        self.assertIsNone(self.get("/api/config")[1]["saved"])
-
-    def test_invalid_dir_keeps_state_and_saved_choice(self):
-        self.serve()
-        self.post({"path": self.account, "remember": True})
-        status, data = self.post({"path": os.path.join(self.tmp, "root", "plain"), "remember": True})
+    def test_open_without_library_json_400_and_state_kept(self):
+        lib_root = make_library(self.tmp, self.export)
+        srv = self.serve(lib_root)
+        wait_job(srv.server_port)
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        status, data = self.post(srv, {"path": empty})
         self.assertEqual(status, 400)
         self.assertIn("error", data)
-        self.assertEqual(self.saved(), self.account)
-        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["library"], lib_root)
+        self.assertFalse(os.path.exists(os.path.join(empty, LIBRARY_FILE)))
 
-    def test_bad_saved_choice_starts_unconfigured_with_error(self):
-        server.save_saved(self.config, os.path.join(self.tmp, "gone"))
-        self.serve()
-        cfg = self.get("/api/config")[1]
-        self.assertFalse(cfg["configured"])
-        self.assertIn("gone", cfg["saved_error"])
+    def test_corrupt_library_json_400_and_file_untouched(self):
+        lib_root = make_library(self.tmp, self.export)
+        srv = self.serve(lib_root)
+        wait_job(srv.server_port)
+        bad = os.path.join(self.tmp, "bad")
+        os.makedirs(bad)
+        write(os.path.join(bad, LIBRARY_FILE), "{broken")
+        for body in ({"path": bad}, {"path": bad, "create": True}):
+            status, data = self.post(srv, body)
+            self.assertEqual(status, 400, body)
+            self.assertIn("error", data)
+        with open(os.path.join(bad, LIBRARY_FILE), encoding="utf-8") as f:
+            self.assertEqual(f.read(), "{broken")
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["library"], lib_root)
 
-    def test_explicit_dir_beats_saved_choice(self):
-        server.save_saved(self.config, os.path.join(self.tmp, "gone"))
-        self.serve(self.account)
-        self.assertTrue(self.get("/api/config")[1]["configured"])
+    def test_legacy_export_dir_offered_and_added(self):
+        write_json(self.config, {"export_dir": self.export})
+        srv = self.serve()
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["legacy"], self.export)
+        root = os.path.join(self.tmp, "lib")
+        status, _ = self.post(srv, {"path": root, "create": True, "add_legacy": True})
+        self.assertEqual(status, 200)
+        wait_job(srv.server_port)
+        sources = Library.open(root).sources
+        self.assertEqual([(s.id, s.path) for s in sources], [("s1", os.path.realpath(self.export))])
 
-    def test_post_checks_origin_and_body(self):
-        self.serve()
-        self.assertEqual(self.post({"path": self.account}, origin=None)[0], 403)
-        self.assertEqual(self.post({"path": self.account}, origin="http://evil.test")[0], 403)
-        self.assertEqual(self.post({"nope": 1})[0], 400)
-        self.assertEqual(self.post({"path": 5})[0], 400)
-        self.assertFalse(self.get("/api/config")[1]["configured"])
+    def test_missing_legacy_dir_400_and_no_library_json(self):
+        gone = os.path.join(self.tmp, "gone")
+        write_json(self.config, {"export_dir": gone})
+        srv = self.serve()
+        root = os.path.join(self.tmp, "lib")
+        status, data = self.post(srv, {"path": root, "create": True, "add_legacy": True})
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], f"Bisheriges Verzeichnis {gone} nicht gefunden. "
+                                        "Haken entfernen oder Verzeichnis anschließen.")
+        self.assertFalse(os.path.exists(os.path.join(root, LIBRARY_FILE)))
+        status, _ = self.post(srv, {"path": root, "create": True})  # the retry without the legacy source works
+        self.assertEqual(status, 200)
+        self.assertEqual(Library.open(root).sources, [])
 
-    def test_cli_found_after_choosing(self):
-        cli = os.path.join(self.tmp, "root", CLI_NAME)
-        write(cli, "#!/bin/sh\n")
-        os.chmod(cli, 0o755)
-        self.serve()
-        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
-        self.assertTrue(self.post({"path": self.account})[1]["fetch_available"])
+    def test_legacy_key_removed_once_added(self):
+        write_json(self.config, {"export_dir": self.export, "other": 1})
+        srv = self.serve()
+        root = os.path.join(self.tmp, "lib")
+        status, _ = self.post(srv, {"path": root, "create": True, "add_legacy": True, "remember": True})
+        self.assertEqual(status, 200)
+        wait_job(srv.server_port)
+        self.assertIsNone(request(srv.server_port, "GET", "/api/config")[1]["legacy"])
+        with open(self.config, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"other": 1, "library": root})
+
+    def test_legacy_key_kept_without_add_legacy(self):
+        write_json(self.config, {"export_dir": self.export})
+        srv = self.serve()
+        root = os.path.join(self.tmp, "lib")
+        status, _ = self.post(srv, {"path": root, "create": True, "remember": True})
+        self.assertEqual(status, 200)
+        wait_job(srv.server_port)
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["legacy"], self.export)
+        with open(self.config, encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"export_dir": self.export, "library": root})
+
+    def test_failing_source_does_not_stop_the_index_job(self):
+        export2 = make_export(self.tmp, "second")
+        lib_root = make_library(self.tmp, self.export, export2)
+        original = server.Store.sync_source
+
+        def flaky(store, source_id, *args, **kwargs):
+            if source_id == "s1":
+                raise OSError("kaputt")
+            return original(store, source_id, *args, **kwargs)
+
+        with mock.patch.object(server.Store, "sync_source", flaky):
+            srv = self.serve(lib_root)
+            st = wait_job(srv.server_port)
+        self.assertEqual(st["state"], "done")
+        self.assertTrue(any(line.startswith("export: Fehler") for line in st["log"]), st["log"])
+        self.assertIn("second: +4 ~0 -0", st["log"])
+
+    def test_remember_key_absent_keeps_saved_library(self):
+        root = os.path.join(self.tmp, "lib")
+        srv = self.serve()
+        self.post(srv, {"path": root, "create": True, "remember": True})
+        wait_job(srv.server_port)
+        self.assertEqual(server.load_saved(self.config), root)
+        status, cfg = self.post(srv, {"path": root})  # no remember key: saved choice stays
+        self.assertEqual(status, 200)
+        self.assertEqual(cfg["saved"], root)
+        self.assertEqual(server.load_saved(self.config), root)
+        wait_job(srv.server_port)
+        status, cfg = self.post(srv, {"path": root, "remember": False})
+        self.assertEqual((status, cfg["saved"]), (200, None))
+        self.assertIsNone(server.load_saved(self.config))
+        wait_job(srv.server_port)
+        status, cfg = self.post(srv, {"path": root, "remember": True})
+        self.assertEqual((status, cfg["saved"]), (200, root))
+        self.assertEqual(server.load_saved(self.config), root)
+
+    def test_switch_library_while_job_running_409(self):
+        gate = threading.Event()
+        original = server.Store.sync_source
+
+        def slow(store, *args, **kwargs):
+            gate.wait(10)
+            return original(store, *args, **kwargs)
+
+        lib_root = make_library(self.tmp, self.export)
+        other = os.path.join(self.tmp, "other")
+        with mock.patch.object(server.Store, "sync_source", slow):
+            srv = self.serve(lib_root)
+            status, data = self.post(srv, {"path": other, "create": True})
+            self.assertEqual(status, 409)
+            self.assertIn("error", data)
+            self.assertFalse(os.path.exists(other))
+            gate.set()
+            self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["library"], lib_root)
+
+    def test_missing_source_path_is_unavailable_but_others_work(self):
+        export2 = make_export(self.tmp, "second")
+        lib_root = make_library(self.tmp, self.export, export2)
+        srv = self.serve(lib_root)
+        self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        os.rename(export2, export2 + "-moved")
+        self.stop(srv)
+        srv = self.serve(lib_root)
+        st = wait_job(srv.server_port)
+        self.assertEqual(st["state"], "done")
+        self.assertIn("second: nicht erreichbar", st["log"])
+        viewer = srv.viewer
+        self.assertFalse(viewer.available(viewer.library.get("s2")))
+        self.assertTrue(viewer.available(viewer.library.get("s1")))
+        self.assertEqual(viewer.store.mail_dir("s2"), os.path.realpath(export2))  # rows stay until removed
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s1")
+        self.assertEqual((status, data["total"]), (200, 4))
+        status, m = request(srv.server_port, "GET", f"/api/message/s2/{ID_PLAIN}")
+        self.assertEqual(status, 200)
+        self.assertEqual(m["error"], "message file (.eml) not found")
+        status, data = request(srv.server_port, "GET", "/api/sources")
+        self.assertEqual([(s["id"], s["available"]) for s in data], [("s1", True), ("s2", False)])
+
+    def test_removed_source_rows_dropped_on_open(self):
+        export2 = make_export(self.tmp, "second")
+        lib_root = make_library(self.tmp, self.export, export2)
+        srv = self.serve(lib_root)
+        wait_job(srv.server_port)
+        self.assertIsNotNone(srv.viewer.store.mail_dir("s2"))
+        lib = Library.open(lib_root)
+        lib.remove_source("s2")
+        self.stop(srv)
+        srv = self.serve(lib_root)
+        wait_job(srv.server_port)
+        self.assertIsNone(srv.viewer.store.mail_dir("s2"))
+        self.assertEqual(srv.viewer.store.messages(["s2"], None, "", 0, 10)["total"], 0)
+        self.assertIsNotNone(srv.viewer.store.mail_dir("s1"))
+
+    def test_index_job_status_progress(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        st = wait_job(srv.server_port)
+        self.assertEqual((st["state"], st["kind"]), ("done", "index"))
+        # 4 mails plus the broken metadata file: store.py counts every metadata file it must parse
+        self.assertEqual(st["progress"], {"done": 5, "total": 5})
+        self.assertEqual(st["log"], ["export: +4 ~0 -0"])
+
+    def test_cli_exits_without_library_json(self):
+        empty = os.path.join(self.tmp, "empty")
+        os.makedirs(empty)
+        with self.assertRaises(SystemExit) as cm:
+            server.main([empty, "--config", self.config])
+        self.assertIn("Keine Bibliothek", str(cm.exception.code))
+
+
+class SourceAdminTests(unittest.TestCase):
+    """Admin routes for sources, icons and settings. Each test gets its own library and server."""
+
+    CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; sandbox"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the index logs skipped files
+        self.servers = []
+        self.addCleanup(self.stop_all)  # runs before the redirect ends, so the jobs stay quiet
+        self.export = make_export(self.tmp, "export")
+        self.config = os.path.join(self.tmp, "config.json")
+
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            self.stop(srv)
+
+    def stop(self, srv):
+        if srv in self.servers:
+            self.servers.remove(srv)
+        srv.shutdown()
+        srv.server_close()
+        if srv.viewer.store is not None:
+            srv.viewer.store.close()
+
+    def serve(self, library_dir, wait=True):
+        srv = server.make_server(library_dir, 0, self.tmp, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        if wait:
+            wait_job(srv.server_port)
+        return srv
+
+    def post(self, srv, path, body=None, *, raw=None, ctype="application/json",
+             origin="same", host=None):
+        """POST and return (status, parsed JSON). Origin defaults to the server's own."""
+        if raw is None:
+            raw = json.dumps(body if body is not None else {}).encode("utf-8")
+        headers = {"Content-Type": ctype}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{srv.server_port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        if host is not None:
+            headers["Host"] = host
+        status, _, data = request_raw(srv.server_port, "POST", path, raw, headers)
+        return status, json.loads(data)
+
+    def get_icon(self, srv, source_id):
+        return request_raw(srv.server_port, "GET", f"/api/sources/{source_id}/icon")
+
+    def test_add_source_indexes_it(self):
+        export2 = make_export(self.tmp, "second")
+        srv = self.serve(make_library(self.tmp, self.export))
+        status, data = self.post(srv, "/api/sources", {"path": export2, "name": "Archiv"})
+        self.assertEqual(status, 200)
+        self.assertEqual([(s["id"], s["name"]) for s in data], [("s1", "export"), ("s2", "Archiv")])
+        st = wait_job(srv.server_port)
+        self.assertEqual((st["state"], st["kind"]), ("done", "index"))
+        self.assertEqual(st["log"], ["Archiv: +4 ~0 -0"])  # only the new source is indexed
+        status, data = request(srv.server_port, "GET", "/api/sources")
+        self.assertEqual({s["id"]: s["count"] for s in data}, {"s1": 4, "s2": 4})
+
+    def test_add_duplicate_or_bad_path_400(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, "/api/sources", {"path": self.export})[0], 400)  # duplicate
+        self.assertEqual(self.post(srv, "/api/sources", {"path": os.path.join(self.tmp, "nope")})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources", {"path": " "})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources", {})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources", raw=b"nope")[0], 400)
+        self.assertEqual([s.id for s in Library.open(root).sources], ["s1"])
+
+    def test_rename_hide_move(self):
+        export2 = make_export(self.tmp, "second")
+        root = make_library(self.tmp, self.export, export2)
+        srv = self.serve(root)
+        status, data = self.post(srv, "/api/sources/s1", {"name": "Privat", "hidden": True})
+        self.assertEqual(status, 200)
+        self.assertEqual([(s["id"], s["name"], s["hidden"]) for s in data],
+                         [("s1", "Privat", True), ("s2", "second", False)])
+        status, data = self.post(srv, "/api/sources/s2", {"position": 0})
+        self.assertEqual([s["id"] for s in data], ["s2", "s1"])
+        self.assertEqual(self.post(srv, "/api/sources/s2", {"name": "  "})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"hidden": "yes"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"position": "1"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"color": "red"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s9", {"name": "x"})[0], 404)
+        lib = Library.open(root)
+        self.assertEqual([(s.id, s.name, s.hidden) for s in lib.sources],
+                         [("s2", "second", False), ("s1", "Privat", True)])
+
+    def test_remove_drops_rows_keeps_files(self):
+        export2 = make_export(self.tmp, "second")
+        root = make_library(self.tmp, self.export, export2)
+        srv = self.serve(root)
+        before = sorted(os.listdir(export2))
+        status, data = self.post(srv, "/api/sources/s2/remove", {})
+        self.assertEqual(status, 200)
+        self.assertEqual([s["id"] for s in data], ["s1"])
+        self.assertIsNone(srv.viewer.store.mail_dir("s2"))
+        self.assertEqual(srv.viewer.store.messages(["s2"], None, "", 0, 10)["total"], 0)
+        self.assertEqual(sorted(os.listdir(export2)), before)
+        self.assertEqual(self.post(srv, "/api/sources/s2/remove", {})[0], 404)
+
+    def test_remove_deletes_only_its_icon(self):
+        export2 = make_export(self.tmp, "second")
+        root = make_library(self.tmp, self.export, export2)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png")[0], 200)
+        self.assertEqual(self.post(srv, "/api/sources/s2/icon", raw=ICON_PNG, ctype="image/png")[0], 200)
+        self.assertEqual(self.post(srv, "/api/sources/s1/remove", {})[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(root, "icons", "s1.png")))
+        self.assertTrue(os.path.exists(os.path.join(root, "icons", "s2.png")))
+        self.assertEqual(self.get_icon(srv, "s2")[0], 200)
+
+    def test_remove_index_error_keeps_source_and_icon(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png")[0], 200)
+        boom = sqlite3.OperationalError("disk I/O error")
+        with mock.patch.object(server.Store, "drop_source", side_effect=boom):
+            status, data = self.post(srv, "/api/sources/s1/remove", {})
+        self.assertEqual(status, 500)
+        self.assertIn("index error", data["error"])
+        self.assertEqual([s["id"] for s in request(srv.server_port, "GET", "/api/sources")[1]], ["s1"])
+        self.assertEqual([s.id for s in Library.open(root).sources], ["s1"])
+        self.assertTrue(os.path.exists(os.path.join(root, "icons", "s1.png")))
+
+    def test_icon_content_checked_before_write(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        cases = [
+            (b"", "image/png"),
+            (b"GIF89a" + bytes(16), "image/png"),
+            (b"\x89PNG\r\n\x1a", "image/png"),  # signature cut short
+            (b"<svg>\xff\xfe</svg>", "image/svg+xml"),  # not UTF-8
+            (b"hello <svg/>", "image/svg+xml"),  # does not start with a tag
+            (b"<html><body/></html>", "image/svg+xml"),  # no svg element
+        ]
+        for raw, ctype in cases:
+            status, data = self.post(srv, "/api/sources/s1/icon", raw=raw, ctype=ctype)
+            self.assertEqual((status, data), (400, {"error": "invalid image"}), (raw, ctype))
+        self.assertFalse(os.path.exists(os.path.join(root, "icons")))
+
+    def test_icon_upload_wrong_host_or_origin_403(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png",
+                                   host="evil.test")[0], 403)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png",
+                                   origin="http://evil.test")[0], 403)
+        self.assertFalse(os.path.exists(os.path.join(root, "icons")))
+
+    def test_icon_upload_png_and_svg_served_with_csp(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        status, data = self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png")
+        self.assertEqual(status, 200)
+        self.assertEqual(data[0]["icon"], {"type": "image", "file": "s1.png"})
+        status, headers, body = self.get_icon(srv, "s1")
+        self.assertEqual((status, headers.get("Content-Type"), body), (200, "image/png", ICON_PNG))
+        self.assertEqual(headers.get("Content-Security-Policy"), self.CSP)
+        self.assertEqual(set(headers.get("Content-Security-Policy").split("; ")), set(self.CSP.split("; ")))
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        svg = b"<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>"
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=svg, ctype="image/svg+xml")[0], 200)
+        self.assertFalse(os.path.exists(os.path.join(root, "icons", "s1.png")))
+        self.assertEqual(Library.open(root).get("s1").icon, {"type": "image", "file": "s1.svg"})
+        status, headers, body = self.get_icon(srv, "s1")
+        self.assertEqual((status, headers.get("Content-Type"), body), (200, "image/svg+xml", svg))
+        self.assertEqual(headers.get("Content-Security-Policy"), self.CSP)
+
+    def test_icon_rejects_other_type_and_too_large(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/gif")[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png; x=1")[0], 400)
+        status, data = self.post(srv, "/api/sources/s1/icon", raw=b"x" * (server.MAX_ICON + 1),
+                                 ctype="image/png")
+        self.assertEqual((status, data["error"]), (400, "body too large"))
+        self.assertEqual(self.post(srv, "/api/sources/s9/icon", raw=ICON_PNG, ctype="image/png")[0], 404)
+        self.assertFalse(os.path.exists(os.path.join(root, "icons")))
+        at_limit = ICON_PNG + b"0" * (server.MAX_ICON - len(ICON_PNG))
+        status, _ = self.post(srv, "/api/sources/s1/icon", raw=at_limit, ctype="image/png")
+        self.assertEqual(status, 200)  # exactly the limit is allowed
+
+    def test_icon_serving_only_inside_icons_dir(self):
+        root = make_library(self.tmp, self.export)
+        icons = os.path.join(root, "icons")
+        os.makedirs(icons)
+        outside = os.path.join(self.tmp, "outside.png")
+        write(outside, PNG)
+        os.symlink(outside, os.path.join(icons, "s1.png"))
+        Library.open(root).update_source("s1", icon={"type": "image", "file": "s1.png"})
+        srv = self.serve(root)
+        self.assertEqual(self.get_icon(srv, "s1")[0], 404)  # a symlink out of icons/ is not followed
+        self.stop(srv)
+        Library.open(root).update_source("s1", icon={"type": "image", "file": "."})
+        srv = self.serve(root)
+        self.assertEqual(self.get_icon(srv, "s1")[0], 404)  # "." names icons/ itself
+        self.assertEqual(self.get_icon(srv, "s9")[0], 404)
+
+    def test_emoji_icon(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.get_icon(srv, "s1")[0], 404)  # the default icon has no image
+        status, data = self.post(srv, "/api/sources/s1", {"icon": {"type": "emoji", "value": "📚"}})
+        self.assertEqual((status, data[0]["icon"]), (200, {"type": "emoji", "value": "📚"}))
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"icon": {"type": "emoji", "value": ""}})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"icon": "x"})[0], 400)
+        # an image icon is only ever set by the upload
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"icon": {"type": "image", "file": "s1.png"}})[0],
+                         400)
+
+    def test_settings_update_and_validation(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        status, cfg = self.post(srv, "/api/settings",
+                                {"view": "single", "proton_email": "a@example.test", "cli": ""})
+        self.assertEqual(status, 200)
+        self.assertEqual(cfg["settings"], {"view": "single", "proton_email": "a@example.test", "cli": ""})
+        self.assertEqual(self.post(srv, "/api/settings", {"view": "x"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/settings", {"view": 5})[0], 400)
+        self.assertEqual(self.post(srv, "/api/settings", {"other": "1"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/settings", {"self": "1"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/settings", raw=b"[]")[0], 400)
+        self.assertEqual(Library.open(root).settings.view, "single")
+
+    def test_settings_body_limit_400(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        raw = b'{"view": "' + b"x" * server.MAX_BODY + b'"}'
+        status, data = self.post(srv, "/api/settings", raw=raw)
+        self.assertEqual((status, data["error"]), (400, "body too large"))
+
+    def test_admin_posts_require_origin(self):
+        root = make_library(self.tmp, self.export, make_export(self.tmp, "second"))
+        srv = self.serve(root)
+        routes = [("/api/sources", {"path": self.export}), ("/api/sources/s1", {"name": "x"}),
+                  ("/api/sources/s1/remove", {}), ("/api/settings", {"view": "single"})]
+        for path, body in routes:
+            for origin in (None, "http://evil.test", f"https://127.0.0.1:{srv.server_port}"):
+                self.assertEqual(self.post(srv, path, body, origin=origin)[0], 403, (path, origin))
+            self.assertEqual(self.post(srv, path, body, host="evil.test")[0], 403, path)
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=PNG, ctype="image/png", origin=None)[0],
+                         403)
+        lib = Library.open(root)
+        self.assertEqual([s.id for s in lib.sources], ["s1", "s2"])
+        self.assertEqual((lib.settings.view, lib.get("s1").name), ("combined", "export"))
+
+    def test_store_changes_409_while_job_runs(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)  # frees the blocked job before the servers are stopped
+        original = server.Store.sync_source
+
+        def slow(store, *args, **kwargs):
+            gate.wait(10)
+            return original(store, *args, **kwargs)
+
+        export2 = make_export(self.tmp, "second")
+        root = make_library(self.tmp, self.export)
+        with mock.patch.object(server.Store, "sync_source", slow):
+            srv = self.serve(root, wait=False)
+            self.assertEqual(self.post(srv, "/api/sources", {"path": export2})[0], 409)
+            self.assertEqual(self.post(srv, "/api/sources/s1/remove", {})[0], 409)
+            self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png")[0], 409)
+            # library.json only, so these may run during the job
+            self.assertEqual(self.post(srv, "/api/sources/s1", {"name": "Neu"})[0], 200)
+            self.assertEqual(self.post(srv, "/api/settings", {"view": "single"})[0], 200)
+            gate.set()
+            self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        lib = Library.open(root)
+        self.assertEqual([s.id for s in lib.sources], ["s1"])
+        self.assertEqual((lib.get("s1").name, lib.settings.view), ("Neu", "single"))
+        self.assertFalse(os.path.exists(os.path.join(root, "icons")))
+
+    def test_icon_url_with_cache_buster_served(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png")[0], 200)
+        status, headers, body = request_raw(srv.server_port, "GET", "/api/sources/s1/icon?v=3")
+        self.assertEqual((status, headers.get("Content-Type"), body), (200, "image/png", ICON_PNG))
+
+    def test_admin_without_library_409(self):
+        srv = self.serve(None)
+        self.assertEqual(self.post(srv, "/api/sources", {"path": self.export})[0], 409)
+        self.assertEqual(self.post(srv, "/api/sources/s1/remove", {})[0], 409)
+        self.assertEqual(self.post(srv, "/api/settings", {"view": "single"})[0], 409)
+
+    def test_browse_flags_library(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(self.tmp, safe='')}")
+        self.assertEqual(status, 200)
+        entries = {d["name"]: d for d in data["dirs"]}
+        self.assertEqual(entries["library"]["library"], True)
+        self.assertEqual(entries["library"]["openable"], False)
+        self.assertEqual(entries["export"], {"name": "export", "openable": True, "library": False})
+
+    def test_browse_top_level_library_flag(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(root, safe='')}")
+        self.assertEqual((status, data["library"]), (200, True))
+        status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(self.export, safe='')}")
+        self.assertEqual((status, data["library"]), (200, False))
+
+
+class CliOverrideTests(unittest.TestCase):
+    """/api/config reports a --cli given at start, so the Settings dialog can say it is ignored."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        self.root = make_library(self.tmp, make_export(self.tmp, "export"))
+        self.config = os.path.join(self.tmp, "config.json")
+        self.cli = os.path.join(self.tmp, server.CLI_NAME)
+        write(self.cli, "#!/bin/sh\n")
+        os.chmod(self.cli, 0o755)
+
+    def start(self, cli):
+        srv = server.make_server(self.root, 0, self.tmp, cli=cli, config_path=self.config)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(self.stop, srv)  # runs before the tree is removed and the redirect ends
+        wait_job(srv.server_port)
+        return srv
+
+    def stop(self, srv):
+        srv.shutdown()
+        srv.server_close()
+        srv.viewer.store.close()
+
+    def test_cli_given_at_start_is_reported(self):
+        srv = self.start(self.cli)
+        self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["cli_override"],
+                         os.path.abspath(self.cli))
+
+    def test_no_cli_given_reports_none(self):
+        srv = self.start(None)
+        self.assertIsNone(request(srv.server_port, "GET", "/api/config")[1]["cli_override"])
+
+
+def make_library(root: str, *exports: str) -> str:
+    """Library folder under root with each export as a source (s1, s2, ...). Returns its path."""
+    lib_root = os.path.join(root, "library")
+    lib = Library.create(lib_root)
+    for export in exports:
+        lib.add_source(export)
+    return lib_root
+
+
+def wait_job(port: int, timeout: float = 10.0) -> dict:
+    """Poll /api/job until the job is no longer running; returns its status."""
+    deadline = time.monotonic() + timeout
+    while True:
+        _, st = request(port, "GET", "/api/job")
+        if st["state"] != "running":
+            return st
+        if time.monotonic() > deadline:
+            raise AssertionError(f"index job still running after {timeout}s")
+        time.sleep(0.02)
 
 
 if __name__ == "__main__":
