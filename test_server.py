@@ -372,7 +372,10 @@ if MODE == "fail":
 if MODE == "sleep":
     time.sleep(1)
 if MODE in ("ok", "sleep", "dup"):
-    out = os.path.join(env["ET_DIR"], env["ET_USER_EMAIL"], "mail_20261015T120000")
+    # like CLI 1.0.7: a backup ignores ET_DIR and asks on stdin unless --dir is given
+    if len(sys.argv) != 3 or sys.argv[1] != "--dir":
+        sys.exit(6)
+    out = os.path.join(sys.argv[2], env["ET_USER_EMAIL"], "mail_20261015T120000")
     os.makedirs(out)
     labels = {"Payload": [{"ID": "0", "Name": "Inbox", "Path": "Inbox", "Color": "#111", "Type": 3}]}
     meta = {"Version": 1, "Payload": {"ID": "new_FFFF", "LabelIDs": ["0"], "Subject": "Frisch",

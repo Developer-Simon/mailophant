@@ -549,7 +549,9 @@ class Viewer:
                 shutil.rmtree(tmp, ignore_errors=True)
 
     def _run_cli(self, env: dict[str, str], secrets: list[str]) -> int:
-        proc = subprocess.Popen([self.cli], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+        # CLI 1.0.7 ignores ET_DIR for backups and would prompt for the path on stdin,
+        # so pass it as --dir too (a path is no secret)
+        proc = subprocess.Popen([self.cli, "--dir", env["ET_DIR"]], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         with proc:
             for line in proc.stdout:
