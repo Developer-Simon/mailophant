@@ -90,13 +90,19 @@ button, input { font: inherit; color: inherit; }
 #m-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: inherit; }
 
 /* ---------- Fetch (Abruf) ---------- */
-#fetch-area { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+#side-foot { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+#fetch-area { display: flex; flex-direction: column; gap: 6px; }
+#workdir-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); text-align: left; cursor: pointer; }
+#workdir-btn:hover { background: var(--hover); }
+#workdir-btn span { font-size: 12px; }
+#workdir-path-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
 .fetch-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--panel); font-weight: 600; cursor: pointer; }
 .fetch-btn.busy { background: var(--hover); color: var(--muted); border-color: var(--border); }
 .stand { font-size: 12px; padding: 0 2px; }
-#fetch-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
-#fetch-dialog::backdrop { background: rgba(0, 0, 0, .45); }
-#fetch-dialog h2 { font-size: 16px; margin: 0 0 12px; }
+#fetch-dialog, #workdir-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
+#fetch-dialog::backdrop, #workdir-dialog::backdrop { background: rgba(0, 0, 0, .45); }
+#workdir-dialog { width: min(560px, calc(100vw - 32px)); }
+#fetch-dialog h2, #workdir-dialog h2 { font-size: 16px; margin: 0 0 12px; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .field input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
@@ -107,6 +113,17 @@ button, input { font: inherit; color: inherit; }
 .btn:disabled { opacity: .6; cursor: default; }
 #fetch-status { margin: 0 0 8px; }
 #fetch-log { margin: 0; height: 240px; max-height: 40vh; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------- Verzeichnis-Auswahl ---------- */
+.pathbar { display: flex; gap: 6px; margin-bottom: 10px; }
+.pathbar input { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.pathbar input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#dir-list { list-style: none; margin: 0 0 10px; padding: 4px; height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+#dir-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
+#dir-list button:hover, #dir-list button:focus-visible { background: var(--hover); }
+#dir-list .tag { margin-left: auto; font-size: 11px; color: var(--accent); white-space: nowrap; }
+#dir-list .empty { padding: 8px; }
+.check { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 
 /* ---------- Narrow screens: stack the three panes ---------- */
 @media (max-width: 900px) {
@@ -125,9 +142,15 @@ button, input { font: inherit; color: inherit; }
   <aside id="folders">
     <h2>Ordner</h2>
     <ul id="folder-list"></ul>
-    <div id="fetch-area" hidden>
-      <button id="fetch-btn" class="fetch-btn" type="button">Abrufen</button>
-      <div id="stand" class="muted stand"></div>
+    <div id="side-foot">
+      <div id="fetch-area" hidden>
+        <button id="fetch-btn" class="fetch-btn" type="button">Abrufen</button>
+        <div id="stand" class="muted stand"></div>
+      </div>
+      <button id="workdir-btn" type="button" title="Verzeichnis wechseln">
+        <b>Verzeichnis wechseln…</b>
+        <span id="workdir-path-label" class="muted"></span>
+      </button>
     </div>
   </aside>
 
@@ -160,6 +183,26 @@ button, input { font: inherit; color: inherit; }
     </article>
   </main>
 </div>
+
+<dialog id="workdir-dialog" aria-labelledby="workdir-title">
+  <h2 id="workdir-title">Mail-Verzeichnis wählen</h2>
+  <div id="workdir-warn" class="warn" role="alert" hidden></div>
+  <form id="workdir-form">
+    <div class="pathbar">
+      <button id="dir-up" class="btn" type="button" title="Übergeordnetes Verzeichnis" aria-label="Übergeordnetes Verzeichnis">↑</button>
+      <button id="dir-home" class="btn" type="button" title="Home-Verzeichnis" aria-label="Home-Verzeichnis">~</button>
+      <input id="dir-path" name="path" type="text" spellcheck="false" autocomplete="off" aria-label="Pfad">
+      <button id="dir-go" class="btn" type="button">Gehe zu</button>
+    </div>
+    <ul id="dir-list" aria-label="Unterverzeichnisse"></ul>
+    <p class="hint" id="dir-hint">Wähle einen Mail-Ordner (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.</p>
+    <label class="check"><input id="dir-remember" type="checkbox"> <span>Auswahl merken</span></label>
+    <div class="actions">
+      <button id="workdir-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="workdir-open" class="btn primary" type="submit" disabled>Dieses Verzeichnis öffnen</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="fetch-dialog" aria-labelledby="fetch-title">
   <h2 id="fetch-title">Mails abrufen</h2>
@@ -213,7 +256,7 @@ function el(tag, attrs = {}, children = []) {
 
 async function api(path) {
   const res = await fetch(path, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
   return res.json();
 }
 
@@ -498,6 +541,7 @@ async function loadConfig() {
   } catch (_) {
     state.config = null;
   }
+  $('workdir-path-label').textContent = state.config?.workdir || '';
   const ok = Boolean(state.config && state.config.fetch_available);
   $('fetch-area').hidden = !ok;
   if (ok) $('stand').textContent = state.config.export ? `Stand: ${standText(state.config.export)}` : '';
@@ -676,6 +720,93 @@ $('fetch-form').addEventListener('submit', async (e) => {
   }
 });
 
+/* ---------- Verzeichnis-Auswahl ---------- */
+const dirState = { path: '', parent: null, home: '', openable: false, seq: 0 };
+
+function showDirWarn(msg) {
+  $('workdir-warn').textContent = msg || '';
+  $('workdir-warn').hidden = !msg;
+}
+
+// Loads one directory into the picker. Late answers of superseded requests are dropped.
+async function browseTo(path) {
+  const seq = ++dirState.seq;
+  let data;
+  try {
+    data = await api(`/api/browse?path=${encodeURIComponent(path)}`);
+  } catch (e) {
+    if (seq !== dirState.seq) return;
+    showDirWarn(e.status === 400 ? 'Dieses Verzeichnis kann nicht gelesen werden.' : `Fehler beim Lesen (${e.message}).`);
+    return;
+  }
+  if (seq !== dirState.seq) return;
+  showDirWarn('');
+  Object.assign(dirState, { path: data.path, parent: data.parent, home: data.home, openable: data.openable });
+  $('dir-path').value = data.path;
+  $('dir-up').disabled = data.parent === null;
+  $('workdir-open').disabled = !data.openable;
+  $('dir-hint').textContent = data.openable
+    ? 'Hier liegt ein Mail-Export – „Dieses Verzeichnis öffnen“ übernimmt ihn.'
+    : 'Wähle einen Mail-Ordner (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.';
+  $('dir-list').replaceChildren(...(data.dirs.length ? data.dirs.map((d) => {
+    const btn = el('button', { type: 'button' }, [el('span', { text: '📁' }), el('span', { text: d.name })]);
+    if (d.openable) btn.append(el('span', { class: 'tag', text: 'Mail-Export' }));
+    btn.addEventListener('click', () => browseTo(`${data.path.replace(/\/$/, '')}/${d.name}`));
+    return el('li', {}, [btn]);
+  }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })]));
+}
+
+// required: first start without a directory, so the dialog cannot be dismissed.
+function openWorkdirDialog(required) {
+  const dlg = $('workdir-dialog');
+  const cfg = state.config || {};
+  dlg.dataset.required = required ? '1' : '';
+  $('workdir-cancel').hidden = required;
+  $('dir-remember').checked = Boolean(cfg.saved) && cfg.saved === cfg.workdir;
+  showDirWarn(cfg.saved_error ? `Gespeichertes Verzeichnis nicht verfügbar: ${cfg.saved_error}` : '');
+  if (!dlg.open) dlg.showModal();
+  const warn = cfg.saved_error;
+  browseTo(cfg.workdir || cfg.saved || cfg.home || '~').then(() => { if (warn) showDirWarn(`Gespeichertes Verzeichnis nicht verfügbar: ${warn}`); });
+}
+
+$('workdir-btn').addEventListener('click', () => openWorkdirDialog(false));
+$('workdir-cancel').addEventListener('click', () => $('workdir-dialog').close());
+$('workdir-dialog').addEventListener('cancel', (e) => {
+  if ($('workdir-dialog').dataset.required) e.preventDefault(); // Esc must not skip the initial choice
+});
+$('dir-up').addEventListener('click', () => { if (dirState.parent) browseTo(dirState.parent); });
+$('dir-home').addEventListener('click', () => browseTo(dirState.home || '~'));
+$('dir-go').addEventListener('click', () => browseTo($('dir-path').value.trim()));
+$('dir-path').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); browseTo($('dir-path').value.trim()); }
+});
+
+$('workdir-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const open = $('workdir-open');
+  open.disabled = true;
+  let res, data;
+  try {
+    res = await fetch('/api/workdir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ path: dirState.path, remember: $('dir-remember').checked }),
+    });
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    open.disabled = !dirState.openable;
+    showDirWarn(`Verzeichnis konnte nicht geöffnet werden (${err.message}).`);
+    return;
+  }
+  if (res.ok) {
+    location.reload(); // simplest way to drop all state of the previous directory
+    return;
+  }
+  open.disabled = !dirState.openable;
+  showDirWarn(res.status === 409 ? 'Während eines Abrufs kann das Verzeichnis nicht gewechselt werden.'
+    : (data && data.error) || `Fehler ${res.status}`);
+});
+
 /* ---------- Events ---------- */
 $('more').addEventListener('click', () => {
   if (!state.loading) loadPage(false);
@@ -701,7 +832,7 @@ for (const b of document.querySelectorAll('#m-toggle button')) {
 
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if ($('fetch-dialog').open) return; // no list navigation behind the modal dialog
+  if (document.querySelector('dialog[open]')) return; // no list navigation behind a modal dialog
   const t = e.target;
   if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
@@ -709,8 +840,14 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- Start ---------- */
-loadFolders();
-loadConfig().then((ok) => { if (ok) checkFetchStatus(); });
+loadConfig().then((ok) => {
+  if (state.config && !state.config.configured) {
+    openWorkdirDialog(true);
+    return;
+  }
+  loadFolders();
+  if (ok) checkFetchStatus();
+});
 })();
 </script>
 </body>

@@ -789,7 +789,9 @@ class FetchTests(unittest.TestCase):
     def test_config_fields(self):
         self.serve()
         _, cfg = self.get("/api/config")
-        self.assertEqual(cfg, {"fetch_available": True, "email": ACCOUNT, "export": OLD})
+        self.assertEqual({k: cfg[k] for k in ("configured", "fetch_available", "email", "export")},
+                         {"configured": True, "fetch_available": True, "email": ACCOUNT, "export": OLD})
+        self.assertEqual(cfg["workdir"], self.account)
 
     def test_auto_detect_cli_next_to_account_dir(self):
         cli = os.path.join(self.tmp, CLI_NAME)  # parent of the account dir
@@ -801,6 +803,134 @@ class FetchTests(unittest.TestCase):
     def test_auto_detect_none_without_cli(self):
         self.serve(cli=None)  # nothing near the account dir (the tmp dir's ancestors have no CLI)
         self.assertFalse(self.get("/api/config")[1]["fetch_available"])
+
+
+class WorkdirTests(unittest.TestCase):
+    """Directory picker: browse API, choosing a directory at runtime, remembering the choice."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.account = os.path.join(self.tmp, "root", ACCOUNT)
+        make_export(self.account, OLD)
+        os.makedirs(os.path.join(self.tmp, "root", "plain", "sub"))
+        os.makedirs(os.path.join(self.tmp, "root", ".hidden"))
+        write(os.path.join(self.tmp, "root", "file.txt"), "x")
+        self.config = os.path.join(self.tmp, "cfg", "config.json")
+        self.srv = None
+
+    def tearDown(self):
+        if self.srv is not None:
+            self.srv.shutdown()
+            self.srv.server_close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def serve(self, export=None):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.srv = server.make_server(export, 0, self.tmp, config_path=self.config)
+        self.port = self.srv.server_port
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def get(self, path):
+        return request(self.port, "GET", path)
+
+    def post(self, body, origin="same"):
+        headers = {"Content-Type": "application/json"}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{self.port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        return request(self.port, "POST", "/api/workdir", json.dumps(body).encode("utf-8"), headers)
+
+    def saved(self):
+        return server.load_saved(self.config)
+
+    def test_starts_unconfigured_and_refuses_data(self):
+        self.serve()
+        self.assertFalse(self.get("/api/config")[1]["configured"])
+        for path in ("/api/folders", "/api/messages", "/api/message/x"):
+            self.assertEqual(self.get(path)[0], 409)
+
+    def test_browse_lists_visible_dirs_only(self):
+        self.serve()
+        status, data = self.get("/api/browse?path=" + os.path.join(self.tmp, "root"))
+        self.assertEqual(status, 200)
+        self.assertEqual({d["name"]: d["openable"] for d in data["dirs"]}, {ACCOUNT: True, "plain": False})
+        self.assertFalse(data["openable"])
+        self.assertEqual(data["parent"], self.tmp)
+
+    def test_browse_flags_openable_dir_and_root_has_no_parent(self):
+        self.serve()
+        self.assertTrue(self.get("/api/browse?path=" + self.account)[1]["openable"])
+        self.assertIsNone(self.get("/api/browse?path=/")[1]["parent"])
+
+    def test_browse_errors(self):
+        self.serve()
+        self.assertEqual(self.get("/api/browse?path=" + os.path.join(self.tmp, "nope"))[0], 400)
+        self.assertEqual(self.get("/api/browse?path=" + os.path.join(self.tmp, "root", "file.txt"))[0], 400)
+
+    def test_open_dir_without_remember(self):
+        self.serve()
+        status, cfg = self.post({"path": self.account})
+        self.assertEqual(status, 200)
+        self.assertTrue(cfg["configured"])
+        self.assertEqual(cfg["export"], OLD)
+        self.assertIsNone(self.saved())
+        self.assertEqual(self.get("/api/folders")[0], 200)
+
+    def test_remember_persists_and_next_start_uses_it(self):
+        self.serve()
+        self.post({"path": self.account, "remember": True})
+        self.assertEqual(self.saved(), self.account)
+        self.srv.shutdown()
+        self.srv.server_close()
+        self.serve()
+        cfg = self.get("/api/config")[1]
+        self.assertTrue(cfg["configured"])
+        self.assertEqual(cfg["saved"], self.account)
+
+    def test_forget_removes_saved_choice(self):
+        self.serve()
+        self.post({"path": self.account, "remember": True})
+        self.post({"path": self.account, "remember": False})
+        self.assertIsNone(self.saved())
+        self.assertIsNone(self.get("/api/config")[1]["saved"])
+
+    def test_invalid_dir_keeps_state_and_saved_choice(self):
+        self.serve()
+        self.post({"path": self.account, "remember": True})
+        status, data = self.post({"path": os.path.join(self.tmp, "root", "plain"), "remember": True})
+        self.assertEqual(status, 400)
+        self.assertIn("error", data)
+        self.assertEqual(self.saved(), self.account)
+        self.assertEqual(self.get("/api/config")[1]["export"], OLD)
+
+    def test_bad_saved_choice_starts_unconfigured_with_error(self):
+        server.save_saved(self.config, os.path.join(self.tmp, "gone"))
+        self.serve()
+        cfg = self.get("/api/config")[1]
+        self.assertFalse(cfg["configured"])
+        self.assertIn("gone", cfg["saved_error"])
+
+    def test_explicit_dir_beats_saved_choice(self):
+        server.save_saved(self.config, os.path.join(self.tmp, "gone"))
+        self.serve(self.account)
+        self.assertTrue(self.get("/api/config")[1]["configured"])
+
+    def test_post_checks_origin_and_body(self):
+        self.serve()
+        self.assertEqual(self.post({"path": self.account}, origin=None)[0], 403)
+        self.assertEqual(self.post({"path": self.account}, origin="http://evil.test")[0], 403)
+        self.assertEqual(self.post({"nope": 1})[0], 400)
+        self.assertEqual(self.post({"path": 5})[0], 400)
+        self.assertFalse(self.get("/api/config")[1]["configured"])
+
+    def test_cli_found_after_choosing(self):
+        cli = os.path.join(self.tmp, "root", CLI_NAME)
+        write(cli, "#!/bin/sh\n")
+        os.chmod(cli, 0o755)
+        self.serve()
+        self.assertFalse(self.get("/api/config")[1]["fetch_available"])
+        self.assertTrue(self.post({"path": self.account})[1]["fetch_available"])
 
 
 if __name__ == "__main__":

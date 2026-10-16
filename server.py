@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Read-only local web viewer for a Proton Mail export directory (stdlib only).
+"""Read-only local web viewer for mail backups (stdlib only); currently reads Proton Mail exports.
 
-Usage: python server.py EXPORT_DIR [--port 8025] [--cli PATH]
+Usage: python server.py [EXPORT_DIR] [--port 8025] [--cli PATH] [--config FILE]
 
 EXPORT_DIR is a mail dir (contains labels.json) or an account dir (its newest mail_* is shown).
+Without EXPORT_DIR the saved choice from the config file is used; if there is none, the page
+shows a directory browser and the user picks one (optionally remembering it).
 With the export CLI available, POST /api/fetch fetches fresh mail into the account dir.
 """
 
@@ -37,6 +39,7 @@ MSG_RE = re.compile(r"^/api/message/([^/]+)$")
 ATT_RE = re.compile(r"^/api/message/([^/]+)/attachment/(\d+)$")
 CID_RE = re.compile(r"cid:([^\s\"'<>()]+)")
 CLI_NAME = "proton-mail-export-cli"
+MAX_BROWSE_ENTRIES = 2000
 MAX_BODY = 64 * 1024
 FETCH_LOG_LINES = 50
 
@@ -114,6 +117,64 @@ def find_cli(account_dir: str) -> str | None:
         if is_executable(candidate):
             return candidate
     return None
+
+
+def is_openable(path: str) -> bool:
+    """True if path is a mail dir or an account dir holding at least one mail_* export."""
+    try:
+        return os.path.isfile(os.path.join(path, "labels.json")) or bool(mail_dirs(path))
+    except OSError:  # unreadable directories are simply not openable
+        return False
+
+
+def browse(path: str) -> Json:
+    """List the visible subdirectories of path for the directory picker. Raises ValueError."""
+    p = os.path.abspath(os.path.expanduser(path or "~"))
+    try:
+        names = sorted(os.listdir(p), key=str.casefold)
+    except OSError as exc:
+        raise ValueError(f"cannot read {p}: {exc.strerror or exc}") from exc
+    dirs: list[Json] = []
+    for name in names:
+        full = os.path.join(p, name)
+        if name.startswith(".") or not os.path.isdir(full):
+            continue
+        dirs.append({"name": name, "openable": is_openable(full)})
+        if len(dirs) >= MAX_BROWSE_ENTRIES:
+            break
+    return {
+        "path": p,
+        "parent": None if p == os.path.dirname(p) else os.path.dirname(p),
+        "home": os.path.expanduser("~"),
+        "openable": is_openable(p),
+        "dirs": dirs,
+    }
+
+
+def default_config_path() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "mail-backup-viewer", "config.json")
+
+
+def load_saved(config_path: str) -> str | None:
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            value = json.load(f).get("export_dir")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
+def save_saved(config_path: str, export_dir: str | None) -> None:
+    """Persist the chosen directory; None forgets it. The file is replaced atomically."""
+    if export_dir is None:
+        remove_quiet(config_path)
+        return
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    tmp = f"{config_path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"export_dir": export_dir}, f)
+    os.replace(tmp, config_path)
 
 
 def free_name(parent: str, name: str) -> str:
@@ -400,20 +461,54 @@ def _idle_status() -> Json:
     return {"state": "idle", "log": [], "message": None, "export": None, "started": None}
 
 
-class Viewer:
-    """State shared by all handler threads: the current index and the single fetch slot."""
+class Busy(Exception):
+    """The working directory cannot change while a fetch is running."""
 
-    def __init__(self, index: Index, account_dir: str, cli: str | None) -> None:
+
+class Viewer:
+    """State shared by all handler threads: the current index (None until a directory is
+    chosen), the single fetch slot and the remembered choice."""
+
+    def __init__(self, index: Index | None, account_dir: str, cli: str | None,
+                 explicit_cli: bool = False, config_path: str | None = None) -> None:
         self.account_dir = account_dir
         self.cli = cli
+        self.explicit_cli = explicit_cli
+        self.config_path = config_path
+        self.saved: str | None = load_saved(config_path) if config_path else None
+        self.saved_error: str | None = None
         self._index = index
-        self._lock = threading.Lock()  # guards _index and _status
+        self._lock = threading.Lock()  # guards _index, _status and the directory fields
         self._status = _idle_status()
 
     @property
-    def index(self) -> Index:
+    def index(self) -> Index | None:
         with self._lock:
             return self._index
+
+    def open_dir(self, path: str, remember: bool | None = None) -> None:
+        """Make path (a mail dir or account dir) the working directory.
+
+        remember=True saves the choice, False forgets a saved one, None leaves it alone.
+        Raises ValueError for an unusable directory and Busy during a fetch."""
+        mail_dir = resolve_mail_dir(os.path.abspath(os.path.expanduser(path)))
+        index = build_index(mail_dir)
+        account = account_dir_of(mail_dir)
+        with self._lock:
+            if self._status["state"] == "running":
+                raise Busy("fetch running")
+            self._index = index
+            self.account_dir = account
+            if not self.explicit_cli:
+                self.cli = find_cli(account)
+            self._status = _idle_status()
+        if remember is not None and self.config_path:
+            try:
+                save_saved(self.config_path, os.path.abspath(os.path.expanduser(path)) if remember else None)
+            except OSError as exc:
+                raise ValueError(f"cannot save the choice: {exc.strerror or exc}") from exc
+            self.saved = os.path.abspath(os.path.expanduser(path)) if remember else None
+            self.saved_error = None
 
     def status(self) -> Json:
         with self._lock:
@@ -431,7 +526,7 @@ class Viewer:
 
     def _fetch(self, email: str, password: str, mailbox: str, totp: str) -> None:
         secrets = [s for s in (password, mailbox, totp) if s]
-        previous = self.index.export_dir  # the index about to be replaced
+        previous = self.index.export_dir if self.index else ""  # the index about to be replaced
         tmp = None
         try:
             tmp = tempfile.mkdtemp(prefix=".fetch-", dir=self.account_dir)
@@ -522,14 +617,21 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             query = parse_qs(url.query)
             if url.path == "/":
                 return self._index_page()
+            if url.path == "/api/config":
+                return self._json(200, self._config(index))
+            if url.path == "/api/browse":
+                try:
+                    return self._json(200, browse(_arg(query, "path") or viewer.saved or "~"))
+                except ValueError as exc:
+                    return self._json(400, {"error": str(exc)})
+            if url.path == "/api/fetch/status":
+                return self._json(200, viewer.status())
+            if index is None:
+                return self._json(409, {"error": "no directory chosen"})
             if url.path == "/api/folders":
                 return self._json(200, list_folders(index))
             if url.path == "/api/messages":
                 return self._json(200, self._list(index, query))
-            if url.path == "/api/config":
-                return self._json(200, self._config(index))
-            if url.path == "/api/fetch/status":
-                return self._json(200, viewer.status())
             if m := ATT_RE.match(url.path):
                 return self._attachment(index, unquote(m[1]), int(m[2]))
             if m := MSG_RE.match(url.path):
@@ -546,12 +648,15 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(403, {"error": "host not allowed"})
             if self.headers.get("Origin") not in _origins(port):  # a missing Origin is refused too
                 return self._json(403, {"error": "origin not allowed"})
-            if urlsplit(self.path).path != "/api/fetch":
+            path = urlsplit(self.path).path
+            if path not in ("/api/fetch", "/api/workdir"):
                 return self._json(404, {"error": "not found"})
-            if viewer.cli is None:
-                return self._json(404, {"error": "fetch not available"})
             if len(raw) > MAX_BODY:
                 return self._json(400, {"error": "body too large"})
+            if path == "/api/workdir":
+                return self._set_workdir(raw)
+            if viewer.cli is None or viewer.index is None:
+                return self._json(404, {"error": "fetch not available"})
             try:
                 email, password, mailbox, totp = parse_fetch_body(raw, account_email(viewer.account_dir))
             except ValueError as exc:
@@ -559,6 +664,22 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             if not viewer.start_fetch(email, password, mailbox, totp):
                 return self._json(409, {"error": "fetch already running"})
             self._json(202, {"state": "running"})
+
+        def _set_workdir(self, raw: bytes) -> None:
+            try:
+                data = json.loads(raw.decode("utf-8"))
+                path, remember = data["path"], bool(data.get("remember"))
+                if not isinstance(path, str) or not path.strip():
+                    raise ValueError
+            except (ValueError, KeyError, TypeError):
+                return self._json(400, {"error": "path required"})
+            try:
+                viewer.open_dir(path.strip(), remember)
+            except Busy:
+                return self._json(409, {"error": "fetch running"})
+            except (ValueError, OSError) as exc:
+                return self._json(400, {"error": str(exc)})
+            self._json(200, self._config(viewer.index))
 
         def _read_body(self) -> bytes:
             """Drain the declared request body, keeping at most MAX_BODY + 1 bytes."""
@@ -572,11 +693,16 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 kept = (kept + chunk)[: MAX_BODY + 1]
             return kept
 
-        def _config(self, index: Index) -> Json:
+        def _config(self, index: Index | None) -> Json:
             return {
-                "fetch_available": viewer.cli is not None,
+                "configured": index is not None,
+                "fetch_available": index is not None and viewer.cli is not None,
                 "email": account_email(viewer.account_dir),
-                "export": os.path.basename(index.export_dir),
+                "export": os.path.basename(index.export_dir) if index else "",
+                "workdir": viewer.account_dir,
+                "saved": viewer.saved,
+                "saved_error": viewer.saved_error,
+                "home": os.path.expanduser("~"),
             }
 
         def _list(self, index: Index, query: dict[str, list[str]]) -> Json:
@@ -619,27 +745,38 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
     return Handler
 
 
-def make_server(export_dir: str, port: int = 0, static_dir: str = HERE,
-                cli: str | None = None) -> ThreadingHTTPServer:
-    """Build the index and bind 127.0.0.1:port. cli=None auto-detects the export CLI (see find_cli)."""
-    mail_dir = resolve_mail_dir(os.path.abspath(export_dir))
-    account = account_dir_of(mail_dir)
-    index = build_index(mail_dir)
-    cli_path = find_cli(account) if cli is None else os.path.abspath(cli)
+def make_server(export_dir: str | None = None, port: int = 0, static_dir: str = HERE,
+                cli: str | None = None, config_path: str | None = None) -> ThreadingHTTPServer:
+    """Bind 127.0.0.1:port. cli=None auto-detects the export CLI (see find_cli).
+
+    Without export_dir the choice saved in config_path is opened; if that fails or nothing is
+    saved, the viewer starts empty and the page asks for a directory."""
+    config_path = config_path or default_config_path()
+    explicit_cli = cli is not None
+    cli_path = os.path.abspath(cli) if cli is not None else None
     if cli_path is not None and not is_executable(cli_path):
         cli_path = None  # fetching is simply unavailable
-    viewer = Viewer(index, account, cli_path)
+    viewer = Viewer(None, "", cli_path, explicit_cli, config_path)
+    if export_dir is not None:
+        viewer.open_dir(export_dir)
+    elif viewer.saved:
+        try:
+            viewer.open_dir(viewer.saved)
+        except (ValueError, OSError) as exc:
+            viewer.saved_error = f"{viewer.saved}: {exc}"
     return ThreadingHTTPServer(("127.0.0.1", port), make_handler(viewer, static_dir))
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Read-only local viewer for a mail export.")
-    parser.add_argument("export_dir")
+    parser.add_argument("export_dir", nargs="?",
+                        help="mail or account dir (default: the saved choice, else pick in the browser)")
     parser.add_argument("--port", type=int, default=8025)
     parser.add_argument("--cli", help="path to proton-mail-export-cli (default: look near the account dir)")
+    parser.add_argument("--config", help=f"config file (default: {default_config_path()})")
     args = parser.parse_args(argv)
     try:
-        server = make_server(args.export_dir, args.port, cli=args.cli)
+        server = make_server(args.export_dir, args.port, cli=args.cli, config_path=args.config)
     except (OSError, ValueError) as exc:
         sys.exit(f"error: {exc}")
     print(f"Serving on http://127.0.0.1:{server.server_port}/ (Ctrl+C to stop)", file=sys.stderr)
