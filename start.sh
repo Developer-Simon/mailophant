@@ -3,6 +3,7 @@
 # Usage: ./start.sh [--no-window] [--port PORT] [LIBRARY_DIR]
 #   --no-window  Browser nicht automatisch öffnen
 #   LIBRARY_DIR  optional; ohne Angabe gilt die gemerkte Bibliothek, sonst fragt der Viewer im Browser
+#   Optional: Mit dem Python-Modul pypff lassen sich .pst/.ost-Dateien im Viewer importieren.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

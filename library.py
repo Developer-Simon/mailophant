@@ -14,7 +14,7 @@ from typing import Any
 LIBRARY_FILE = "library.json"
 LIBRARY_VERSION = 1
 ICON_DIR = "icons"
-KINDS = ("proton", "maildir")
+KINDS = ("proton", "maildir", "outlook")
 VIEWS = ("combined", "single")
 MAX_EMOJI_LEN = 16
 ID_RE = re.compile(r"^s([1-9]\d*)$")
@@ -189,8 +189,15 @@ class Library:
                 return src
         raise KeyError(source_id)
 
-    def add_source(self, path: str, name: str = "") -> Source:
-        kind = detect_kind(path)
+    def add_source(self, path: str, name: str = "", kind: str | None = None) -> Source:
+        if kind is None:
+            kind = detect_kind(path)
+        elif kind == "outlook":
+            # Outlook files are imported into a maildir first, so only a maildir can be added as outlook.
+            if detect_kind(path) != "maildir":
+                raise LibraryError(f"Kein Maildir-Export in {path}.")
+        else:
+            raise LibraryError(f"Unbekannte Quellenart: {kind}")
         real = os.path.realpath(path)
         # Realpath comparison catches symlinks and "a/../a" spellings of the same folder.
         if any(os.path.realpath(self.abspath(s)) == real for s in self.sources):

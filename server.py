@@ -8,6 +8,7 @@ together. Its messages are indexed in archive.db (a cache next to library.json).
 LIBRARY_DIR the library remembered in the config file is opened; if there is none, the page
 asks for a library folder (optionally creating one or remembering the choice).
 Mail files are only read, never written.
+Optional: .pst/.ost files can be imported as sources when the pypff module is installed.
 """
 
 from __future__ import annotations
@@ -35,6 +36,15 @@ from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_library
+from outlook import (
+    INSTALL_HINT,
+    NO_MAIL_HINT,
+    ImportReport,
+    ImportUnavailable,
+    convert,
+    open_reader,
+    pypff_available,
+)
 from store import META_SUFFIX, Store, addr, addr_list, to_int
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +65,13 @@ ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; b
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SOURCE_FIELDS = ("name", "icon", "hidden", "position")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
-POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings")
+POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import")
+IMPORT_FIELDS = ("path", "name")
+IMPORT_EXTENSIONS = (".pst", ".ost")
+SOURCES_DIR = "sources"  # below the library root; imported Outlook files live here
+IMPORT_TMP_PREFIX = ".import-"
+SLUG_EXCLUDED = re.compile(r"[^a-z0-9äöüß]")
+SLUG_MAX = 40
 LOG_LINES = 50
 INDEX_DB = "archive.db"
 
@@ -116,22 +132,32 @@ def is_openable(path: str) -> bool:
         return False
 
 
-def browse(path: str) -> Json:
-    """List the visible subdirectories of path for the directory picker. Raises ValueError."""
+def browse(path: str, files: bool = False) -> Json:
+    """List the visible subdirectories of path for the directory picker. Raises ValueError.
+
+    With files=True also list visible .pst/.ost files (any case) under "files".
+    """
     p = os.path.abspath(os.path.expanduser(path or "~"))
     try:
         names = sorted(os.listdir(p), key=str.casefold)
     except OSError as exc:
         raise ValueError(f"cannot read {p}: {exc.strerror or exc}") from exc
     dirs: list[Json] = []
+    found: list[Json] = []
     for name in names:
-        full = os.path.join(p, name)
-        if name.startswith(".") or not os.path.isdir(full):
-            continue
-        dirs.append({"name": name, "openable": is_openable(full), "library": is_library(full)})
-        if len(dirs) >= MAX_BROWSE_ENTRIES:
+        if len(dirs) + len(found) >= MAX_BROWSE_ENTRIES:
             break
-    return {
+        full = os.path.join(p, name)
+        if name.startswith("."):
+            continue
+        if os.path.isdir(full):
+            dirs.append({"name": name, "openable": is_openable(full), "library": is_library(full)})
+        elif files and name.lower().endswith((".pst", ".ost")) and os.path.isfile(full):
+            try:
+                found.append({"name": name, "size": os.path.getsize(full)})
+            except OSError:  # vanished or unreadable: not listed
+                continue
+    result: Json = {
         "path": p,
         "parent": None if p == os.path.dirname(p) else os.path.dirname(p),
         "home": os.path.expanduser("~"),
@@ -139,6 +165,9 @@ def browse(path: str) -> Json:
         "library": is_library(p),
         "dirs": dirs,
     }
+    if files:
+        result["files"] = found
+    return result
 
 
 def default_config_path() -> str:
@@ -461,6 +490,42 @@ def valid_icon(ext: str, data: bytes) -> bool:
     return text.startswith("<") and "<svg" in text
 
 
+def import_path(path: str) -> str:
+    """The resolved path of an existing .pst or .ost file. Symlinks are resolved first, so the
+    extension and the file test apply to the file that is actually read. ValueError otherwise."""
+    real = os.path.realpath(os.path.expanduser(path))
+    if not real.lower().endswith(IMPORT_EXTENSIONS) or not os.path.isfile(real):
+        raise ValueError("not an existing .pst or .ost file")
+    return real
+
+
+def import_slug(name: str) -> str:
+    """Directory name for an imported source: lower case, only [a-z0-9äöüß] kept, the rest "-".
+    The result never starts with a dot, so it cannot clash with the temp dirs."""
+    slug = SLUG_EXCLUDED.sub("-", name.lower())[:SLUG_MAX]
+    return slug or "outlook"
+
+
+def remove_tree(path: str) -> None:
+    """Remove a directory tree, or a file or symlink, without following links. Errors are ignored."""
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        remove_quiet(path)
+
+
+def import_log_lines(report: ImportReport) -> list[str]:
+    """Counts and folder paths only: no subject, address or other mail content is logged."""
+    lines = [f"Importiert: {report.imported}", f"Zusammengeführt: {report.merged}"]
+    if report.skipped:
+        lines.append("Übersprungen: " + ", ".join(f"{cls} {n}" for cls, n in report.skipped.items()))
+    if report.unreadable:
+        lines.append(f"Nicht lesbar: {report.unreadable}")
+    if report.failed_folders:
+        lines.append("Ordner nicht lesbar: " + ", ".join(report.failed_folders))
+    return lines
+
+
 class Busy(Exception):
     """The job slot is taken: the library cannot be switched or a second job started meanwhile."""
 
@@ -741,6 +806,73 @@ class Viewer:
             if not self.job.start("fetch", fetch):
                 raise Busy("job running")
 
+    def start_import(self, path: str, name: str) -> None:
+        """Import a PST or OST file as a new source of kind outlook, as the job. The file is only read.
+        Raises ValueError (bad request), Busy (no library, or a job runs), or ImportUnavailable (no pypff).
+        Checked and started under _lock, like start_fetch."""
+        real = import_path(path)
+        name = check_text(name, "name").strip()
+        if not name:
+            raise ValueError("missing name")
+        with self._lock:
+            lib, store = self.library, self.store
+            if lib is None or store is None:
+                raise Busy("no library chosen")
+            if self.job.running():
+                raise Busy("job running")
+            if not pypff_available():
+                raise ImportUnavailable(INSTALL_HINT)
+            sources = os.path.join(lib.root, SOURCES_DIR)
+            os.makedirs(sources, exist_ok=True)
+            for entry in os.listdir(sources):  # left behind by an interrupted import; no job runs now
+                if entry.startswith(IMPORT_TMP_PREFIX):
+                    remove_tree(os.path.join(sources, entry))
+
+            def import_job(job: Job) -> None:
+                try:
+                    self._import(job, store, lib, sources, real, name)
+                finally:
+                    store.close()  # the job thread's connection, as in start_index
+
+            if not self.job.start("import", import_job):
+                raise Busy("job running")
+
+    def _import(self, job: Job, store: Store, lib: Library, sources: str, path: str, name: str) -> None:
+        """Convert the file into a temp dir below sources, move it to a free sources/<slug> and add it as
+        a source. If the source is not added, both dirs are removed, so a failure leaves nothing behind."""
+        tmp: str | None = None
+        final: str | None = None
+        added = False
+        reader = None
+        try:
+            tmp = tempfile.mkdtemp(prefix=IMPORT_TMP_PREFIX, dir=sources)
+            reader = open_reader(path)
+            report = convert(reader, tmp, job.progress)
+            for line in import_log_lines(report):
+                job.log(line)
+            if report.imported == 0:
+                raise RuntimeError(NO_MAIL_HINT)
+            final = os.path.join(sources, free_name(sources, import_slug(name)))
+            os.rename(tmp, final)
+            tmp = None  # moved; final is removed below if the source is not added
+            with self._lock:
+                src = lib.add_source(final, name, kind="outlook")
+            added = True
+            try:
+                result = store.sync_source(src.id, final, job.progress)
+            except Exception as exc:  # the files are complete; the next index run picks them up
+                job.log(f"{src.name}: Fehler: {exc}")
+            else:
+                job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+            job.set_result({"source": src.id, **asdict(report)})
+        finally:
+            if reader is not None:
+                reader.close()
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)
+            if final is not None and not added:
+                shutil.rmtree(final, ignore_errors=True)
+
     def _fetch(self, job: Job, store: Store, src: Source, cli: str, account: str, email: str,
                password: str, mailbox: str, totp: str) -> None:
         """Run the CLI into a temp dir below the account dir, then move the export in, link unchanged
@@ -883,7 +1015,9 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(200, self._config())
             if url.path == "/api/browse":
                 try:
-                    return self._json(200, browse(_arg(parse_qs(url.query), "path") or viewer.saved or "~"))
+                    query = parse_qs(url.query)
+                    return self._json(200, browse(_arg(query, "path") or viewer.saved or "~",
+                                                  files=_arg(query, "files") == "outlook"))
                 except ValueError as exc:
                     return self._json(400, {"error": str(exc)})
             if url.path == "/api/job":
@@ -952,6 +1086,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._set_library(raw)
                 if path == "/api/sources":
                     return self._add_source(raw)
+                if path == "/api/import":
+                    return self._import(raw)
                 return self._settings(raw)
             source_id = unquote(m[1])
             if m[2] == "icon":
@@ -1058,6 +1194,22 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(400, {"error": str(exc)})
             self._json(202, {"state": "running"})
 
+        def _import(self, raw: bytes) -> None:
+            try:
+                body = load_json_object(raw)
+                only_keys(body, IMPORT_FIELDS)
+                path = _text(body, "path").strip()
+                if not path:
+                    raise ValueError("path required")
+                viewer.start_import(path, _text(body, "name"))
+            except Busy as exc:
+                return self._json(409, {"error": str(exc)})
+            except ImportUnavailable:
+                return self._json(503, {"error": INSTALL_HINT})
+            except (ValueError, OSError) as exc:  # LibraryError included
+                return self._json(400, {"error": str(exc)})
+            self._json(200, {"started": True})
+
         def _set_library(self, raw: bytes) -> None:
             try:
                 data = json.loads(raw.decode("utf-8"))
@@ -1104,6 +1256,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 "cli_override": viewer.cli if viewer.explicit_cli else None,  # --cli wins over the setting
                 "home": os.path.expanduser("~"),
                 "settings": asdict(lib.settings) if lib is not None else None,
+                "outlook_import": pypff_available(),
+                "install_hint": INSTALL_HINT,
             }
 
         def _index_page(self) -> None:

@@ -23,6 +23,9 @@ from urllib.parse import quote, urlencode
 
 import server
 from library import LIBRARY_FILE, Library
+from outlook import ImportReport, Unreadable
+from test_outlook import FakeReader, folder
+from test_outlook import message as outlook_message
 
 PDF = b"%PDF-1.4 synthetic fixture\n%%EOF"
 PNG = bytes(range(64))
@@ -1591,6 +1594,233 @@ class SourceAdminTests(unittest.TestCase):
         self.assertEqual((status, data["library"]), (200, True))
         status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(self.export, safe='')}")
         self.assertEqual((status, data["library"]), (200, False))
+
+    def test_browse_lists_outlook_files(self):
+        d = os.path.join(self.tmp, "pst")
+        os.makedirs(os.path.join(d, "sub"))
+        for name in ("a.PST", "b.ost", "c.txt", ".hidden.pst"):
+            write(os.path.join(d, name), b"x")
+        listed = server.browse(d, files=True)
+        self.assertEqual([f["name"] for f in listed["files"]], ["a.PST", "b.ost"])
+        self.assertEqual(listed["files"][0]["size"], 1)
+        self.assertEqual([x["name"] for x in listed["dirs"]], ["sub"])
+        self.assertNotIn("files", server.browse(d))
+        srv = self.serve(make_library(self.tmp, self.export))
+        status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(d, safe='')}&files=outlook")
+        self.assertEqual((status, [f["name"] for f in data["files"]]), (200, ["a.PST", "b.ost"]))
+        status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(d, safe='')}")
+        self.assertNotIn("files", data)
+
+    def test_config_reports_outlook_import(self):
+        srv = self.serve(None)
+        with mock.patch("server.pypff_available", return_value=False):
+            status, data = request(srv.server_port, "GET", "/api/config")
+        self.assertEqual(status, 200)
+        self.assertIs(data["outlook_import"], False)
+        self.assertEqual(data["install_hint"], server.INSTALL_HINT)
+        with mock.patch("server.pypff_available", return_value=True):
+            status, data = request(srv.server_port, "GET", "/api/config")
+        self.assertIs(data["outlook_import"], True)
+
+
+class ImportTests(unittest.TestCase):
+    """POST /api/import: a PST or OST file becomes a new outlook source. pypff is faked: open_reader
+    returns a FakeReader and pypff_available is True unless a test says otherwise."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the import logs go to stderr
+        self.servers = []
+        self.addCleanup(self.stop_all)  # runs before the redirect ends, so the jobs stay quiet
+        self.library = make_library(self.tmp)
+        self.sources = os.path.join(self.library, "sources")
+        self.config = os.path.join(self.tmp, "config.json")
+        self.pst = os.path.join(self.tmp, "mail.PST")
+        write(self.pst, b"x")
+        self.enterContext(mock.patch("server.pypff_available", return_value=True))
+
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            srv.shutdown()
+            srv.server_close()
+            if srv.viewer.store is not None:
+                srv.viewer.store.close()
+        self.servers = []
+
+    def serve(self, library=True):
+        """Serve self.library, or no library at all when library is False."""
+        srv = server.make_server(self.library if library else None, 0, self.tmp, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        wait_job(srv.server_port)
+        return srv
+
+    def use_mail(self, *items):
+        """Every import reads a fresh FakeReader with one folder holding items."""
+        self.enterContext(mock.patch(
+            "server.open_reader",
+            side_effect=lambda path: FakeReader([folder(("Posteingang",), *items)]),
+        ))
+
+    def post(self, srv, body=None, *, origin="same"):
+        raw = json.dumps(body if body is not None else {}).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{srv.server_port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        status, _, data = request_raw(srv.server_port, "POST", "/api/import", raw, headers)
+        return status, json.loads(data)
+
+    def run_import(self, srv, name="Archiv", path=None):
+        status, data = self.post(srv, {"path": path or self.pst, "name": name})
+        self.assertEqual((status, data), (200, {"started": True}))
+        return wait_job(srv.server_port)
+
+    def library_sources(self):
+        return Library.open(self.library).sources
+
+    def test_import_creates_source(self):
+        self.use_mail(outlook_message(subject="Eins"), outlook_message(subject="Zwei"))
+        srv = self.serve()
+        st = self.run_import(srv, name="Mein Archiv")
+        self.assertEqual((st["state"], st["kind"]), ("done", "import"))
+        self.assertEqual(st["result"]["imported"], 2)
+        self.assertEqual(os.listdir(self.sources), ["mein-archiv"])
+        [src] = self.library_sources()
+        self.assertEqual((src.kind, src.path, src.name), ("outlook", "sources/mein-archiv", "Mein Archiv"))
+        self.assertEqual(st["result"]["source"], src.id)
+        status, data = request(srv.server_port, "GET", f"/api/messages?sources={src.id}")
+        self.assertEqual((status, data["total"]), (200, 2))
+        self.assertTrue(os.path.isfile(self.pst))  # the original file is only read
+
+    def test_import_same_name_twice(self):
+        self.use_mail(outlook_message())
+        srv = self.serve()
+        self.run_import(srv, name="Archiv")
+        self.run_import(srv, name="Archiv")
+        self.assertEqual(sorted(os.listdir(self.sources)), ["archiv", "archiv_1"])
+        self.assertEqual(sorted(s.path for s in self.library_sources()),
+                         ["sources/archiv", "sources/archiv_1"])
+
+    def test_import_failure_leaves_nothing(self):
+        self.use_mail(outlook_message())
+        self.enterContext(mock.patch("server.convert", side_effect=RuntimeError("boom")))
+        srv = self.serve()
+        st = self.run_import(srv)
+        self.assertEqual((st["state"], st["message"]), ("error", "boom"))
+        self.assertEqual(self.library_sources(), [])
+        self.assertEqual(os.listdir(self.sources), [])
+
+    def test_import_add_source_failure_leaves_nothing(self):
+        self.use_mail(outlook_message())
+        self.enterContext(mock.patch("library.Library.add_source", side_effect=ValueError("boom")))
+        srv = self.serve()
+        st = self.run_import(srv)
+        self.assertEqual(st["state"], "error")
+        self.assertEqual(self.library_sources(), [])
+        self.assertEqual(os.listdir(self.sources), [])
+
+    def test_import_cleans_stale_temp(self):
+        os.makedirs(os.path.join(self.sources, ".import-old"))
+        write(os.path.join(self.sources, ".import-old", "stale.eml"), b"stale")
+        self.use_mail(outlook_message())
+        srv = self.serve()
+        st = self.run_import(srv)
+        self.assertEqual(st["state"], "done")
+        self.assertEqual(os.listdir(self.sources), ["archiv"])
+
+    def test_import_nothing_readable(self):
+        self.enterContext(mock.patch(
+            "server.open_reader",
+            side_effect=lambda path: FakeReader([folder(("Posteingang",), Unreadable(reason="x"))]),
+        ))
+        srv = self.serve()
+        st = self.run_import(srv)
+        self.assertEqual((st["state"], st["message"]), ("error", server.NO_MAIL_HINT))
+        self.assertEqual(self.library_sources(), [])
+        self.assertEqual(os.listdir(self.sources), [])
+
+    def test_import_logs_counts_only(self):
+        self.use_mail(outlook_message(subject="Geheim"))
+        srv = self.serve()
+        st = self.run_import(srv, name="Log")
+        self.assertIn("Importiert: 1", st["log"])
+        self.assertFalse(any("Geheim" in line for line in st["log"]))
+
+    def test_import_validation(self):
+        txt = os.path.join(self.tmp, "mail.txt")
+        write(txt, b"x")
+        srv = self.serve()
+        bad = [
+            {"path": txt, "name": "A"},  # wrong extension
+            {"path": os.path.join(self.tmp, "missing.pst"), "name": "A"},  # no such file
+            {"path": self.tmp, "name": "A"},  # a directory
+            {"path": self.pst, "name": "  "},  # empty name
+            {"path": self.pst, "name": "A\nB"},  # control character
+            {"name": "A"},  # no path
+            {"path": self.pst, "name": "A", "extra": 1},  # unknown field
+        ]
+        for body in bad:
+            self.assertEqual(self.post(srv, body)[0], 400, body)
+        self.assertEqual(self.post(srv, {"path": self.pst, "name": "A"}, origin="http://evil.example")[0], 403)
+        self.assertFalse(os.path.exists(self.sources))  # refused before anything is created
+        self.assertEqual(self.library_sources(), [])
+
+    def test_import_without_pypff_is_503(self):
+        srv = self.serve()
+        with mock.patch("server.pypff_available", return_value=False):
+            status, data = self.post(srv, {"path": self.pst, "name": "A"})
+        self.assertEqual((status, data), (503, {"error": server.INSTALL_HINT}))
+        self.assertEqual(self.library_sources(), [])
+
+    def test_import_without_library_is_409(self):
+        srv = self.serve(library=False)
+        self.assertEqual(self.post(srv, {"path": self.pst, "name": "A"})[0], 409)
+
+    def test_import_while_job_runs_is_409(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)  # release the held job even if the test fails early
+
+        def held(*args, **kwargs):
+            gate.wait(10)
+            return ImportReport()
+
+        self.use_mail(outlook_message())
+        self.enterContext(mock.patch("server.convert", side_effect=held))
+        srv = self.serve()
+        self.assertEqual(self.post(srv, {"path": self.pst, "name": "A"}), (200, {"started": True}))
+        self.assertEqual(self.post(srv, {"path": self.pst, "name": "B"})[0], 409)
+        gate.set()
+        self.assertEqual(wait_job(srv.server_port)["state"], "error")
+
+    def test_import_resolves_symlinks_before_checking(self):
+        txt = os.path.join(self.tmp, "mail.txt")
+        write(txt, b"x")
+        link_txt = os.path.join(self.tmp, "link.pst")
+        os.symlink(txt, link_txt)
+        self.use_mail(outlook_message())
+        srv = self.serve()
+        self.assertEqual(self.post(srv, {"path": link_txt, "name": "A"})[0], 400)
+        link_ok = os.path.join(self.tmp, "ok.ost")
+        os.symlink(self.pst, link_ok)
+        self.assertEqual(self.post(srv, {"path": link_ok, "name": "A"})[0], 200)
+        self.assertEqual(wait_job(srv.server_port)["state"], "done")
+
+    def test_import_name_cannot_escape_sources(self):
+        self.use_mail(outlook_message())
+        srv = self.serve()
+        self.run_import(srv, name="../evil")
+        self.assertEqual(os.listdir(self.sources), ["---evil"])
+
+    def test_import_slug(self):
+        self.assertEqual(server.import_slug("Müller & Söhne"), "müller---söhne")
+        self.assertEqual(server.import_slug("ÄÖÜß"), "äöüß")
+        self.assertEqual(server.import_slug("x" * 50), "x" * 40)
+        self.assertEqual(server.import_slug("..."), "---")
+        self.assertEqual(server.import_slug(""), "outlook")
 
 
 class CliOverrideTests(unittest.TestCase):

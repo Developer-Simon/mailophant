@@ -143,6 +143,9 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #dir-list button.library { font-weight: 600; }
 #dir-list .tag { margin-left: auto; font-size: 11px; color: var(--accent); white-space: nowrap; }
 #dir-list .empty { padding: 8px; }
+#dir-list button.picked { background: var(--hover); outline: 1px solid var(--accent); }
+#dir-list .size { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+#job-note ul { margin: 4px 0 0; padding-left: 18px; }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 
 /* ---------- Einstellungen ---------- */
@@ -196,6 +199,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         <div id="job-last"></div>
       </div>
       <div id="job-error" class="warn" role="alert" hidden></div>
+      <div id="job-note" class="hint" hidden>
+        <div id="job-note-text"></div>
+        <ul id="job-note-list"></ul>
+        <button id="job-note-close" class="btn" type="button">Ausblenden</button>
+      </div>
       <div id="job-warn" class="warn" hidden>
         <div>Einzelne Quellen sind fehlgeschlagen:</div>
         <ul id="job-warn-list"></ul>
@@ -250,10 +258,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     </div>
     <ul id="dir-list" aria-label="Unterverzeichnisse"></ul>
     <p class="hint" id="dir-hint"></p>
+    <label id="import-name-row" class="field" hidden><span>Name der Quelle</span>
+      <input id="import-name" type="text" autocomplete="off" maxlength="80"></label>
     <label id="library-legacy-row" class="check" hidden><input id="library-legacy" type="checkbox" checked> <span>Bisheriges Verzeichnis <span id="library-legacy-path"></span> als erste Quelle übernehmen</span></label>
     <label id="library-remember-row" class="check"><input id="library-remember" type="checkbox"> <span>Auswahl merken</span></label>
     <div class="actions">
       <button id="library-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="library-import" class="btn" type="button" hidden>Outlook-Datei importieren…</button>
       <button id="library-create" class="btn" type="button">Hier neue Bibliothek anlegen</button>
       <button id="library-submit" class="btn primary" type="submit" disabled>Öffnen</button>
     </div>
@@ -809,13 +820,30 @@ function renderJob(st) {
   setFetchBusy(fetching);
   $('job-status').hidden = !running;
   if (running) {
+    const prog = st.progress ? ` ${st.progress.done}/${st.progress.total}` : '';
     $('job-text').textContent = fetching ? 'Abruf läuft…'
+      : st.kind === 'import' ? `Import läuft…${prog}`
       : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
     $('job-last').textContent = (st.log || []).at(-1) || '';
   }
   $('job-error').hidden = st.state !== 'error';
   $('job-error').textContent = st.state === 'error' ? (st.message || 'Der Auftrag ist fehlgeschlagen.') : '';
   renderJobWarnings(st);
+  renderImportNote(st);
+}
+
+// Report of a finished import: counts, and the folders that could not be read.
+function renderImportNote(st) {
+  const r = st.kind === 'import' && st.state === 'done' ? st.result : null;
+  $('job-note').hidden = !r || dismissedJob === st.started;
+  if (!r) return;
+  const skipped = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
+  const parts = [`${r.imported} Mails importiert`];
+  if (r.merged) parts.push(`${r.merged} zusammengeführt`);
+  if (skipped) parts.push(`${skipped} übersprungen`);
+  if (r.unreadable) parts.push(`${r.unreadable} nicht lesbar`);
+  $('job-note-text').textContent = parts.join(', ');
+  $('job-note-list').replaceChildren(...(r.failed_folders || []).map((f) => el('li', { text: `Ordner nicht lesbar: ${f}` })));
 }
 
 // Lines containing "Fehler" are sources that failed although the job itself finished.
@@ -894,7 +922,7 @@ async function pollJob() {
 // The job has ended: reload what it may have changed. A finished fetch selects its source.
 async function jobFinished(st) {
   await loadSources();
-  const fetched = st.kind === 'fetch' && st.state === 'done' ? st.result : null;
+  const fetched = ['fetch', 'import'].includes(st.kind) && st.state === 'done' ? st.result : null;
   if (fetched && sourceById(fetched.source)) {
     state.view = fetched.source;
     storeView(fetched.source);
@@ -927,8 +955,9 @@ $('fetch-cancel').addEventListener('click', closeFetchDialog);
 $('fetch-close').addEventListener('click', closeFetchDialog);
 $('job-warn-close').addEventListener('click', () => {
   dismissedJob = lastJob?.started ?? null;
-  if (lastJob) renderJobWarnings(lastJob);
+  if (lastJob) { renderJobWarnings(lastJob); renderImportNote(lastJob); }
 });
+$('job-note-close').addEventListener('click', () => $('job-warn-close').click());
 
 $('fetch-dialog').addEventListener('close', () => {
   clearTimeout(closeTimer);
@@ -992,8 +1021,7 @@ $('fetch-form').addEventListener('submit', async (e) => {
 });
 
 /* ---------- Bibliothek und Quelle hinzufügen (Verzeichnis-Auswahl) ---------- */
-// Outlook import (Folgeplan) will be offered next to this picker when it lands.
-const dirState = { path: '', parent: null, home: '', openable: false, library: false, seq: 0 };
+const dirState = { path: '', parent: null, home: '', openable: false, library: false, seq: 0, file: null };
 let libBusy = false;
 
 function showLibWarn(msg) {
@@ -1005,10 +1033,25 @@ const libMode = () => $('library-dialog').dataset.mode;
 
 // Opening needs a library in the folder, adding a source needs a mail folder. Creating is always possible.
 function updateLibSubmit() {
-  const ok = libMode() === 'library' ? dirState.library : dirState.openable;
+  const mode = libMode();
+  const ok = mode === 'library' ? dirState.library
+    : mode === 'import' ? Boolean(dirState.file) && $('import-name').value.trim() !== '' && importAvailable()
+      : dirState.openable;
   $('library-submit').disabled = libBusy || !ok;
   $('library-create').disabled = libBusy;
+  $('library-import').disabled = libBusy;
 }
+
+const importAvailable = () => Boolean(state.config?.outlook_import);
+
+const humanSize = (n) => {
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n;
+  let i = -1;
+  do { v /= 1024; i += 1; } while (v >= 1024 && i < units.length - 1);
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+};
 
 function setLibBusy(busy) {
   libBusy = busy;
@@ -1021,7 +1064,8 @@ async function browseTo(path) {
   const seq = ++dirState.seq;
   let data;
   try {
-    data = await api(`/api/browse?path=${encodeURIComponent(path)}`);
+    const files = libMode() === 'import' ? '&files=outlook' : '';
+    data = await api(`/api/browse?path=${encodeURIComponent(path)}${files}`);
   } catch (e) {
     if (seq !== dirState.seq) return;
     showLibWarn(e.status === 400 ? 'Dieses Verzeichnis kann nicht gelesen werden.' : `Fehler beim Lesen (${e.message}).`);
@@ -1031,10 +1075,13 @@ async function browseTo(path) {
   showLibWarn('');
   Object.assign(dirState, {
     path: data.path, parent: data.parent, home: data.home, openable: data.openable, library: data.library,
+    file: null,
   });
   $('dir-path').value = data.path;
   $('dir-up').disabled = data.parent === null;
-  $('dir-hint').textContent = libMode() === 'library'
+  $('dir-hint').textContent = libMode() === 'import'
+    ? (importAvailable() ? 'Wähle eine .pst- oder .ost-Datei. Die Datei wird nur gelesen.' : state.config?.install_hint || '')
+    : libMode() === 'library'
     ? (data.library
       ? 'Hier liegt eine Bibliothek – „Öffnen“ übernimmt sie.'
       : 'Wähle eine Bibliothek (enthält library.json) oder ein Verzeichnis, in dem eine neue angelegt wird.')
@@ -1042,7 +1089,7 @@ async function browseTo(path) {
       ? 'Hier liegt ein Mail-Export – „Hinzufügen“ nimmt ihn als Quelle auf.'
       : 'Wähle ein Mail-Verzeichnis (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.');
   updateLibSubmit();
-  $('dir-list').replaceChildren(...(data.dirs.length ? data.dirs.map((d) => {
+  const dirItems = data.dirs.length || (data.files || []).length ? data.dirs.map((d) => {
     const btn = el('button', { type: 'button' }, [el('span', { text: '📁' }), el('span', { text: d.name })]);
     if (d.library) {
       btn.classList.add('library');
@@ -1052,10 +1099,25 @@ async function browseTo(path) {
     }
     btn.addEventListener('click', () => browseTo(`${data.path.replace(/\/$/, '')}/${d.name}`));
     return el('li', {}, [btn]);
-  }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })]));
+  }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })];
+  const fileItems = (data.files || []).map((f) => {
+    const btn = el('button', { type: 'button' }, [
+      el('span', { text: '📧' }), el('span', { text: f.name }), el('span', { class: 'size', text: humanSize(f.size) }),
+    ]);
+    btn.addEventListener('click', () => {
+      dirState.file = `${data.path.replace(/\/$/, '')}/${f.name}`;
+      $('dir-list').querySelectorAll('.picked').forEach((b) => b.classList.remove('picked'));
+      btn.classList.add('picked');
+      $('import-name').value = f.name.replace(/\.[^.]*$/, '');
+      updateLibSubmit();
+    });
+    return el('li', {}, [btn]);
+  });
+  $('dir-list').replaceChildren(...dirItems, ...fileItems);
 }
 
 // mode "library": open or create a library. mode "source": add the folder as a source.
+// mode "import": pick a .pst/.ost file and import it as a new source.
 // required: first start without a library, so the dialog cannot be dismissed.
 function openPicker(mode, required) {
   const dlg = $('library-dialog');
@@ -1063,8 +1125,13 @@ function openPicker(mode, required) {
   const isLib = mode === 'library';
   dlg.dataset.mode = mode;
   dlg.dataset.required = required ? '1' : '';
-  $('library-title').textContent = isLib ? 'Bibliothek wählen' : 'Verzeichnis als Quelle hinzufügen';
-  $('library-submit').textContent = isLib ? 'Öffnen' : 'Hinzufügen';
+  const isImport = mode === 'import';
+  $('library-title').textContent = isLib ? 'Bibliothek wählen'
+    : isImport ? 'Outlook-Datei importieren' : 'Verzeichnis als Quelle hinzufügen';
+  $('library-submit').textContent = isLib ? 'Öffnen' : isImport ? 'Importieren' : 'Hinzufügen';
+  $('library-import').hidden = mode !== 'source';
+  $('import-name-row').hidden = !isImport;
+  $('import-name').value = '';
   $('library-create').hidden = !isLib;
   $('library-cancel').hidden = required;
   $('library-remember-row').hidden = !isLib;
@@ -1077,7 +1144,7 @@ function openPicker(mode, required) {
   setLibBusy(false);
   if (!dlg.open) dlg.showModal();
   const savedError = isLib ? cfg.saved_error : null;
-  browseTo(cfg.library || cfg.saved || cfg.home || '~').then(() => {
+  browseTo((mode === 'import' && dirState.path) || cfg.library || cfg.saved || cfg.home || '~').then(() => {
     if (savedError) showLibWarn(`Gespeichertes Verzeichnis nicht verfügbar: ${savedError}`);
   });
 }
@@ -1135,12 +1202,28 @@ async function addSource() {
   pollJob();
 }
 
+// A started import runs as a job; its source is selected by jobFinished.
+async function startImport() {
+  const ok = await postPicker('/api/import', { path: dirState.file, name: $('import-name').value.trim() });
+  if (!ok) return;
+  $('library-dialog').close();
+  setLibBusy(false);
+  dismissedJob = null;
+  pollJob();
+}
+
 $('library-form').addEventListener('submit', (e) => {
   e.preventDefault();
   if (libBusy) return;
-  if (libMode() === 'library') submitLibrary(false);
+  const mode = libMode();
+  if (mode === 'library') submitLibrary(false);
+  else if (mode === 'import') startImport();
   else addSource();
 });
+$('library-import').addEventListener('click', () => {
+  if (!libBusy) openPicker('import', false);
+});
+$('import-name').addEventListener('input', updateLibSubmit);
 $('library-create').addEventListener('click', () => {
   if (!libBusy) submitLibrary(true);
 });

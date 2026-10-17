@@ -118,6 +118,22 @@ class AddSourceTest(LibraryTestCase):
         lib = library.Library.create(self.root)
         self.assertEqual(lib.add_source(self.maildir, name="Arbeit").name, "Arbeit")
 
+    def test_add_outlook_source(self):
+        lib = library.Library.create(self.root)
+        src = lib.add_source(self.maildir, kind="outlook")
+        self.assertEqual(src.kind, "outlook")
+        self.assertEqual(library.Library.open(self.root).get(src.id).kind, "outlook")
+        with self.assertRaises(library.LibraryError):
+            lib.add_source(self.proton_account, kind="outlook")
+
+    def test_add_source_rejects_unknown_kind(self):
+        lib = library.Library.create(self.root)
+        for kind in ("bogus", "Outlook"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(library.LibraryError):
+                    lib.add_source(self.maildir, kind=kind)
+        self.assertEqual(lib.sources, [])
+
     def test_add_rejects_unopenable_and_duplicate_paths(self):
         lib = library.Library.create(self.root)
         empty = os.path.join(self.tmp, "empty")
