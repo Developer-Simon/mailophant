@@ -312,6 +312,34 @@ class AttachmentTests(Base):
         self.assertEqual(headers["Content-Type"], "application/pdf")
         self.assertIn("filename*=UTF-8''Rechnung%20%C3%BC.pdf", headers["Content-Disposition"])
 
+    def test_inline_preview_for_pdf(self):
+        status, headers, body = self.get(f"/api/message/s1/{ID_RICH}/attachment/0?inline=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, PDF)
+        self.assertEqual(headers["Content-Type"], "application/pdf")
+        self.assertTrue(headers["Content-Disposition"].startswith("inline;"))
+        self.assertIn("filename*=UTF-8''Rechnung%20%C3%BC.pdf", headers["Content-Disposition"])
+        self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+
+    def test_preview_headers_only_for_safe_types(self):
+        for ctype in ("image/png", "image/jpeg", "image/gif", "image/webp"):
+            disposition, extra = server.attachment_headers(ctype, "x", inline=True)
+            self.assertTrue(disposition.startswith("inline;"), ctype)
+            self.assertIn("sandbox", dict(extra)["Content-Security-Policy"], ctype)
+        self.assertTrue(server.attachment_headers("application/pdf", "x", inline=True)[0].startswith("inline;"))
+        for ctype in ("image/svg+xml", "text/html", "application/xhtml+xml", "text/xml", "application/octet-stream"):
+            disposition, _ = server.attachment_headers(ctype, "x", inline=True)
+            self.assertTrue(disposition.startswith("attachment;"), ctype)
+        self.assertTrue(server.attachment_headers("application/pdf", "x", inline=False)[0].startswith("attachment;"))
+
+    def test_mp3_preview(self):
+        self.assertEqual(server.preview_type("audio/mpeg"), "audio/mpeg")
+        self.assertEqual(server.preview_type("audio/mp3"), "audio/mpeg")
+        self.assertIsNone(server.preview_type("audio/x-ms-wma"))
+        disposition, extra = server.attachment_headers("audio/mpeg", "x", inline=True)
+        self.assertTrue(disposition.startswith("inline;"))
+        self.assertNotIn("Content-Security-Policy", dict(extra))  # the media player does not work sandboxed
+
     def test_bad_index_and_missing_eml_404(self):
         for path in (f"/api/message/s1/{ID_RICH}/attachment/1",
                      f"/api/message/s1/{ID_RICH}/attachment/abc",

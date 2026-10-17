@@ -62,6 +62,11 @@ TAG_RE = re.compile(r"^/api/tags/(\d+)(?:/(remove))?$")
 MARKS_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/marks$")
 ICON_RE = re.compile(r"^/api/sources/([^/]+)/icon$")
 CID_RE = re.compile(r"cid:([^\s\"'<>()]+)")
+# Images get a sandbox CSP. PDFs and audio get none: the browser's PDF viewer and media player do not work in a
+# sandboxed document, and neither type runs code of its own on our origin
+PREVIEW_TYPES = frozenset({"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "audio/mpeg"})
+PREVIEW_ALIASES = {"audio/mp3": "audio/mpeg"}  # non-standard type some mailers write
+IMAGE_PREVIEW_CSP = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
 CLI_NAME = "proton-mail-export-cli"
 MAX_BROWSE_ENTRIES = 2000
 MAX_BODY = 64 * 1024
@@ -277,6 +282,22 @@ def attachment_parts(msg: Message) -> list[Message]:
 
 def attachment_name(part: Message, n: int) -> str:
     return part.get_filename() or f"attachment-{n}"
+
+
+def preview_type(ctype: str) -> str | None:
+    """The type an attachment is shown inline with, or None if it is only downloaded."""
+    ctype = PREVIEW_ALIASES.get(ctype, ctype)
+    return ctype if ctype in PREVIEW_TYPES else None
+
+
+def attachment_headers(ctype: str, name: str, inline: bool) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """Content-Disposition and extra headers. Only types the browser shows without running the file's own code
+    are served inline; anything else (SVG, HTML, ...) stays a download, since it would run on our origin."""
+    quoted = quote(name, safe="")
+    if inline and ctype in PREVIEW_TYPES:
+        extra = (("Content-Security-Policy", IMAGE_PREVIEW_CSP),) if ctype.startswith("image/") else ()
+        return f"inline; filename*=UTF-8''{quoted}", extra
+    return f"attachment; filename*=UTF-8''{quoted}", ()
 
 
 def attachment_payload(part: Message) -> bytes:
@@ -1165,7 +1186,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._json(400, {"error": "invalid tag"})
                 return self._json(200, body)
             if m := ATT_RE.match(url.path):
-                return self._attachment(store, unquote(m[1]), unquote(m[2]), int(m[3]))
+                return self._attachment(store, unquote(m[1]), unquote(m[2]), int(m[3]),
+                                        _arg(query, "inline") == "1")
             if m := MSG_RE.match(url.path):
                 src, mid = unquote(m[1]), unquote(m[2])
                 hit = store.message(src, mid)  # the id must be indexed, so no path escapes a mail dir
@@ -1195,14 +1217,16 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(400, {"error": str(exc)})
             self._json(200, asdict(plan) | {"target": tgt.id, "reference": ref.id})
 
-        def _attachment(self, store: Store, src: str, mid: str, n: int) -> None:
+        def _attachment(self, store: Store, src: str, mid: str, n: int, inline: bool) -> None:
             hit = store.message(src, mid)
             part = get_attachment(hit[0], mid, n) if hit is not None else None
             if part is None:
                 return self._json(404, {"error": "no such attachment"})
-            name = quote(attachment_name(part, n), safe="")
-            self._send(200, attachment_payload(part), part.get_content_type(),
-                       (("Content-Disposition", f"attachment; filename*=UTF-8''{name}"),))
+            ctype = part.get_content_type()
+            if inline:
+                ctype = preview_type(ctype) or ctype
+            disposition, extra = attachment_headers(ctype, attachment_name(part, n), inline)
+            self._send(200, attachment_payload(part), ctype, (("Content-Disposition", disposition),) + extra)
 
         def do_POST(self) -> None:
             path = urlsplit(self.path).path

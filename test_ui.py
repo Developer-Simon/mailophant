@@ -80,3 +80,19 @@ class GestureMathTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class CanPreviewTest(unittest.TestCase):
+    def test_types(self):
+        for mime in ("application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "IMAGE/PNG",
+                     "audio/mpeg", "audio/mp3"):
+            self.assertTrue(run_js(f"canPreview({json.dumps(mime)})"), mime)
+        for mime in ("image/svg+xml", "text/html", "application/octet-stream", "", None):
+            self.assertFalse(run_js(f"canPreview({json.dumps(mime)})"), mime)
+
+    def test_kind(self):
+        self.assertEqual(run_js('previewKind("audio/mpeg")'), "audio")
+        self.assertEqual(run_js('previewKind("audio/mp3")'), "audio")
+        self.assertEqual(run_js('previewKind("application/pdf")'), "frame")
+        self.assertEqual(run_js('previewKind("image/png")'), "frame")
