@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 import store
+import tags
 import test_server as fx
 
 
@@ -321,6 +322,101 @@ class QueryTests(unittest.TestCase):
         r = self.store.messages(["s1"], None, "", -5, 0)
         self.assertEqual(r["total"], 4)
         self.assertEqual([m["id"] for m in r["messages"]], [fx.ID_PLAIN])
+
+
+class TagQueryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.export = fx.make_export(self.tmp)
+        self.export2 = os.path.join(self.tmp, "export2")
+        shutil.copytree(self.export, self.export2)
+        self.tags_db = os.path.join(self.tmp, "tags.db")
+        self.tags = tags.TagStore(self.tags_db)
+        self.addCleanup(self.tags.close)
+        self.store = store.Store(os.path.join(self.tmp, "archive.db"), self.tags_db)
+        self.addCleanup(self.store.close)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.store.sync_source("s1", self.export)
+            self.store.sync_source("s2", self.export2)
+        self.t = self.tags.create_tag("Wichtig", "#f00")["id"]
+
+    def marks_of(self, rows):
+        return {m["id"]: (m["starred"], m["tags"]) for m in rows}
+
+    def test_rows_carry_marks(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), True, [self.t])
+        rows = self.store.messages(["s1", "s2"], None, "", 0, 50)["messages"]
+        self.assertEqual(len(rows), 8)
+        for m in rows:
+            with self.subTest(source=m["source"], id=m["id"]):
+                if m["id"] == fx.ID_PLAIN:
+                    self.assertEqual((m["starred"], m["tags"]), (True, [self.t]))
+                else:
+                    self.assertEqual((m["starred"], m["tags"]), (False, []))
+                self.assertEqual(bool(m["ident"]), m["id"] != fx.ID_GHOST)
+        self.assertEqual(self.store.messages(["s1"], None, "", 0, 50)["messages"][0]["ident"],
+                         self.store.ident("s1", fx.ID_PLAIN))
+
+    def test_filter_star(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), True, [])
+        self.assertEqual(self.store.messages(["s1"], None, "", 0, 50, tag="star")["total"], 1)
+        self.assertEqual(self.store.messages(["s1", "s2"], None, "", 0, 50, tag="star")["total"], 2)
+
+    def test_filter_tag_combines_with_folder_and_search(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), None, [self.t])
+        self.tags.set_marks(self.store.ident("s1", fx.ID_ALT), None, [self.t])
+        self.assertEqual(self.store.messages(["s1"], None, "", 0, 50, tag=str(self.t))["total"], 2)
+        r = self.store.messages(["s1"], "sys:0", "", 0, 50, tag=str(self.t))
+        self.assertEqual([m["id"] for m in r["messages"]], [fx.ID_PLAIN])
+        r = self.store.messages(["s1"], None, "multi", 0, 50, tag=str(self.t))
+        self.assertEqual([m["id"] for m in r["messages"]], [fx.ID_ALT])
+
+    def test_filter_unknown_tag_is_empty(self):
+        self.assertEqual(self.store.messages(["s1"], None, "", 0, 50, tag="999"),
+                         {"total": 0, "messages": []})
+
+    def test_filter_rejects_non_numeric_tag(self):
+        for bad in ("", "x", "-1", "1 OR 1=1"):
+            with self.subTest(tag=bad):
+                with self.assertRaises(ValueError):
+                    self.store.messages(["s1"], None, "", 0, 50, tag=bad)
+
+    def test_ghost_mail_never_matches(self):
+        self.tags._conn().execute("INSERT INTO stars (ident) VALUES ('')")
+        self.tags._conn().commit()
+        self.assertEqual(self.store.messages(["s1"], None, "", 0, 50, tag="star")["total"], 0)
+        ghost = [m for m in self.store.messages(["s1"], None, "", 0, 50)["messages"] if m["id"] == fx.ID_GHOST]
+        self.assertEqual((ghost[0]["starred"], ghost[0]["tags"], ghost[0]["ident"]), (False, [], ""))
+
+    def test_tag_counts(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), True, [self.t])
+        self.tags.set_marks(self.store.ident("s1", fx.ID_ALT), None, [self.t])
+        self.assertEqual(self.store.tag_counts(["s1", "s2"]), {"star": 2, str(self.t): 4})
+        self.assertEqual(self.store.tag_counts(["s1"]), {"star": 1, str(self.t): 2})
+        self.assertEqual(self.store.tag_counts([]), {"star": 0})
+
+    def test_tag_counts_match_filtered_totals(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), True, [self.t])
+        self.tags.set_marks(self.store.ident("s1", fx.ID_RICH), True, [])
+        counts = self.store.tag_counts(["s1", "s2"])
+        self.assertEqual(counts["star"], self.store.messages(["s1", "s2"], None, "", 0, 50, tag="star")["total"])
+        self.assertEqual(counts[str(self.t)],
+                         self.store.messages(["s1", "s2"], None, "", 0, 50, tag=str(self.t))["total"])
+
+    def test_ident_lookup(self):
+        self.assertTrue(self.store.ident("s1", fx.ID_PLAIN).startswith("sha256:"))
+        self.assertEqual(self.store.ident("s1", fx.ID_GHOST), "")
+        self.assertIsNone(self.store.ident("s1", "nope"))
+
+    def test_store_without_tags_db_still_lists(self):
+        plain = store.Store(os.path.join(self.tmp, "plain.db"))
+        self.addCleanup(plain.close)
+        with contextlib.redirect_stderr(io.StringIO()):
+            plain.sync_source("s1", self.export)
+        rows = plain.messages(["s1"], None, "", 0, 50)["messages"]
+        self.assertEqual(len(rows), 4)
+        self.assertTrue(all(m["starred"] is False and m["tags"] == [] for m in rows))
 
 
 if __name__ == "__main__":

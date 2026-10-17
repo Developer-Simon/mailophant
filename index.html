@@ -60,13 +60,18 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Folders */
 #folders { padding: 12px 8px; }
 #folders h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 4px 8px 8px; }
-#folder-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+#folder-list, #tag-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
 .folder { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
 .folder:hover { background: var(--hover); }
 .folder[aria-current="true"] { background: var(--sel); }
 .folder .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folder .unread { font-weight: 700; }
 .folder .count { color: var(--muted); font-size: 12px; }
+.tag-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.tag-form { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 160px; padding: 2px 8px; }
+.tag-input { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.tag-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.tag-form .warn { margin: 0; padding: 4px 8px; font-size: 12px; }
 
 /* Message list */
 #list-pane .head { flex: none; padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
@@ -83,6 +88,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .msg .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .msg .subject { display: flex; align-items: center; gap: 4px; color: var(--muted); }
 .subject-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg .star { flex: none; color: var(--accent); }
 .msg.unread .sender, .msg.unread .subject-text { font-weight: 700; color: var(--text); }
 .clip { width: 13px; height: 13px; flex: none; }
 .more { flex: none; margin: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
@@ -105,6 +111,20 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .toggle button[aria-pressed="true"] { background: var(--sel); font-weight: 600; }
 #m-body iframe { display: block; width: 100%; min-height: 300px; border: 0; border-radius: 8px; background: #ffffff; }
 #m-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: inherit; }
+#m-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+#m-head h1 { flex: 1; min-width: 0; margin: 0; }
+.m-star { flex: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 20px; line-height: 1.3; cursor: pointer; }
+.m-star[aria-pressed="true"] { color: var(--accent); }
+.m-star:disabled, .m-chip button:disabled { opacity: .5; cursor: default; }
+#m-tags { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+#m-chips { display: contents; }
+.m-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
+.m-chip button { padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+#m-tags .tag-input { flex: 1 1 160px; width: auto; max-width: 260px; }
+#m-tag-suggest { position: absolute; top: 100%; z-index: 5; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 160px; max-width: 260px; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
+#m-tag-suggest li { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+#m-tag-suggest li:hover, #m-tag-suggest li[aria-selected="true"] { background: var(--sel); }
+#m-nomark { margin-bottom: 12px; font-size: 13px; }
 
 /* ---------- Fetch (Abruf) ---------- */
 #side-foot { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -161,6 +181,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .src-row input.name { flex: 1 1 140px; }
 .src-row input.emoji { width: 72px; }
 .src-row input[type="file"] { max-width: 100%; font-size: 12px; }
+.src-row input[type="color"] { width: 40px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); cursor: pointer; }
 .btn.small { padding: 4px 8px; font-size: 12px; }
 
 /* ---------- Narrow screens: stack the three panes ---------- */
@@ -168,7 +189,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
   #folders, #list-pane { overflow: visible; }
   #list-pane { border: 0; border-top: 1px solid var(--border); max-height: 60vh; overflow: hidden; }
-  #folder-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  #folder-list, #tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
   .folder { width: auto; }
   #reader { overflow: visible; padding: 16px; border-top: 1px solid var(--border); }
   #folders { padding: 12px 16px; }
@@ -189,6 +210,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <aside id="folders">
     <h2>Ordner</h2>
     <ul id="folder-list"></ul>
+    <h2>Tags</h2>
+    <ul id="tag-list"></ul>
     <div id="side-foot">
       <div id="load-warn" class="warn" role="alert" hidden>
         <div id="load-warn-text"></div>
@@ -228,13 +251,23 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <main id="reader">
     <div id="placeholder" class="muted">Keine Nachricht ausgewählt.</div>
     <article id="mail" hidden>
-      <h1 id="m-subject"></h1>
+      <div id="m-head">
+        <h1 id="m-subject"></h1>
+        <button id="m-star" class="m-star" type="button" aria-pressed="false" title="Markieren">☆</button>
+      </div>
       <dl class="meta">
         <div><dt>Von</dt><dd id="m-from"></dd></div>
         <div><dt>An</dt><dd id="m-to"></dd></div>
         <div id="row-cc"><dt>Cc</dt><dd id="m-cc"></dd></div>
         <div><dt>Datum</dt><dd id="m-date"></dd></div>
       </dl>
+      <div id="m-tags" hidden>
+        <div id="m-chips"></div>
+        <input id="m-tag-input" class="tag-input" type="text" maxlength="40" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="m-tag-suggest" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen">
+        <ul id="m-tag-suggest" role="listbox" hidden></ul>
+      </div>
+      <div id="m-nomark" class="muted" hidden>Markieren nicht möglich, die .eml-Datei fehlt.</div>
+      <div id="m-mark-warn" class="warn" role="alert" hidden></div>
       <div id="m-attachments" class="attachments" hidden></div>
       <div id="m-error" class="warn" role="alert" hidden></div>
       <div id="m-toggle" class="toggle" hidden>
@@ -317,6 +350,16 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <h3 id="settings-sources-title">Quellen</h3>
     <p class="hint">Reihenfolge wie in der Leiste. Ausgeblendete Quellen erscheinen weder in der Leiste noch in „∑“.</p>
     <ul id="settings-sources" class="src-list" aria-label="Quellen"></ul>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-tags-title">
+    <h3 id="settings-tags-title">Tags</h3>
+    <ul id="settings-tags" class="src-list" aria-label="Tags"></ul>
+    <form id="settings-tag-new">
+      <label class="field"><span>Neuer Tag</span>
+        <input name="name" type="text" maxlength="40" autocomplete="off"></label>
+      <div class="actions"><button class="btn" type="submit">Hinzufügen</button></div>
+    </form>
   </section>
 
   <section class="settings-section" aria-labelledby="settings-proton-title">
@@ -451,9 +494,10 @@ function autoIcon(src, cls) {
 /* ---------- State ---------- */
 const state = {
   folders: [], folder: null, q: '',
+  tags: [], starCount: 0, tag: null, tagSeq: 0, // tag: "star", a tag ID as string, or null; never with folder
   messages: [], total: 0, loading: false, listSeq: 0,
   selectedKey: null, detailSeq: 0,
-  mail: null, mode: 'html',
+  mail: null, mailSource: null, mode: 'html',
   sources: [], settings: null, view: null, viewSeq: 0, config: null,
   iconVer: {}, // per source: bumped after an icon upload, so the image URL changes
 };
@@ -527,11 +571,14 @@ async function loadFolders(keep = false) {
   if (ids.length === 0) {
     state.folders = [];
     state.folder = null;
+    state.tag = null;
     $('folder-list').replaceChildren(el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' }));
     state.messages = [];
     state.total = 0;
     showPlaceholder('Keine Nachricht ausgewählt.');
     renderList();
+    updateSearchPlaceholder();
+    loadTags();
     return;
   }
   let folders;
@@ -545,12 +592,24 @@ async function loadFolders(keep = false) {
   if (seq !== state.viewSeq) return; // the view changed meanwhile
   state.folders = folders;
   renderFolders();
-  if (keep && state.folders.some((f) => f.key === prev)) {
-    selectFolder(prev);
+  if (state.tag) {
+    // A tag filter survives the reload. loadTags falls back to the inbox if the tag is gone.
+    await loadTags();
+    if (seq !== state.viewSeq) return;
+    if (state.tag) reloadList();
     return;
   }
+  if (keep && state.folders.some((f) => f.key === prev)) {
+    selectFolder(prev);
+  } else {
+    selectFolder(defaultFolderKey());
+  }
+  loadTags();
+}
+
+function defaultFolderKey() {
   const inbox = state.folders.find((f) => (f.name || '').toLowerCase() === 'inbox') || state.folders[0];
-  selectFolder(inbox ? inbox.key : null);
+  return inbox ? inbox.key : null;
 }
 
 function renderFolders() {
@@ -567,8 +626,151 @@ function renderFolders() {
 
 function selectFolder(key) {
   state.folder = key;
+  state.tag = null;
   renderFolders();
+  renderTags();
+  updateSearchPlaceholder();
   reloadList();
+}
+
+function selectTag(key) {
+  state.tag = key;
+  state.folder = null;
+  renderFolders();
+  renderTags();
+  updateSearchPlaceholder();
+  reloadList();
+}
+
+function updateSearchPlaceholder() {
+  $('search').placeholder = state.tag ? 'In diesem Tag suchen…' : 'In diesem Ordner suchen…';
+}
+
+/* ---------- Tags ---------- */
+const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// Colour dot for a tag. The colour is used only if it has the same #rrggbb form the server accepts.
+function tagDot(tag) {
+  const dot = el('span', { class: 'tag-dot', title: tag.name || '', 'aria-hidden': 'true' });
+  if (COLOR_RE.test(tag.color || '')) dot.style.background = tag.color;
+  return dot;
+}
+
+// Star count and tags of the active sources. A tag filter that no longer exists falls back to the inbox.
+async function loadTags() {
+  const seq = ++state.tagSeq;
+  const ids = activeSourceIds();
+  if (ids.length === 0) {
+    state.tags = [];
+    state.starCount = 0;
+    loadWarnings.delete('tags');
+    renderLoadWarn();
+    renderTags();
+    return;
+  }
+  let data;
+  try {
+    data = await api(`/api/tags?sources=${encodeURIComponent(ids.join(','))}`);
+  } catch (e) {
+    if (seq !== state.tagSeq) return;
+    loadWarnings.set('tags', `Tags konnten nicht geladen werden (${e.message}).`);
+    renderLoadWarn();
+    return;
+  }
+  if (seq !== state.tagSeq) return; // a newer read is under way
+  loadWarnings.delete('tags');
+  renderLoadWarn();
+  state.starCount = data.star ?? 0;
+  state.tags = data.tags || [];
+  if (state.tag && state.tag !== 'star' && !state.tags.some((t) => String(t.id) === state.tag)) {
+    state.tag = null;
+    selectFolder(defaultFolderKey());
+    return;
+  }
+  renderTags();
+  renderList(); // the markers in the list need the tag names and colours
+}
+
+function renderTags() {
+  const starred = el('button', { class: 'folder', type: 'button' }, [
+    el('span', { class: 'name', text: '★ Markiert' }),
+    el('span', { class: 'count', text: String(state.starCount) }),
+  ]);
+  starred.setAttribute('aria-current', String(state.tag === 'star'));
+  starred.addEventListener('click', () => selectTag('star'));
+  const items = [el('li', {}, [starred])];
+  for (const t of state.tags) {
+    const btn = el('button', { class: 'folder', type: 'button' }, [
+      tagDot(t),
+      el('span', { class: 'name', text: t.name || '' }),
+      el('span', { class: 'count', text: String(t.count ?? 0) }),
+    ]);
+    btn.setAttribute('aria-current', String(state.tag === String(t.id)));
+    btn.addEventListener('click', () => selectTag(String(t.id)));
+    items.push(el('li', {}, [btn]));
+  }
+  const addLi = el('li');
+  const add = el('button', { class: 'folder', type: 'button' }, [el('span', { class: 'name', text: '＋ Tag' })]);
+  add.addEventListener('click', () => openTagInput(addLi));
+  addLi.append(add);
+  items.push(addLi);
+  $('tag-list').replaceChildren(...items);
+}
+
+// Replaces the "＋ Tag" entry with an input. Enter creates the tag, Escape cancels.
+function openTagInput(li) {
+  const input = el('input', { class: 'tag-input', type: 'text', maxlength: '40', autocomplete: 'off', 'aria-label': 'Name des neuen Tags' });
+  const warn = el('div', { class: 'warn', role: 'alert' });
+  warn.hidden = true;
+  input.addEventListener('keydown', async (e) => {
+    if (e.isComposing) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      renderTags();
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    input.disabled = true;
+    try {
+      await createTag(input.value.trim()); // redraws the list on success
+    } catch (err) {
+      input.disabled = false;
+      warn.textContent = err.message;
+      warn.hidden = false;
+      input.focus();
+    }
+  });
+  li.replaceChildren(el('div', { class: 'tag-form' }, [input, warn]));
+  input.focus();
+}
+
+// Creates a tag and returns it. The server answers with the star count and the tag list of the visible sources.
+async function createTag(name) {
+  const res = await fetch('/api/tags', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ name }),
+    signal: timeoutSignal(), // a stalled request must not block the settings queue
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  state.starCount = data.star ?? 0;
+  state.tags = data.tags || [];
+  renderTags();
+  return state.tags.find((t) => t.name.toLowerCase() === name.toLowerCase());
+}
+
+// Sets the marks of one mail identity in every listed row (the same mail may sit in two sources).
+function applyMarks(ident, marks) {
+  if (!ident) return; // "" means the .eml is missing: no identity to match
+  for (const m of state.messages) {
+    if (m.ident !== ident) continue;
+    m.starred = marks.starred;
+    m.tags = marks.tags;
+  }
+  renderList();
+  loadTags();
 }
 
 /* ---------- Message list ---------- */
@@ -593,6 +795,7 @@ async function loadPage(reset) {
   const offset = reset ? 0 : state.messages.length;
   const params = new URLSearchParams({ sources: ids.join(','), offset: String(offset), limit: String(PAGE) });
   if (state.folder) params.set('folder', state.folder);
+  if (state.tag) params.set('tag', state.tag);
   if (state.q) params.set('q', state.q);
   state.loading = true;
   updateMore();
@@ -616,6 +819,7 @@ async function loadPage(reset) {
 function renderList() {
   $('count').textContent = `${state.total.toLocaleString('de-DE')} Mails`;
   const combined = state.view === 'all';
+  const tagById = new Map(state.tags.map((t) => [String(t.id), t]));
   $('messages').replaceChildren(...state.messages.map((m) => {
     const key = msgKey(m.source, m.id);
     const selected = key === state.selectedKey;
@@ -629,9 +833,13 @@ function renderList() {
       el('span', { class: 'sender', text: senderText(m.sender) }),
       el('span', { class: 'time', text: listDate(m.time) }),
     );
-    const subject = el('div', { class: 'subject' }, [
-      el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }),
-    ]);
+    const subject = el('div', { class: 'subject' });
+    if (m.starred) subject.append(el('span', { class: 'star', role: 'img', 'aria-label': 'Markiert', text: '★' }));
+    subject.append(el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }));
+    for (const id of m.tags || []) {
+      const tag = tagById.get(String(id)); // IDs unknown to the sidebar are skipped
+      if (tag) subject.append(tagDot(tag));
+    }
     if (m.attachments > 0) subject.append(clipIcon());
     li.append(row, subject);
     li.addEventListener('click', () => selectMessage(m.source, m.id));
@@ -688,6 +896,9 @@ function showPlaceholder(text) {
 
 function renderMail(source, m) {
   state.mail = m;
+  state.mailSource = source;
+  showMarkWarn('');
+  renderMarks();
   $('m-subject').textContent = m.subject || '(ohne Betreff)';
   $('m-from').textContent = addrText(m.from) || '(unbekannt)';
   $('m-to').textContent = addrList(m.to) || '(keine)';
@@ -749,6 +960,159 @@ function fitFrame(frame) {
     const h = frame.contentDocument.documentElement.scrollHeight;
     frame.style.height = `${Math.max(300, h + 8)}px`;
   } catch (_) { /* keep min-height */ }
+}
+
+/* ---------- Marks (star and tags of the open mail) ---------- */
+const marksPending = new Set(); // keys of mails with a marks request under way; no second submit
+let tagAdding = false; // a tag is being created from the input
+const foldName = (s) => s.toLocaleLowerCase('de-DE');
+// Key of the mail the reader shows right now, or null while it loads or shows nothing.
+const shownKey = () => (state.mail && !$('mail').hidden ? msgKey(state.mailSource, state.mail.id) : null);
+
+function showMarkWarn(text) {
+  $('m-mark-warn').textContent = text;
+  $('m-mark-warn').hidden = !text;
+}
+
+// Draws star, tag chips and tag input for the open mail. Controls are disabled while its request runs.
+function renderMarks() {
+  const m = state.mail;
+  const markable = m.markable !== false;
+  const busy = marksPending.has(msgKey(state.mailSource, m.id));
+  const starBtn = $('m-star');
+  starBtn.hidden = !markable;
+  $('m-tags').hidden = !markable;
+  $('m-nomark').hidden = markable;
+  starBtn.textContent = m.starred ? '★' : '☆';
+  starBtn.setAttribute('aria-pressed', String(!!m.starred));
+  starBtn.title = m.starred ? 'Markierung entfernen' : 'Markieren';
+  starBtn.disabled = busy;
+
+  const tagById = new Map(state.tags.map((t) => [String(t.id), t]));
+  const current = (m.tags || []).map(String);
+  const chips = [];
+  for (const id of current) {
+    const tag = tagById.get(id);
+    if (!tag) continue; // IDs unknown to the sidebar are skipped
+    const remove = el('button', { type: 'button', text: '×', 'aria-label': `Tag ${tag.name || ''} entfernen` });
+    remove.disabled = busy;
+    remove.addEventListener('click', () => {
+      saveMarks(state.mailSource, m.id, { tags: (m.tags || []).filter((x) => String(x) !== id) });
+    });
+    chips.push(el('span', { class: 'm-chip' }, [tagDot(tag), el('span', { text: tag.name || '' }), remove]));
+  }
+  $('m-chips').replaceChildren(...chips);
+  renderSuggest();
+}
+
+// Own suggestion list instead of a <datalist>, whose native popup can open far from the input.
+let suggestIndex = -1;
+function suggestions() {
+  const m = state.mail;
+  if (!m) return [];
+  const current = (m.tags || []).map(String);
+  const typed = foldName($('m-tag-input').value.trim());
+  return state.tags.filter((t) => !current.includes(String(t.id)) && foldName(t.name || '').includes(typed));
+}
+
+function renderSuggest() {
+  const input = $('m-tag-input');
+  const list = $('m-tag-suggest');
+  const items = document.activeElement === input && state.mail ? suggestions() : [];
+  suggestIndex = Math.min(suggestIndex, items.length - 1);
+  list.hidden = items.length === 0;
+  input.setAttribute('aria-expanded', String(items.length > 0));
+  list.replaceChildren(...items.map((t, i) => {
+    const li = el('li', { role: 'option', 'aria-selected': String(i === suggestIndex) }, [tagDot(t), el('span', { text: t.name || '' })]);
+    li.addEventListener('mousedown', (e) => { // before the input loses focus
+      e.preventDefault();
+      input.value = t.name || '';
+      addTagFromInput();
+    });
+    return li;
+  }));
+}
+
+// Toggles the star of the open mail (button and "s" key).
+function toggleStar() {
+  if (!shownKey() || state.mail.markable === false) return;
+  saveMarks(state.mailSource, state.mail.id, { starred: !state.mail.starred });
+}
+
+// Enter in the tag input: uses the tag with the same name (case-insensitive) or creates it, then sets it.
+async function addTagFromInput() {
+  const input = $('m-tag-input');
+  const name = input.value.trim();
+  const key = shownKey();
+  if (!name || !key || tagAdding || marksPending.has(key)) return;
+  const source = state.mailSource;
+  const id = state.mail.id;
+  tagAdding = true;
+  try {
+    let tag = state.tags.find((t) => foldName(t.name || '') === foldName(name));
+    if (!tag) {
+      try {
+        tag = await createTag(name);
+      } catch (e) {
+        if (shownKey() === key) showMarkWarn(`Tag konnte nicht angelegt werden (${e.message}).`);
+        return;
+      }
+      if (!tag) {
+        if (shownKey() === key) showMarkWarn('Tag konnte nicht angelegt werden.');
+        return;
+      }
+      if (shownKey() !== key) return; // the reader moved on: the tag exists, this mail is unchanged
+      renderMarks(); // the tag is new to the reader too
+    }
+    if ((state.mail.tags || []).some((x) => String(x) === String(tag.id))) {
+      input.value = '';
+      return;
+    }
+    if (await saveMarks(source, id, { tags: [...(state.mail.tags || []), tag.id] })) input.value = '';
+  } finally {
+    tagAdding = false;
+    renderSuggest(); // the input may have been cleared
+  }
+}
+
+// Sends one star or tag change. On success the list and sidebar take the new marks, and the reader
+// too if that mail is still open. On failure the old marks stay and the reader shows a warning.
+// Returns true on success.
+async function saveMarks(source, id, change) {
+  const key = msgKey(source, id);
+  if (marksPending.has(key)) return false; // one request per mail at a time
+  const row = state.messages.find((m) => msgKey(m.source, m.id) === key);
+  const ident = row ? row.ident : null; // null if the mail is not in the list (e.g. after a filter change)
+  marksPending.add(key);
+  if (shownKey() === key) renderMarks();
+  let marks;
+  try {
+    const res = await fetch(`/api/message/${encodeURIComponent(source)}/${encodeURIComponent(id)}/marks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(change),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    marks = data;
+  } catch (e) {
+    marksPending.delete(key);
+    if (shownKey() === key) {
+      showMarkWarn(`Markierung konnte nicht gespeichert werden (${e.message}).`);
+      renderMarks();
+    }
+    return false;
+  }
+  marksPending.delete(key);
+  if (ident) applyMarks(ident, marks); // also refreshes the sidebar counts
+  else loadTags();
+  if (shownKey() === key) {
+    state.mail.starred = marks.starred;
+    state.mail.tags = marks.tags;
+    showMarkWarn('');
+    renderMarks();
+  }
+  return true;
 }
 
 /* ---------- Job (index or fetch) ---------- */
@@ -1509,10 +1873,92 @@ function renderSettingsSources() {
   restoreFocus(key);
 }
 
+// Sends one tag change (rename, colour, delete). Errors carry the server's message.
+async function postTag(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: timeoutSignal(),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  return data;
+}
+
+// Removes a deleted tag from the rows and the open mail, so no chip or marker points at it.
+function forgetTag(id) {
+  const key = String(id);
+  const keep = (tags) => (tags || []).filter((x) => String(x) !== key);
+  for (const m of state.messages) m.tags = keep(m.tags);
+  if (state.mail) state.mail.tags = keep(state.mail.tags);
+}
+
+// Runs one tag change in the settings queue. Then the tags are read again, so a failed rename
+// shows the stored name again. Sidebar, list and open reader follow the new tags.
+function changeTags(task) {
+  return queueSettings(async () => {
+    showSettingsWarn('');
+    try {
+      await task();
+    } catch (err) {
+      showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Änderung konnte nicht gespeichert werden (${err.message}).`);
+    }
+    await loadTags(); // the server may have applied a timed-out change anyway
+    renderSettingsTags();
+    renderList();
+    if (shownKey()) renderMarks(); // chips show the new names and colours
+  });
+}
+
+function settingsTagRow(t) {
+  const url = `/api/tags/${encodeURIComponent(t.id)}`;
+  const li = el('li', { class: 'src-row' });
+
+  const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', maxlength: '40', autocomplete: 'off' });
+  name.value = t.name || '';
+  name.addEventListener('change', () => {
+    const v = name.value.trim();
+    if (!v) {
+      name.value = t.name || '';
+      showSettingsWarn('Der Name darf nicht leer sein.');
+      return;
+    }
+    if (v !== t.name) changeTags(() => postTag(url, { name: v }));
+  });
+  const color = el('input', { type: 'color', 'aria-label': `Farbe von ${t.name || ''}` });
+  // Only a colour in the #rrggbb form the server accepts goes into the colour input.
+  color.value = COLOR_RE.test(t.color || '') ? t.color.toLowerCase() : '#808080';
+  color.addEventListener('change', () => {
+    if (COLOR_RE.test(color.value) && color.value.toLowerCase() !== (t.color || '').toLowerCase()) {
+      changeTags(() => postTag(url, { color: color.value }));
+    }
+  });
+  const del = el('button', { class: 'btn small', type: 'button', text: 'Löschen' });
+  del.addEventListener('click', () => {
+    const n = t.count ?? 0;
+    if (!confirm(`Tag „${t.name || ''}“ löschen? Er wird von ${n} Mails entfernt.`)) return;
+    changeTags(async () => {
+      await postTag(`${url}/remove`, {});
+      forgetTag(t.id);
+    });
+  });
+  li.append(el('div', { class: 'line' }, [tagDot(t), name, color, del]));
+  li.append(el('div', { class: 'hint', text: `${t.count ?? 0} Mails` }));
+  return li;
+}
+
+function renderSettingsTags() {
+  $('settings-tags').replaceChildren(...(state.tags.length
+    ? state.tags.map(settingsTagRow)
+    : [el('li', { class: 'muted', text: 'Noch keine Tags.' })]));
+}
+
 function renderSettingsAll() {
   renderSettingsView();
   renderSettingsProton();
   renderSettingsSources();
+  renderSettingsTags();
   renderSettingsLibrary();
 }
 
@@ -1521,10 +1967,27 @@ async function openSettings() {
   renderSettingsAll();
   const dlg = $('settings-dialog');
   if (!dlg.open) dlg.showModal();
-  await queueSettings(() => reloadAdmin());
+  await queueSettings(async () => {
+    await reloadAdmin();
+    await loadTags(); // the visible sources may have changed
+    renderSettingsTags();
+  });
 }
 
 $('rail-settings').addEventListener('click', openSettings);
+$('settings-tag-new').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = e.currentTarget.elements.name;
+  const name = input.value.trim();
+  if (!name) {
+    showSettingsWarn('Der Name darf nicht leer sein.');
+    return;
+  }
+  changeTags(async () => {
+    await createTag(name);
+    input.value = '';
+  });
+});
 $('settings-view').addEventListener('change', async (e) => {
   const view = e.target.value;
   if (!(await changeSettings(() => ({ url: '/api/settings', init: jsonPost({ view }) }))).ok) renderSettingsView();
@@ -1566,6 +2029,29 @@ for (const b of document.querySelectorAll('#m-toggle button')) {
   });
 }
 
+$('m-star').addEventListener('click', toggleStar);
+$('m-tag-input').addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const n = suggestions().length;
+    if (!n) return;
+    e.preventDefault();
+    suggestIndex = e.key === 'ArrowDown' ? (suggestIndex + 1) % n : (suggestIndex - 1 + n) % n;
+    renderSuggest();
+  } else if (e.key === 'Escape') {
+    suggestIndex = -1;
+    $('m-tag-suggest').hidden = true;
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const pick = suggestIndex >= 0 ? suggestions()[suggestIndex] : null;
+    if (pick) $('m-tag-input').value = pick.name || '';
+    addTagFromInput();
+  }
+});
+$('m-tag-input').addEventListener('input', () => { suggestIndex = -1; renderSuggest(); });
+$('m-tag-input').addEventListener('focus', renderSuggest);
+$('m-tag-input').addEventListener('blur', () => { suggestIndex = -1; renderSuggest(); });
+
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector('dialog[open]')) return; // no list navigation behind a modal dialog
@@ -1573,6 +2059,7 @@ document.addEventListener('keydown', (e) => {
   if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+  else if (e.key === 's') { e.preventDefault(); toggleStar(); }
 });
 
 /* ---------- Start ---------- */

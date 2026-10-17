@@ -16,10 +16,13 @@ from email import policy
 from email.parser import BytesParser
 from typing import Any, Callable
 
+import tags
+
 META_SUFFIX = ".metadata.json"
 SCHEMA_VERSION = 2  # 2: FTS columns hold casefolded text
 COMMIT_EVERY = 1000
 SYSTEM_FOLDER_ORDER = ["0", "7", "5", "4", "3", "6", "8"]
+IN_CHUNK = 200  # identities per IN (...) lookup, well below SQLite's variable limit
 
 Json = dict[str, Any]
 
@@ -134,8 +137,9 @@ def escape_like(text: str) -> str:
 
 
 class Store:
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, tags_db: str | None = None):
         self.db_path = db_path
+        self.tags_db = tags_db if tags_db is not None else ":memory:"  # tests: empty tags, one per connection
         self._local = threading.local()
         self._write_lock = threading.Lock()  # one writer at a time; readers stay lock-free (WAL)
         con = self._conn()
@@ -157,6 +161,9 @@ class Store:
         if con is None:
             con = self._local.con = sqlite3.connect(self.db_path, timeout=30)
             con.create_function("casefold", 1, casefold_sql, deterministic=True)
+            con.execute("ATTACH DATABASE ? AS tags", (self.tags_db,))
+            if self.tags_db == ":memory:":
+                tags.create_schema(con, "tags")
             con.execute("PRAGMA journal_mode = WAL")
         return con
 
@@ -280,8 +287,17 @@ class Store:
             entry["unread"] += unread
         return sorted(merged.values(), key=folder_sort_key)
 
-    def messages(self, source_ids: list[str], folder: str | None, needle: str, offset: int, limit: int) -> Json:
-        """Newest first across sources; needle must already be casefolded."""
+    def messages(self, source_ids: list[str], folder: str | None, needle: str, offset: int, limit: int,
+                 tag: str | None = None) -> Json:
+        """Newest first across sources; needle must already be casefolded.
+
+        tag is "star", a tag ID as decimal string, or None. Rows carry ident, starred and tags from tags.db.
+        """
+        if tag is not None and tag != "star":
+            if not (tag.isascii() and tag.isdigit()):
+                raise ValueError(f"invalid tag filter: {tag!r}")
+            if int(tag) >= 2 ** 63:  # cannot be a stored ID
+                return {"total": 0, "messages": []}
         if not source_ids:
             return {"total": 0, "messages": []}
         limit, offset = max(1, limit), max(0, offset)
@@ -300,6 +316,11 @@ class Store:
             where.append("EXISTS (SELECT 1 FROM message_labels ml WHERE ml.source_id = m.source_id "
                          f"AND ml.mid = m.mid AND (ml.source_id, ml.label_id) IN (VALUES {values}))")
             args += [x for pair in pairs for x in pair]
+        if tag == "star":
+            where.append("m.ident <> '' AND m.ident IN (SELECT ident FROM tags.stars)")
+        elif tag is not None:
+            where.append("m.ident <> '' AND m.ident IN (SELECT ident FROM tags.message_tags WHERE tag_id = ?)")
+            args.append(int(tag))
         if len(needle) >= 3:  # as a phrase, so FTS operators and quotes in the input stay literal
             where.append("(m.source_id, m.mid) IN (SELECT source_id, mid FROM messages_fts WHERE messages_fts MATCH ?)")
             args.append('"' + needle.replace('"', '""') + '"')
@@ -311,12 +332,55 @@ class Store:
         clause = " AND ".join(where)
         total = con.execute(f"SELECT COUNT(*) FROM messages m WHERE {clause}", args).fetchone()[0]
         rows = con.execute(
-            f"SELECT m.source_id, m.mid, m.payload, m.unread FROM messages m WHERE {clause} "
+            f"SELECT m.source_id, m.mid, m.payload, m.unread, m.ident FROM messages m WHERE {clause} "
             "ORDER BY m.time DESC, m.mid DESC, m.source_id DESC LIMIT ? OFFSET ?",
             [*args, limit, offset]).fetchall()
-        return {"total": total, "messages": [
-            summarize(mid, json.loads(payload)) | {"source": sid, "unread": bool(unread)}
-            for sid, mid, payload, unread in rows]}
+        marks = self._marks([ident for *_, ident in rows])
+        messages = []
+        for sid, mid, payload, unread, ident in rows:
+            mark = marks.get(ident, {"starred": False, "tags": []})  # ident "" (no .eml) never has marks
+            messages.append(summarize(mid, json.loads(payload)) | {
+                "source": sid, "unread": bool(unread), "ident": ident,
+                "starred": mark["starred"], "tags": list(mark["tags"])})
+        return {"total": total, "messages": messages}
+
+    def _marks(self, idents: list[str]) -> dict[str, Json]:
+        """Star and tag IDs per identity; one query per table and chunk of identities."""
+        con = self._conn()
+        ids = [ident for ident in dict.fromkeys(idents) if ident]  # "" means no .eml: never marked
+        found: dict[str, Json] = {ident: {"starred": False, "tags": []} for ident in ids}
+        for i in range(0, len(ids), IN_CHUNK):
+            chunk = ids[i:i + IN_CHUNK]
+            marks = ",".join("?" for _ in chunk)
+            for (ident,) in con.execute(f"SELECT ident FROM tags.stars WHERE ident IN ({marks})", chunk):
+                found[ident]["starred"] = True
+            for ident, tag_id in con.execute(
+                    f"SELECT ident, tag_id FROM tags.message_tags WHERE ident IN ({marks}) ORDER BY tag_id", chunk):
+                found[ident]["tags"].append(tag_id)
+        return found
+
+    def tag_counts(self, source_ids: list[str]) -> dict[str, int]:
+        """Counts per tag filter value, one per message copy like messages()["total"]; "star" is always present."""
+        counts = {"star": 0}
+        if not source_ids:
+            return counts
+        sources = list(dict.fromkeys(source_ids))
+        marks = ",".join("?" for _ in sources)
+        con = self._conn()
+        counts["star"] = con.execute(
+            "SELECT COUNT(*) FROM messages m JOIN tags.stars s ON s.ident = m.ident "
+            f"WHERE m.source_id IN ({marks}) AND m.ident <> ''", sources).fetchone()[0]
+        for tag_id, count in con.execute(
+                "SELECT mt.tag_id, COUNT(*) FROM messages m JOIN tags.message_tags mt ON mt.ident = m.ident "
+                f"WHERE m.source_id IN ({marks}) AND m.ident <> '' GROUP BY mt.tag_id", sources):
+            counts[str(tag_id)] = count
+        return counts
+
+    def ident(self, source_id: str, mid: str) -> str | None:
+        """Mail identity for tags.db; None if the mail is not in the index, "" if its .eml is missing."""
+        row = self._conn().execute(
+            "SELECT ident FROM messages WHERE source_id = ? AND mid = ?", (source_id, mid)).fetchone()
+        return row[0] if row else None
 
     def source_stats(self, source_ids: list[str]) -> dict[str, tuple[int, int]]:
         """(message count, unread count) per source; ids without rows map to (0, 0)."""

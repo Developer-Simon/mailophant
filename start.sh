@@ -3,6 +3,7 @@
 # Usage: ./start.sh [--no-window] [--port PORT] [LIBRARY_DIR]
 #   --no-window  Browser nicht automatisch öffnen
 #   LIBRARY_DIR  optional; ohne Angabe gilt die gemerkte Bibliothek, sonst fragt der Viewer im Browser
+#                Zu sichern sind library.json, icons/, sources/ und tags.db (archive.db ist nur ein Cache).
 #   Optional: Mit dem Python-Modul pypff lassen sich .pst/.ost-Dateien im Viewer importieren.
 set -euo pipefail
 

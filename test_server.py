@@ -1623,6 +1623,234 @@ class SourceAdminTests(unittest.TestCase):
         self.assertIs(data["outlook_import"], True)
 
 
+class TagRouteTests(unittest.TestCase):
+    """Tag routes: create, list, rename, recolor, delete. Each test gets its own library and server."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the index logs skipped files
+        self.servers = []
+        self.addCleanup(self.stop_all)  # runs before the redirect ends, so the jobs stay quiet
+        self.export = make_export(self.tmp, "export")
+        self.config = os.path.join(self.tmp, "config.json")
+
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            self.stop(srv)
+
+    def stop(self, srv):
+        if srv in self.servers:
+            self.servers.remove(srv)
+        srv.shutdown()
+        srv.server_close()
+        if srv.viewer.store is not None:
+            srv.viewer.store.close()
+        if srv.viewer.tags is not None:
+            srv.viewer.tags.close()
+
+    def serve(self, library_dir, wait=True):
+        srv = server.make_server(library_dir, 0, self.tmp, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        if wait:
+            wait_job(srv.server_port)
+        return srv
+
+    def post(self, srv, path, body=None, *, raw=None, ctype="application/json",
+             origin="same", host=None):
+        """POST and return (status, parsed JSON). Origin defaults to the server's own."""
+        if raw is None:
+            raw = json.dumps(body if body is not None else {}).encode("utf-8")
+        headers = {"Content-Type": ctype}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{srv.server_port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        if host is not None:
+            headers["Host"] = host
+        status, _, data = request_raw(srv.server_port, "POST", path, raw, headers)
+        return status, json.loads(data)
+
+    def test_create_list_rename_recolor_delete(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        status, data = self.post(srv, "/api/tags", {"name": "Rechnung"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["star"], 0)
+        self.assertEqual(len(data["tags"]), 1)
+        tag = data["tags"][0]
+        self.assertEqual((tag["name"], tag["count"]), ("Rechnung", 0))
+        self.assertIn(tag["color"], server.TAG_COLORS)  # no color given: one of the defaults
+        tag_id = tag["id"]
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags"), (200, data))
+
+        status, data = self.post(srv, f"/api/tags/{tag_id}", {"name": "Belege"})
+        self.assertEqual(status, 200)
+        self.assertEqual([(t["name"], t["color"]) for t in data["tags"]], [("Belege", tag["color"])])
+
+        status, data = self.post(srv, f"/api/tags/{tag_id}", {"color": "#ABCDEF"})
+        self.assertEqual(status, 200)
+        self.assertEqual([(t["name"], t["color"]) for t in data["tags"]], [("Belege", "#abcdef")])
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags")[1], data)
+
+        self.assertEqual(self.post(srv, f"/api/tags/{tag_id}", {"name": "x"}, origin=None)[0], 403)
+        self.assertEqual(self.post(srv, f"/api/tags/{tag_id}", {"x": 1})[0], 400)  # unknown field
+        self.assertEqual(self.post(srv, "/api/tags/99", {"name": "x"})[0], 404)
+        self.assertEqual(self.post(srv, "/api/tags/99/remove", {})[0], 404)
+
+        status, data = self.post(srv, f"/api/tags/{tag_id}/remove", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["tags"], [])
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags")[1], {"star": 0, "tags": []})
+
+    def test_bad_tag_names(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        for name in ["", "   ", "x" * 41, "a\nb", None, 5]:
+            self.assertEqual(self.post(srv, "/api/tags", {"name": name})[0], 400, repr(name))
+        self.assertEqual(self.post(srv, "/api/tags", {})[0], 400)
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"})[0], 200)
+        self.assertEqual(self.post(srv, "/api/tags", {"name": " rechnung "})[0], 400)  # duplicate, any case
+        status, data = self.post(srv, "/api/tags", {"name": "<b>x</b>"})
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(t["name"] for t in data["tags"]), ["<b>x</b>", "Rechnung"])
+
+    def test_bad_colors(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        for color in ["red", "#abc", "#12345g", 123]:
+            self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung", "color": color})[0], 400, repr(color))
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags")[1], {"star": 0, "tags": []})
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"})[0], 200)
+        self.assertEqual(self.post(srv, "/api/tags/1", {"color": "#abc"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/tags/1", {"color": None})[0], 400)
+
+    def test_post_needs_origin(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"}, origin=None)[0], 403)
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"}, origin="http://evil.test")[0], 403)
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"}, host="evil.test")[0], 403)
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags")[1], {"star": 0, "tags": []})
+
+    def test_tags_are_per_library(self):
+        lib_a = make_library(self.tmp, self.export)
+        other = os.path.join(self.tmp, "other")
+        os.makedirs(other)
+        lib_b = make_library(other, self.export)
+        srv = self.serve(lib_a)
+        self.assertEqual(self.post(srv, "/api/tags", {"name": "Rechnung"})[0], 200)
+        self.assertEqual(self.post(srv, "/api/library", {"path": lib_b})[0], 200)
+        wait_job(srv.server_port)
+        self.assertEqual(request(srv.server_port, "GET", "/api/tags")[1], {"star": 0, "tags": []})
+        self.assertEqual(self.post(srv, "/api/library", {"path": lib_a})[0], 200)
+        wait_job(srv.server_port)
+        self.assertEqual([t["name"] for t in request(srv.server_port, "GET", "/api/tags")[1]["tags"]],
+                         ["Rechnung"])
+
+    def marks_path(self, mid, src="s1"):
+        return f"/api/message/{src}/{quote(mid, safe='')}/marks"
+
+    def create_tag(self, srv, name="Rechnung"):
+        status, data = self.post(srv, "/api/tags", {"name": name})
+        self.assertEqual(status, 200)
+        return next(t["id"] for t in data["tags"] if t["name"] == name)
+
+    def test_mark_and_filter(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        t = self.create_tag(srv)
+        status, data = self.post(srv, self.marks_path(ID_PLAIN), {"starred": True, "tags": [t]})
+        self.assertEqual((status, data), (200, {"starred": True, "tags": [t]}))
+
+        status, data = request(srv.server_port, "GET", "/api/messages?tag=star")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["total"], 1)
+        self.assertEqual([m["id"] for m in data["messages"]], [ID_PLAIN])
+        self.assertIs(data["messages"][0]["starred"], True)
+        self.assertEqual(data["messages"][0]["tags"], [t])
+
+        status, data = request(srv.server_port, "GET", f"/api/messages?tag={t}")
+        self.assertEqual([m["id"] for m in data["messages"]], [ID_PLAIN])
+
+        status, data = request(srv.server_port, "GET", "/api/tags")
+        self.assertEqual(data["star"], 1)
+        self.assertEqual([(x["name"], x["count"]) for x in data["tags"]], [("Rechnung", 1)])
+
+        status, m = request(srv.server_port, "GET", f"/api/message/s1/{quote(ID_PLAIN, safe='')}")
+        self.assertEqual(status, 200)
+        self.assertEqual((m["markable"], m["starred"], m["tags"]), (True, True, [t]))
+
+    def test_mark_ghost_mail_is_400(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        t = self.create_tag(srv)
+        status, data = self.post(srv, self.marks_path(ID_GHOST), {"starred": True, "tags": [t]})
+        self.assertEqual(status, 400)
+        self.assertEqual(data["error"], "Diese Mail kann nicht markiert werden, die .eml-Datei fehlt.")
+        status, m = request(srv.server_port, "GET", f"/api/message/s1/{quote(ID_GHOST, safe='')}")
+        self.assertEqual((status, m["markable"], m["starred"], m["tags"]), (200, False, False, []))
+
+    def test_mark_unknown_message_is_404(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.post(srv, self.marks_path("nope"), {"starred": True})[0], 404)
+        self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN, src="s9"), {"starred": True})[0], 404)
+
+    def test_mark_bad_body(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.create_tag(srv)
+        for body in [{"starred": "yes"}, {"tags": [True]}, {"tags": "1"}, {"x": 1}]:
+            self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN), body)[0], 400, repr(body))
+        self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN), {"tags": [99]})[0], 400)  # unknown tag
+        self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN), {"starred": True}, origin=None)[0], 403)
+        self.assertEqual(request(srv.server_port, "GET", "/api/messages?tag=star")[1]["total"], 0)
+
+    def test_deleted_tag(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        t = self.create_tag(srv)
+        self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN), {"tags": [t]})[0], 200)
+        self.assertEqual(self.post(srv, f"/api/tags/{t}/remove", {})[0], 200)
+        self.assertEqual(request(srv.server_port, "GET", f"/api/messages?tag={t}")[1]["total"], 0)
+        status, data = self.post(srv, self.marks_path(ID_PLAIN), {"tags": [t]})
+        self.assertEqual(status, 400)
+
+    def test_invalid_tag_param(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        for value in ["abc", "-1", "1.5"]:
+            status, data = request(srv.server_port, "GET", f"/api/messages?tag={value}")
+            self.assertEqual((status, data), (400, {"error": "invalid tag"}), value)
+
+    def test_tags_survive_index_rebuild(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, self.marks_path(ID_PLAIN), {"starred": True})[0], 200)
+        self.stop(srv)
+        for name in os.listdir(root):
+            if name.startswith("archive.db"):
+                os.remove(os.path.join(root, name))
+        srv = self.serve(root)  # reopening rebuilds the index, which must not touch tags.db
+        status, m = request(srv.server_port, "GET", f"/api/message/s1/{quote(ID_PLAIN, safe='')}")
+        self.assertEqual((status, m["starred"]), (200, True))
+        self.assertEqual(request(srv.server_port, "GET", "/api/messages?tag=star")[1]["total"], 1)
+
+    def test_marks_while_index_job_runs(self):
+        root = make_library(self.tmp, self.export)
+        srv = self.serve(root)  # the mail is indexed before the blocked job starts
+        gate = threading.Event()
+        self.addCleanup(gate.set)  # frees the blocked job even if the test fails early
+        original = server.Store.sync_source
+
+        def slow(store, *args, **kwargs):
+            gate.wait(10)
+            return original(store, *args, **kwargs)
+
+        with mock.patch.object(server.Store, "sync_source", slow):
+            self.assertEqual(self.post(srv, "/api/library", {"path": root})[0], 200)
+            try:
+                status, data = self.post(srv, self.marks_path(ID_PLAIN), {"starred": True})
+                self.assertEqual((status, data), (200, {"starred": True, "tags": []}))
+            finally:
+                gate.set()
+            self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        self.assertEqual(request(srv.server_port, "GET", "/api/messages?tag=star")[1]["total"], 1)
+
+
 class ImportTests(unittest.TestCase):
     """POST /api/import: a PST or OST file becomes a new outlook source. pypff is faked: open_reader
     returns a FakeReader and pypff_available is True unless a test says otherwise."""

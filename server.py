@@ -4,7 +4,8 @@
 Usage: python server.py [LIBRARY_DIR] [--port 8025] [--cli PATH] [--config FILE]
 
 LIBRARY_DIR holds library.json, which lists the mail sources (Proton accounts or maildirs) shown
-together. Its messages are indexed in archive.db (a cache next to library.json). Without
+together. Its messages are indexed in archive.db (a cache next to library.json). Tags and stars
+live in tags.db beside it, which an index rebuild never touches. Without
 LIBRARY_DIR the library remembered in the config file is opened; if there is none, the page
 asks for a library folder (optionally creating one or remembering the choice).
 Mail files are only read, never written.
@@ -26,6 +27,7 @@ import sys
 import tempfile
 import threading
 import time
+import zlib
 from collections.abc import Callable
 from dataclasses import asdict
 from email import policy
@@ -46,12 +48,15 @@ from outlook import (
     pypff_available,
 )
 from store import META_SUFFIX, Store, addr, addr_list, to_int
+from tags import TagStore, TagStoreError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_LIMIT = 200
 MSG_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)$")
 ATT_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/attachment/(\d+)$")
 SOURCE_RE = re.compile(r"^/api/sources/([^/]+)(?:/(remove|icon))?$")
+TAG_RE = re.compile(r"^/api/tags/(\d+)(?:/(remove))?$")
+MARKS_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/marks$")
 ICON_RE = re.compile(r"^/api/sources/([^/]+)/icon$")
 CID_RE = re.compile(r"cid:([^\s\"'<>()]+)")
 CLI_NAME = "proton-mail-export-cli"
@@ -65,7 +70,12 @@ ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; b
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SOURCE_FIELDS = ("name", "icon", "hidden", "position")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
-POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import")
+POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags")
+TAG_FIELDS = ("name", "color")
+MARK_FIELDS = ("starred", "tags")
+MAX_TAG_NAME = 40
+TAG_COLORS = ["#0a66c2", "#2e7d32", "#7b3fb0", "#b03a2e", "#b35c00", "#00796b", "#4a5568", "#8a6d00"]
+COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 IMPORT_FIELDS = ("path", "name")
 IMPORT_EXTENSIONS = (".pst", ".ost")
 SOURCES_DIR = "sources"  # below the library root; imported Outlook files live here
@@ -74,6 +84,7 @@ SLUG_EXCLUDED = re.compile(r"[^a-z0-9äöüß]")
 SLUG_MAX = 40
 LOG_LINES = 50
 INDEX_DB = "archive.db"
+TAGS_DB = "tags.db"
 
 Json = dict[str, Any]
 
@@ -446,6 +457,36 @@ def check_email(email: str) -> str:
     return email
 
 
+def check_tag_name(value: str) -> str:
+    """Trimmed, 1 to MAX_TAG_NAME characters, no control characters. Uniqueness is checked by TagStore."""
+    check_text(value, "Tag-Name")
+    name = value.strip()
+    if not 1 <= len(name) <= MAX_TAG_NAME:
+        raise ValueError(f"Der Tag-Name muss 1 bis {MAX_TAG_NAME} Zeichen lang sein.")
+    return name
+
+
+def check_tag_color(value: str | None) -> str:
+    """Exactly #rrggbb; stored in lowercase."""
+    if not isinstance(value, str) or not COLOR_RE.match(value):
+        raise ValueError("Die Farbe muss im Format #rrggbb angegeben werden.")
+    return value.lower()
+
+
+def tag_color(value: str | None, name: str) -> str:
+    """The given color, or for None a default picked from TAG_COLORS by a stable hash of the folded name."""
+    if value is None:
+        return TAG_COLORS[zlib.crc32(name.casefold().encode("utf-8")) % len(TAG_COLORS)]
+    return check_tag_color(value)
+
+
+def tag_list(store: Store, tags: TagStore, source_ids: list[str]) -> Json:
+    """The star count and every tag with its message count, for the given sources."""
+    counts = store.tag_counts(source_ids)
+    return {"star": counts["star"], "tags": [
+        {**tag, "count": counts.get(str(tag["id"]), 0)} for tag in tags.list_tags()]}
+
+
 def parse_fetch_body(raw: bytes) -> tuple[str, str, str, str, str]:
     """Return (source, email, password, mailbox_password, totp). An empty email means the source's
     default, which only the viewer knows. ValueError messages are shown to the client."""
@@ -587,10 +628,15 @@ class Job:
             self._state.update(state=state, message=message)
 
 
-def _open_store(lib: Library) -> Store:
-    """Open <root>/archive.db and drop the index rows of sources that left library.json."""
+def _open_stores(lib: Library) -> tuple[Store, TagStore]:
+    """Open <root>/tags.db, then <root>/archive.db, which attaches it. Then drop the index rows of
+    sources that left library.json. tags.db comes first because Store expects its schema to exist."""
     try:
-        store = Store(os.path.join(lib.root, INDEX_DB))
+        tags = TagStore(os.path.join(lib.root, TAGS_DB))
+    except (TagStoreError, sqlite3.Error) as exc:
+        raise LibraryError(f"Die Tag-Datenbank kann nicht geöffnet werden: {exc}") from exc
+    try:
+        store = Store(os.path.join(lib.root, INDEX_DB), os.path.join(lib.root, TAGS_DB))
         try:
             kept = {s.id for s in lib.sources}
             for n in range(1, lib.next_id):  # source ids are never reused, so this covers every removed one
@@ -600,8 +646,9 @@ def _open_store(lib: Library) -> Store:
         finally:
             store.close()  # this thread's connection; readers reconnect lazily
     except sqlite3.Error as exc:
+        tags.close()
         raise LibraryError(f"Der Index kann nicht geöffnet werden: {exc}") from exc
-    return store
+    return store, tags
 
 
 def _has_path(lib: Library, path: str) -> bool:
@@ -622,6 +669,7 @@ class Viewer:
         self.saved_error: str | None = None
         self.library: Library | None = None
         self.store: Store | None = None
+        self.tags: TagStore | None = None
         self.job = Job()
         self._lock = threading.Lock()  # serializes open_library
 
@@ -646,7 +694,7 @@ class Viewer:
             lib = Library.create(root) if create else Library.open(root)
             if legacy and not _has_path(lib, legacy):
                 lib.add_source(legacy)
-            store = _open_store(lib)
+            store, tags = _open_stores(lib)
             updates: dict[str, str | None] = {}
             if remember is not None:
                 updates["library"] = root if remember else None
@@ -661,7 +709,7 @@ class Viewer:
             if remember is not None:
                 self.saved = root if remember else None
                 self.saved_error = None
-            self.library, self.store = lib, store
+            self.library, self.store, self.tags = lib, store, tags
             self.start_index()
 
     def _admin_library(self, idle: bool) -> tuple[Library, Store]:
@@ -989,7 +1037,7 @@ def _origins(port: int) -> set[str]:
     return {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
 
-LIBRARY_ROUTES = ("/api/sources", "/api/folders", "/api/messages")
+LIBRARY_ROUTES = ("/api/sources", "/api/folders", "/api/messages", "/api/tags")
 
 
 def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler]:
@@ -1004,6 +1052,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 # Request threads come and go; their SQLite connection is closed with the request
                 if viewer.store is not None:
                     viewer.store.close()
+                if viewer.tags is not None:
+                    viewer.tags.close()
 
         def do_GET(self) -> None:
             if self.headers.get("Host") not in _hosts(self.server.server_port):  # DNS-rebinding protection
@@ -1023,18 +1073,23 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             if url.path == "/api/job":
                 return self._json(200, viewer.job.status())
             if url.path in LIBRARY_ROUTES or url.path.startswith("/api/message/") or ICON_RE.match(url.path):
-                lib, store = viewer.library, viewer.store  # one snapshot, even if a switch happens meanwhile
-                if lib is None or store is None:
+                lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot, even on a switch
+                if lib is None or store is None or tags is None:
                     return self._json(409, {"error": "no library chosen"})
-                return self._library_get(lib, store, url)
+                return self._library_get(lib, store, tags, url)
             self._json(404, {"error": "not found"})
 
-        def _library_get(self, lib: Library, store: Store, url: Any) -> None:
+        def _library_get(self, lib: Library, store: Store, tags: TagStore, url: Any) -> None:
             query = parse_qs(url.query)
             if m := ICON_RE.match(url.path):
                 return self._icon(lib, unquote(m[1]))
             if url.path == "/api/sources":
                 return self._json(200, source_list(viewer, lib, store))
+            if url.path == "/api/tags":
+                source_ids = selected_sources(lib, query)
+                if source_ids is None:
+                    return self._json(400, {"error": "unknown source"})
+                return self._json(200, tag_list(store, tags, source_ids))
             if url.path in ("/api/folders", "/api/messages"):
                 source_ids = selected_sources(lib, query)
                 if source_ids is None:
@@ -1045,7 +1100,12 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 needle = _arg(query, "q").strip().casefold()
                 offset = max(0, _int(_arg(query, "offset"), 0))
                 limit = min(MAX_LIMIT, max(1, _int(_arg(query, "limit"), 50)))
-                return self._json(200, store.messages(source_ids, folder, needle, offset, limit))
+                tag = _arg(query, "tag") or None  # "star", a tag ID, or no filter
+                try:
+                    body = store.messages(source_ids, folder, needle, offset, limit, tag)
+                except ValueError:
+                    return self._json(400, {"error": "invalid tag"})
+                return self._json(200, body)
             if m := ATT_RE.match(url.path):
                 return self._attachment(store, unquote(m[1]), unquote(m[2]), int(m[3]))
             if m := MSG_RE.match(url.path):
@@ -1053,7 +1113,10 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 hit = store.message(src, mid)  # the id must be indexed, so no path escapes a mail dir
                 if hit is None:
                     return self._json(404, {"error": "unknown message"})
-                return self._json(200, load_message(hit[0], mid, hit[1]))
+                ident = store.ident(src, mid) or ""  # "" if the .eml is missing: no marks then
+                mark = tags.marks([ident])[ident]
+                return self._json(200, load_message(hit[0], mid, hit[1]) | {
+                    "starred": mark["starred"], "tags": mark["tags"], "markable": ident != ""})
             self._json(404, {"error": "not found"})
 
         def _attachment(self, store: Store, src: str, mid: str, n: int) -> None:
@@ -1068,6 +1131,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
         def do_POST(self) -> None:
             path = urlsplit(self.path).path
             m = SOURCE_RE.match(path)
+            t = TAG_RE.match(path)
+            mk = MARKS_RE.match(path)
             limit = MAX_ICON if m is not None and m[2] == "icon" else MAX_BODY
             raw = self._read_body(limit)  # read first, so refused requests leave no unread body behind
             port = self.server.server_port
@@ -1075,11 +1140,19 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(403, {"error": "host not allowed"})
             if self.headers.get("Origin") not in _origins(port):  # a missing Origin is refused too
                 return self._json(403, {"error": "origin not allowed"})
-            if m is None and path not in POST_ROUTES:
+            if m is None and t is None and mk is None and path not in POST_ROUTES:
                 return self._json(404, {"error": "not found"})
             if len(raw) > limit:
                 return self._json(400, {"error": "body too large"})
+            if t is not None:
+                if t[2] == "remove":
+                    return self._tags_admin(lambda tags: tags.delete_tag(int(t[1])))
+                return self._tag_update(int(t[1]), raw)
+            if mk is not None:
+                return self._marks_update(unquote(mk[1]), unquote(mk[2]), raw)
             if m is None:
+                if path == "/api/tags":
+                    return self._tag_create(raw)
                 if path == "/api/fetch":
                     return self._fetch(raw)
                 if path == "/api/library":
@@ -1110,6 +1183,68 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             except (ValueError, OSError) as exc:  # LibraryError included
                 return self._json(400, {"error": str(exc)})
             self._json(200, body)
+
+        def _tags_admin(self, change: Callable[[TagStore], Any]) -> None:
+            """Run a tag change without Viewer._lock and without a job check, then answer with the tag
+            list of all visible sources. KeyError is 404, ValueError 400, sqlite3 errors 500; no library is 409."""
+            lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot for the whole request
+            if lib is None or store is None or tags is None:
+                return self._json(409, {"error": "no library chosen"})
+            try:
+                change(tags)
+                reply = tag_list(store, tags, selected_sources(lib, {}))
+            except KeyError:
+                return self._json(404, {"error": "unknown tag"})
+            except sqlite3.Error as exc:
+                return self._json(500, {"error": f"index error: {exc}"})
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
+            self._json(200, reply)
+
+        def _tag_create(self, raw: bytes) -> None:
+            def change(tags: TagStore) -> None:
+                body = load_json_object(raw)
+                only_keys(body, TAG_FIELDS)
+                name = check_tag_name(_text(body, "name"))
+                tags.create_tag(name, tag_color(body.get("color"), name))
+            self._tags_admin(change)
+
+        def _tag_update(self, tag_id: int, raw: bytes) -> None:
+            def change(tags: TagStore) -> None:
+                body = load_json_object(raw)
+                only_keys(body, TAG_FIELDS)
+                name = check_tag_name(_text(body, "name")) if "name" in body else None
+                color = check_tag_color(body["color"]) if "color" in body else None
+                tags.update_tag(tag_id, name, color)
+            self._tags_admin(change)
+
+        def _marks_update(self, src: str, mid: str, raw: bytes) -> None:
+            """Set a mail's star and tags by its identity. Like the tag routes: no Viewer._lock, no job check."""
+            lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot for the whole request
+            if lib is None or store is None or tags is None:
+                return self._json(409, {"error": "no library chosen"})
+            try:
+                body = load_json_object(raw)
+                only_keys(body, MARK_FIELDS)
+                starred = body.get("starred")
+                if "starred" in body and not isinstance(starred, bool):
+                    raise ValueError("Das Feld starred muss true oder false sein.")
+                tag_ids = body.get("tags")
+                if "tags" in body and not (isinstance(tag_ids, list) and all(type(x) is int for x in tag_ids)):
+                    raise ValueError("Das Feld tags muss eine Liste von Tag-IDs sein.")
+                ident = store.ident(src, mid)  # None for unknown messages and unknown sources
+                if ident is None:
+                    return self._json(404, {"error": "unknown message"})
+                if ident == "":
+                    raise ValueError("Diese Mail kann nicht markiert werden, die .eml-Datei fehlt.")
+                reply = tags.set_marks(ident, starred, tag_ids)
+            except KeyError:
+                return self._json(404, {"error": "unknown tag"})
+            except sqlite3.Error as exc:
+                return self._json(500, {"error": f"index error: {exc}"})
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
+            self._json(200, reply)
 
         def _sources_reply(self) -> list[Json]:
             lib, store = viewer.library, viewer.store
