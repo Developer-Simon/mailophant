@@ -93,6 +93,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .clip { width: 13px; height: 13px; flex: none; }
 .more { flex: none; margin: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
 .more:disabled { opacity: .6; cursor: default; }
+.badge { flex: none; padding: 0 5px; border: 1px solid var(--muted); border-radius: 6px; color: var(--muted); font-size: 11px; line-height: 16px; white-space: nowrap; }
 
 /* Reader */
 #placeholder { margin-top: 40px; text-align: center; }
@@ -105,6 +106,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .attachments a { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); text-decoration: none; font-size: 13px; }
 .attachments a:hover { background: var(--hover); }
 .attachments small { color: var(--muted); margin-left: 4px; }
+.copies { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 13px; }
+.copy { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+button.copy { cursor: pointer; }
+button.copy:hover { background: var(--hover); }
+.copy[aria-current="true"] { background: var(--sel); border-color: var(--accent); font-weight: 600; }
+.copy small { color: var(--muted); }
 .warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
 .toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
 .toggle button { border: 0; background: none; padding: 5px 12px; cursor: pointer; }
@@ -173,6 +180,12 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
 .settings-section > .hint { margin: 0 0 8px; }
 .pathtext { margin: 0 0 4px; overflow-wrap: anywhere; }
+.cleanup-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.cleanup-fields:disabled { opacity: .6; }
+.cleanup-fields select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.radio { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+#cleanup-preview p { margin: 0 0 4px; }
+#cleanup-report { margin: 8px 0 0; overflow-wrap: anywhere; }
 .src-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .src-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .src-row .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -255,6 +268,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         <h1 id="m-subject"></h1>
         <button id="m-star" class="m-star" type="button" aria-pressed="false" title="Markieren">☆</button>
       </div>
+      <div id="m-copies" class="copies" hidden></div>
       <dl class="meta">
         <div><dt>Von</dt><dd id="m-from"></dd></div>
         <div><dt>An</dt><dd id="m-to"></dd></div>
@@ -360,6 +374,32 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         <input name="name" type="text" maxlength="40" autocomplete="off"></label>
       <div class="actions"><button class="btn" type="submit">Hinzufügen</button></div>
     </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-cleanup-title">
+    <h3 id="settings-cleanup-title">Duplikate aufräumen</h3>
+    <p id="cleanup-none" class="hint" hidden></p>
+    <fieldset id="cleanup-fields" class="cleanup-fields">
+      <label class="field"><span>Aufräumen in</span>
+        <select id="cleanup-target"></select></label>
+      <label class="field"><span>Referenz</span>
+        <select id="cleanup-reference"></select></label>
+      <div class="field" role="radiogroup" aria-labelledby="cleanup-action-label">
+        <span id="cleanup-action-label">Aktion</span>
+        <label class="radio"><input id="cleanup-link" name="cleanup-action" type="radio" value="link" checked>
+          <span>Durch Hardlink ersetzen (empfohlen)</span></label>
+        <p class="hint">Die Mails bleiben in beiden Quellen sichtbar, die Datei liegt nur noch einmal auf der Platte.</p>
+        <label class="radio"><input id="cleanup-delete" name="cleanup-action" type="radio" value="delete">
+          <span>Kopien löschen</span></label>
+        <p id="cleanup-delete-hint" class="hint"></p>
+      </div>
+      <div id="cleanup-preview" class="hint" aria-live="polite" hidden></div>
+      <div class="actions">
+        <button id="cleanup-preview-btn" class="btn" type="button">Vorschau</button>
+        <button id="cleanup-run-btn" class="btn primary" type="button" disabled>Aufräumen…</button>
+      </div>
+    </fieldset>
+    <p id="cleanup-report" class="hint" hidden></p>
   </section>
 
   <section class="settings-section" aria-labelledby="settings-proton-title">
@@ -833,6 +873,7 @@ function renderList() {
       el('span', { class: 'sender', text: senderText(m.sender) }),
       el('span', { class: 'time', text: listDate(m.time) }),
     );
+    if (m.copies >= 2) row.append(el('span', { class: 'badge', text: `${m.copies} Quellen`, title: `In ${m.copies} Quellen vorhanden` }));
     const subject = el('div', { class: 'subject' });
     if (m.starred) subject.append(el('span', { class: 'star', role: 'img', 'aria-label': 'Markiert', text: '★' }));
     subject.append(el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }));
@@ -907,6 +948,7 @@ function renderMail(source, m) {
   $('m-cc').textContent = cc;
   $('m-date').textContent = longDate(m.time);
   renderAttachments(source, m);
+  renderCopies(source, m);
 
   const err = $('m-error');
   err.hidden = !m.error;
@@ -931,6 +973,28 @@ function renderAttachments(source, m) {
     ]);
   }));
   $('m-attachments').hidden = list.length === 0;
+}
+
+// Lists every copy of the open mail. The shown copy is marked; the others open on click, and the list selection stays.
+function renderCopies(source, m) {
+  const copies = m.copies || [];
+  $('m-copies').hidden = copies.length < 2;
+  if (copies.length < 2) {
+    $('m-copies').replaceChildren();
+    return;
+  }
+  const items = copies.map((c) => {
+    const src = sourceById(c.source);
+    const children = [];
+    if (src) children.push(sourceIcon(src, 'list'));
+    children.push(el('span', { text: c.name || c.source }));
+    if (c.folders?.length) children.push(el('small', { text: c.folders.join(', ') }));
+    if (c.source === source && c.id === m.id) return el('span', { class: 'copy', 'aria-current': 'true' }, children);
+    const btn = el('button', { type: 'button', class: 'copy' }, children);
+    btn.addEventListener('click', () => loadDetail(c.source, c.id));
+    return btn;
+  });
+  $('m-copies').replaceChildren(el('span', { class: 'muted', text: `In ${copies.length} Quellen:` }), ...items);
 }
 
 function renderBody() {
@@ -1187,6 +1251,7 @@ function renderJob(st) {
     const prog = st.progress ? ` ${st.progress.done}/${st.progress.total}` : '';
     $('job-text').textContent = fetching ? 'Abruf läuft…'
       : st.kind === 'import' ? `Import läuft…${prog}`
+      : st.kind === 'cleanup' ? 'Aufräumen läuft…'
       : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
     $('job-last').textContent = (st.log || []).at(-1) || '';
   }
@@ -1292,6 +1357,7 @@ async function jobFinished(st) {
     storeView(fetched.source);
   }
   if (fetched?.export) $('stand').textContent = `Stand: ${standText(fetched.export)}`;
+  if (st.kind === 'cleanup') renderCleanupReport(st);
   renderRail();
   updateFetchArea();
   await loadFolders(true);
@@ -1703,6 +1769,7 @@ async function reloadAdmin() {
   renderSettingsView();
   renderSettingsSources();
   renderSettingsLibrary();
+  renderSettingsCleanup();
   if (next !== state.view) {
     if (next) {
       selectView(next);
@@ -1954,12 +2021,146 @@ function renderSettingsTags() {
     : [el('li', { class: 'muted', text: 'Noch keine Tags.' })]));
 }
 
+/* ---------- Duplikate aufräumen (Einstellungen) ---------- */
+// The preview is valid only for the target, reference and action it was made for: any change clears it.
+let cleanupPreview = null; // { key, action, data } of the last preview
+let cleanupSeq = 0; // a preview answer that arrives after a change is dropped
+
+const cleanupKey = () => JSON.stringify([$('cleanup-target').value, $('cleanup-reference').value, cleanupAction()]);
+const cleanupAction = () => ($('cleanup-delete').checked ? 'delete' : 'link');
+const nameOf = (id) => sourceById(id)?.name ?? '';
+
+// Targets are the visible Outlook sources. References are all other visible sources, the first Proton one by default.
+function renderSettingsCleanup() {
+  const targets = visibleSources().filter((s) => s.kind === 'outlook');
+  const prevTarget = $('cleanup-target').value;
+  const prevRef = $('cleanup-reference').value;
+  $('cleanup-target').replaceChildren(...targets.map((s) => el('option', { value: s.id, text: s.name })));
+  if (targets.some((s) => s.id === prevTarget)) $('cleanup-target').value = prevTarget;
+
+  const target = $('cleanup-target').value;
+  const refs = visibleSources().filter((s) => s.id !== target);
+  $('cleanup-reference').replaceChildren(...refs.map((s) => el('option', { value: s.id, text: s.name })));
+  const pick = refs.some((s) => s.id === prevRef) ? prevRef : (refs.find((s) => s.kind === 'proton') || refs[0])?.id;
+  if (pick) $('cleanup-reference').value = pick;
+
+  const usable = targets.length > 0 && refs.length > 0;
+  $('cleanup-none').textContent = targets.length ? 'Keine Referenz-Quelle vorhanden.' : 'Keine importierte Outlook-Quelle vorhanden.';
+  $('cleanup-none').hidden = usable;
+  $('cleanup-fields').disabled = !usable;
+  updateCleanupHint();
+  // A rebuilt list may have chosen another source: a preview of the old pair must not stay.
+  if (cleanupPreview && cleanupPreview.key !== cleanupKey()) resetCleanupPreview();
+  else updateCleanupControls();
+}
+
+function updateCleanupHint() {
+  $('cleanup-delete-hint').textContent = `Die Kopien verschwinden aus „${nameOf($('cleanup-target').value)}“. `
+    + `Die Mail bleibt in „${nameOf($('cleanup-reference').value)}“.`;
+}
+
+// Back to "no preview": a late answer for the old selection is ignored through cleanupSeq.
+function resetCleanupPreview() {
+  cleanupSeq++;
+  cleanupPreview = null;
+  $('cleanup-preview').hidden = true;
+  $('cleanup-preview').replaceChildren();
+  $('cleanup-link').disabled = false;
+  updateCleanupControls();
+}
+
+// The link option is off when the pair cannot be linked; "Aufräumen…" needs a preview with something to do.
+function updateCleanupControls() {
+  const usable = !$('cleanup-fields').disabled;
+  const p = cleanupPreview;
+  $('cleanup-link').disabled = !usable || Boolean(p && p.data.link_possible === false);
+  $('cleanup-run-btn').disabled = !usable || !p || p.data.count < 1;
+}
+
+function renderCleanupPreview() {
+  const p = cleanupPreview;
+  const box = $('cleanup-preview');
+  box.hidden = !p;
+  if (!p) return;
+  const d = p.data;
+  const freed = p.action === 'link' ? d.bytes_link : d.bytes_delete;
+  const lines = [el('p', { text: `${d.count} doppelte Mails, ${fileSize(freed)} werden frei.` })];
+  if (d.already_linked) lines.push(el('p', { text: `${d.already_linked} bereits verlinkt` }));
+  if (d.missing_reference) lines.push(el('p', { text: `${d.missing_reference} ohne Referenz-Datei, werden übersprungen` }));
+  if (d.link_possible === false && d.link_reason) lines.push(el('p', { text: d.link_reason }));
+  box.replaceChildren(...lines);
+}
+
+async function previewCleanup() {
+  showSettingsWarn('');
+  const seq = ++cleanupSeq;
+  const target = $('cleanup-target').value;
+  const reference = $('cleanup-reference').value;
+  let res;
+  let data = null;
+  try {
+    res = await fetch(`/api/cleanup/preview?${new URLSearchParams({ target, reference })}`, {
+      headers: { Accept: 'application/json' },
+      signal: timeoutSignal(),
+    });
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    if (seq === cleanupSeq) showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Vorschau konnte nicht geladen werden (${err.message}).`);
+    return;
+  }
+  if (seq !== cleanupSeq) return; // the selection changed while the preview was loading
+  if (!res.ok) {
+    showSettingsWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+    return;
+  }
+  // A pair that cannot be linked falls back to deleting, so the preview shows what will happen.
+  if (data.link_possible === false) $('cleanup-delete').checked = true;
+  cleanupPreview = { key: cleanupKey(), action: cleanupAction(), data };
+  renderCleanupPreview();
+  updateCleanupControls();
+}
+
+// Asks for confirmation, then starts the cleanup as a job. The job poll shows its progress and report.
+async function runCleanup() {
+  const p = cleanupPreview;
+  if (!p || p.data.count < 1) return;
+  const target = $('cleanup-target').value;
+  const reference = $('cleanup-reference').value;
+  const { action, data } = p;
+  const question = action === 'link'
+    ? `${data.count} Mails in „${nameOf(target)}“ durch Hardlinks auf „${nameOf(reference)}“ ersetzen?`
+    : `${data.count} Mails endgültig aus „${nameOf(target)}“ löschen? Das lässt sich nicht rückgängig machen.`;
+  if (!confirm(question)) return;
+
+  $('cleanup-run-btn').disabled = true; // a second click would only answer 409
+  $('cleanup-report').hidden = true;
+  const res = await changeSettings(() => ({ url: '/api/cleanup', init: jsonPost({ target, reference, action }) }));
+  if (!res.ok) {
+    updateCleanupControls();
+    return;
+  }
+  resetCleanupPreview(); // the files changed, so the old numbers are stale
+  dismissedJob = null;
+  pollJob();
+}
+
+// Report of a finished cleanup, shown in its section.
+function renderCleanupReport(st) {
+  const r = st.state === 'done' ? st.result : null;
+  if (!r) return;
+  $('cleanup-report').textContent = `${r.linked} ersetzt, ${r.deleted} gelöscht, ${r.skipped} übersprungen, `
+    + `${r.failed} Fehler, ${fileSize(r.freed)} frei. Protokoll: ${r.log_file}`;
+  $('cleanup-report').hidden = false;
+  resetCleanupPreview();
+}
+
 function renderSettingsAll() {
   renderSettingsView();
   renderSettingsProton();
   renderSettingsSources();
   renderSettingsTags();
   renderSettingsLibrary();
+  renderSettingsCleanup();
 }
 
 async function openSettings() {
@@ -2000,6 +2201,17 @@ $('settings-proton').addEventListener('submit', async (e) => {
   // On failure the typed values stay; on success the fields show what the server stored.
   if (res.ok && res.data?.settings) renderSettingsProton(res.data.settings);
 });
+$('cleanup-target').addEventListener('change', () => {
+  renderSettingsCleanup();
+  resetCleanupPreview();
+});
+$('cleanup-reference').addEventListener('change', () => {
+  updateCleanupHint();
+  resetCleanupPreview();
+});
+for (const r of [$('cleanup-link'), $('cleanup-delete')]) r.addEventListener('change', resetCleanupPreview);
+$('cleanup-preview-btn').addEventListener('click', previewCleanup);
+$('cleanup-run-btn').addEventListener('click', runCleanup);
 $('settings-library-change').addEventListener('click', () => {
   $('settings-dialog').close();
   openLibraryDialog(false);

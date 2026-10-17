@@ -23,6 +23,8 @@ SCHEMA_VERSION = 2  # 2: FTS columns hold casefolded text
 COMMIT_EVERY = 1000
 SYSTEM_FOLDER_ORDER = ["0", "7", "5", "4", "3", "6", "8"]
 IN_CHUNK = 200  # identities per IN (...) lookup, well below SQLite's variable limit
+# One group per mail across sources; mails without an identity (no .eml) stay one group per copy
+GROUP_KEY_SQL = "CASE WHEN m.ident = '' THEN m.source_id || '/' || m.mid ELSE m.ident END"
 
 Json = dict[str, Any]
 
@@ -261,37 +263,43 @@ class Store:
         con.commit()
         return result
 
-    def folders(self, source_ids: list[str]) -> list[Json]:
-        """Folders with at least one message, merged across sources by folder_key; counts are distinct messages."""
+    def folders(self, source_ids: list[str], dedupe: bool = False) -> list[Json]:
+        """Folders with at least one message, merged across sources by folder_key; counts are distinct messages.
+
+        With dedupe, a count is a group of copies (see GROUP_KEY_SQL); unread comes from the best-ranked copy.
+        """
         if not source_ids:
             return []
         rank = {sid: i for i, sid in enumerate(dict.fromkeys(source_ids))}
         marks = ",".join("?" for _ in rank)
         rows = self._conn().execute(
-            "SELECT ml.source_id, ml.mid, ml.label_id, l.name, l.path, l.color, m.unread "
+            "SELECT ml.source_id, ml.mid, ml.label_id, l.name, l.path, l.color, m.unread, m.ident "
             "FROM message_labels ml "
             "JOIN labels l ON l.source_id = ml.source_id AND l.label_id = ml.label_id "
             "JOIN messages m ON m.source_id = ml.source_id AND m.mid = ml.mid "
             f"WHERE ml.source_id IN ({marks})", list(rank)).fetchall()
         merged: dict[str, Json] = {}
-        members: dict[str, set[tuple[str, str]]] = {}
-        for sid, mid, label_id, name, path, color, unread in sorted(rows, key=lambda r: rank[r[0]]):
+        members: dict[str, set[Any]] = {}
+        for sid, mid, label_id, name, path, color, unread, ident in sorted(rows, key=lambda r: (rank[r[0]], r[1])):
             key = folder_key(label_id, path or "")
             entry = merged.setdefault(key, {"key": key, "name": name or "", "path": path or "",
                                             "color": color or "", "count": 0, "unread": 0})
             seen = members.setdefault(key, set())
-            if (sid, mid) in seen:  # two labels with the same folder key on one mail count once
+            member = ident if dedupe and ident else (sid, mid)
+            if member in seen:  # two labels with the same folder key on one mail count once
                 continue
-            seen.add((sid, mid))
+            seen.add(member)
             entry["count"] += 1
             entry["unread"] += unread
         return sorted(merged.values(), key=folder_sort_key)
 
     def messages(self, source_ids: list[str], folder: str | None, needle: str, offset: int, limit: int,
-                 tag: str | None = None) -> Json:
+                 tag: str | None = None, dedupe: bool = False) -> Json:
         """Newest first across sources; needle must already be casefolded.
 
         tag is "star", a tag ID as decimal string, or None. Rows carry ident, starred and tags from tags.db.
+        With dedupe, copies of one mail collapse into one row (see GROUP_KEY_SQL): the copy from the
+        first source in source_ids that matches the filters, and copies counts the sources holding it.
         """
         if tag is not None and tag != "star":
             if not (tag.isascii() and tag.isdigit()):
@@ -330,19 +338,51 @@ class Store:
                          "WHERE casefold(subject) LIKE ? ESCAPE '\\' OR casefold(people) LIKE ? ESCAPE '\\')")
             args += [like, like]
         clause = " AND ".join(where)
-        total = con.execute(f"SELECT COUNT(*) FROM messages m WHERE {clause}", args).fetchone()[0]
+        if dedupe:
+            # rank the sources by position; the best-ranked matching copy of each group is kept (rn = 1)
+            rank_marks = ", ".join("(?, ?)" for _ in sources)
+            rank_args = [x for i, sid in enumerate(sources) for x in (sid, i)]
+            cte = (f"WITH src_rank(source_id, r) AS (VALUES {rank_marks}), "
+                   f"ranked AS (SELECT m.source_id, m.mid, m.payload, m.unread, m.ident, m.time, "
+                   f"ROW_NUMBER() OVER (PARTITION BY {GROUP_KEY_SQL} ORDER BY sr.r, m.mid) AS rn "
+                   f"FROM messages m JOIN src_rank sr ON sr.source_id = m.source_id WHERE {clause}) ")
+            source = "ranked WHERE rn = 1"
+            cols = "source_id, mid, payload, unread, ident"
+            params = [*rank_args, *args]
+        else:
+            cte = ""
+            source = f"messages m WHERE {clause}"
+            cols = "m.source_id, m.mid, m.payload, m.unread, m.ident"
+            params = args
+        total = con.execute(f"{cte}SELECT COUNT(*) FROM {source}", params).fetchone()[0]
         rows = con.execute(
-            f"SELECT m.source_id, m.mid, m.payload, m.unread, m.ident FROM messages m WHERE {clause} "
-            "ORDER BY m.time DESC, m.mid DESC, m.source_id DESC LIMIT ? OFFSET ?",
-            [*args, limit, offset]).fetchall()
+            f"{cte}SELECT {cols} FROM {source} ORDER BY time DESC, mid DESC, source_id DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset]).fetchall()
         marks = self._marks([ident for *_, ident in rows])
+        copies = self._copies([ident for *_, ident in rows], sources) if dedupe else {}
         messages = []
         for sid, mid, payload, unread, ident in rows:
             mark = marks.get(ident, {"starred": False, "tags": []})  # ident "" (no .eml) never has marks
             messages.append(summarize(mid, json.loads(payload)) | {
                 "source": sid, "unread": bool(unread), "ident": ident,
-                "starred": mark["starred"], "tags": list(mark["tags"])})
+                "starred": mark["starred"], "tags": list(mark["tags"]), "copies": copies.get(ident, 1)})
         return {"total": total, "messages": messages}
+
+    def _copies(self, idents: list[str], source_ids: list[str]) -> dict[str, int]:
+        """Number of distinct sources among source_ids that hold each identity; "" is not looked up."""
+        con = self._conn()
+        ids = [ident for ident in dict.fromkeys(idents) if ident]
+        marks_src = ",".join("?" for _ in source_ids)
+        found: dict[str, int] = {}
+        for i in range(0, len(ids), IN_CHUNK):
+            chunk = ids[i:i + IN_CHUNK]
+            marks = ",".join("?" for _ in chunk)
+            for ident, count in con.execute(
+                    f"SELECT ident, COUNT(DISTINCT source_id) FROM messages "
+                    f"WHERE ident IN ({marks}) AND source_id IN ({marks_src}) GROUP BY ident",
+                    [*chunk, *source_ids]):
+                found[ident] = count
+        return found
 
     def _marks(self, idents: list[str]) -> dict[str, Json]:
         """Star and tag IDs per identity; one query per table and chunk of identities."""
@@ -359,19 +399,23 @@ class Store:
                 found[ident]["tags"].append(tag_id)
         return found
 
-    def tag_counts(self, source_ids: list[str]) -> dict[str, int]:
-        """Counts per tag filter value, one per message copy like messages()["total"]; "star" is always present."""
+    def tag_counts(self, source_ids: list[str], dedupe: bool = False) -> dict[str, int]:
+        """Counts per tag filter value, like messages()["total"]; "star" is always present.
+
+        One per message copy, or one per mail (identity) with dedupe.
+        """
         counts = {"star": 0}
         if not source_ids:
             return counts
         sources = list(dict.fromkeys(source_ids))
         marks = ",".join("?" for _ in sources)
         con = self._conn()
+        what = "COUNT(DISTINCT m.ident)" if dedupe else "COUNT(*)"
         counts["star"] = con.execute(
-            "SELECT COUNT(*) FROM messages m JOIN tags.stars s ON s.ident = m.ident "
+            f"SELECT {what} FROM messages m JOIN tags.stars s ON s.ident = m.ident "
             f"WHERE m.source_id IN ({marks}) AND m.ident <> ''", sources).fetchone()[0]
         for tag_id, count in con.execute(
-                "SELECT mt.tag_id, COUNT(*) FROM messages m JOIN tags.message_tags mt ON mt.ident = m.ident "
+                f"SELECT mt.tag_id, {what} FROM messages m JOIN tags.message_tags mt ON mt.ident = m.ident "
                 f"WHERE m.source_id IN ({marks}) AND m.ident <> '' GROUP BY mt.tag_id", sources):
             counts[str(tag_id)] = count
         return counts
@@ -381,6 +425,40 @@ class Store:
         row = self._conn().execute(
             "SELECT ident FROM messages WHERE source_id = ? AND mid = ?", (source_id, mid)).fetchone()
         return row[0] if row else None
+
+    def copies(self, ident: str, source_ids: list[str]) -> list[Json]:
+        """Copies of one mail in the given sources, in source_ids order; folders are label names, sorted."""
+        if not ident or not source_ids:
+            return []
+        sources = list(dict.fromkeys(source_ids))
+        rank = {sid: i for i, sid in enumerate(sources)}
+        marks = ",".join("?" for _ in sources)
+        rows = self._conn().execute(
+            "SELECT m.source_id, m.mid, l.label_id, l.name, l.path FROM messages m "
+            "LEFT JOIN message_labels ml ON ml.source_id = m.source_id AND ml.mid = m.mid "
+            "LEFT JOIN labels l ON l.source_id = ml.source_id AND l.label_id = ml.label_id "
+            f"WHERE m.ident = ? AND m.source_id IN ({marks})", [ident, *sources]).fetchall()
+        found: dict[tuple[str, str], dict[str, Json]] = {}  # copy -> folder name -> folder
+        for sid, mid, label_id, name, path in rows:
+            folders = found.setdefault((sid, mid), {})
+            if label_id is not None:
+                folders.setdefault(name or "", {"key": folder_key(label_id, path or ""), "name": name or ""})
+        result = []
+        for sid, mid in sorted(found, key=lambda k: (rank[k[0]], k[1])):
+            names = sorted(found[(sid, mid)].values(), key=folder_sort_key)
+            result.append({"source": sid, "id": mid, "folders": [f["name"] for f in names]})
+        return result
+
+    def duplicate_pairs(self, target: str, reference: str) -> list[tuple[str, str]]:
+        """(target mid, reference mid) for each mail of target whose identity is in reference.
+
+        One pair per target mid, using the smallest reference mid; sorted by target mid.
+        """
+        rows = self._conn().execute(
+            "SELECT t.mid, MIN(r.mid) FROM messages t JOIN messages r ON r.ident = t.ident "
+            "WHERE t.source_id = ? AND r.source_id = ? AND t.ident <> '' "
+            "GROUP BY t.mid ORDER BY t.mid", (target, reference)).fetchall()
+        return [(t_mid, r_mid) for t_mid, r_mid in rows]
 
     def source_stats(self, source_ids: list[str]) -> dict[str, tuple[int, int]]:
         """(message count, unread count) per source; ids without rows map to (0, 0)."""

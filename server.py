@@ -8,7 +8,9 @@ together. Its messages are indexed in archive.db (a cache next to library.json).
 live in tags.db beside it, which an index rebuild never touches. Without
 LIBRARY_DIR the library remembered in the config file is opened; if there is none, the page
 asks for a library folder (optionally creating one or remembering the choice).
-Mail files are only read, never written.
+Mail files are only read, except for a cleanup of an imported Outlook source (POST /api/cleanup): its
+duplicate mails become hardlinks to a reference source, or are deleted. Each run logs to
+cleanup-<time>.log in the library.
 Optional: .pst/.ost files can be imported as sources when the pypff module is installed.
 """
 
@@ -37,6 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from cleanup import ACTIONS, check_dirs, is_regular, plan_cleanup, remove_quiet, run_cleanup
 from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_library
 from outlook import (
     INSTALL_HINT,
@@ -70,13 +73,15 @@ ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; b
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SOURCE_FIELDS = ("name", "icon", "hidden", "position")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
-POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags")
+POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags",
+               "/api/cleanup")
 TAG_FIELDS = ("name", "color")
 MARK_FIELDS = ("starred", "tags")
 MAX_TAG_NAME = 40
 TAG_COLORS = ["#0a66c2", "#2e7d32", "#7b3fb0", "#b03a2e", "#b35c00", "#00796b", "#4a5568", "#8a6d00"]
 COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 IMPORT_FIELDS = ("path", "name")
+CLEANUP_FIELDS = ("target", "reference", "action")
 IMPORT_EXTENSIONS = (".pst", ".ost")
 SOURCES_DIR = "sources"  # below the library root; imported Outlook files live here
 IMPORT_TMP_PREFIX = ".import-"
@@ -368,17 +373,6 @@ def newest_fetched(tmp: str) -> str | None:
     return max(found, key=os.path.basename, default=None)
 
 
-def is_regular(path: str) -> bool:
-    return os.path.isfile(path) and not os.path.islink(path)
-
-
-def remove_quiet(path: str) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-
-
 def link_identical(prev_path: str, new_path: str) -> int:
     """Replace new_path with a hardlink to prev_path if both are identical regular files.
     Returns the bytes saved, or 0 when nothing was linked."""
@@ -482,7 +476,7 @@ def tag_color(value: str | None, name: str) -> str:
 
 def tag_list(store: Store, tags: TagStore, source_ids: list[str]) -> Json:
     """The star count and every tag with its message count, for the given sources."""
-    counts = store.tag_counts(source_ids)
+    counts = store.tag_counts(source_ids, dedupe=len(source_ids) > 1)
     return {"star": counts["star"], "tags": [
         {**tag, "count": counts.get(str(tag["id"]), 0)} for tag in tags.list_tags()]}
 
@@ -921,6 +915,67 @@ class Viewer:
             if final is not None and not added:
                 shutil.rmtree(final, ignore_errors=True)
 
+    def check_cleanup(self, target: str, reference: str) -> tuple[Source, Source]:
+        """Check the two sources of a cleanup. The preview and the run both use it, so they refuse the same
+        pairs. KeyError for unknown ids (404), ValueError for unsuitable ones (400), Busy without a library."""
+        lib = self.library
+        if lib is None or self.store is None:
+            raise Busy("no library chosen")
+        if not target or not reference:
+            raise ValueError("Ziel und Referenz fehlen.")
+        tgt, ref = lib.get(target), lib.get(reference)
+        if target == reference:
+            raise ValueError("Ziel und Referenz müssen verschiedene Quellen sein.")
+        if tgt.kind != "outlook":
+            raise ValueError("Nur importierte Outlook-Quellen können aufgeräumt werden.")
+        if ref.hidden:
+            raise ValueError(f"Die Referenz-Quelle {ref.name} ist ausgeblendet.")
+        for src in (tgt, ref):
+            if not self.available(src):
+                raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+        return tgt, ref
+
+    def start_cleanup(self, target: str, reference: str, action: str) -> None:
+        """Replace or delete the copies in target that reference holds, as the job, then reindex target.
+        Raises KeyError (unknown source), ValueError (bad pair, or a hardlink across file systems), or Busy.
+        Checked and started under _lock, like start_fetch."""
+        with self._lock:
+            tgt, ref = self.check_cleanup(target, reference)
+            lib, store = self.library, self.store  # not None: check_cleanup raised Busy otherwise
+            tgt_dir, ref_dir = self.mail_dir_for(tgt), self.mail_dir_for(ref)
+            link_possible, reason = check_dirs(tgt_dir, ref_dir)  # ValueError for the same folder
+            if action == "link" and not link_possible:
+                raise ValueError(reason)
+
+            def cleanup(job: Job) -> None:
+                try:
+                    self._cleanup(job, store, lib, tgt, ref, tgt_dir, ref_dir, action)
+                finally:
+                    store.close()  # the job thread's connection, as in start_index
+
+            if not self.job.start("cleanup", cleanup):
+                raise Busy("job running")
+
+    def _cleanup(self, job: Job, store: Store, lib: Library, tgt: Source, ref: Source,
+                 tgt_dir: str, ref_dir: str, action: str) -> None:
+        """Run the cleanup with its log in the library, then reindex the target. The reindex also runs
+        after an error, so the index never keeps rows for files that were removed."""
+        name = f"cleanup-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        with open(os.path.join(lib.root, name), "x", encoding="utf-8") as f:  # never overwrites a log
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\nZiel: {tgt.name}\n"
+                    f"Referenz: {ref.name}\nAktion: {action}\n")
+
+            def log(line: str) -> None:
+                job.log(line)
+                f.write(line + "\n")
+
+            try:
+                result = run_cleanup(store.duplicate_pairs(tgt.id, ref.id), tgt_dir, ref_dir, action, log)
+                job.set_result({**asdict(result), "log_file": name})
+            finally:
+                sync = store.sync_source(tgt.id, tgt_dir, job.progress)
+                job.log(f"{tgt.name}: +{sync.added} ~{sync.updated} -{sync.removed}")
+
     def _fetch(self, job: Job, store: Store, src: Source, cli: str, account: str, email: str,
                password: str, mailbox: str, totp: str) -> None:
         """Run the CLI into a temp dir below the account dir, then move the export in, link unchanged
@@ -1037,7 +1092,7 @@ def _origins(port: int) -> set[str]:
     return {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
 
 
-LIBRARY_ROUTES = ("/api/sources", "/api/folders", "/api/messages", "/api/tags")
+LIBRARY_ROUTES = ("/api/sources", "/api/folders", "/api/messages", "/api/tags", "/api/cleanup/preview")
 
 
 def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler]:
@@ -1090,19 +1145,22 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 if source_ids is None:
                     return self._json(400, {"error": "unknown source"})
                 return self._json(200, tag_list(store, tags, source_ids))
+            if url.path == "/api/cleanup/preview":
+                return self._cleanup_preview(store, query)
             if url.path in ("/api/folders", "/api/messages"):
                 source_ids = selected_sources(lib, query)
                 if source_ids is None:
                     return self._json(400, {"error": "unknown source"})
+                merge = len(source_ids) > 1  # copies of one mail count once only when several sources are shown
                 if url.path == "/api/folders":
-                    return self._json(200, store.folders(source_ids))
+                    return self._json(200, store.folders(source_ids, dedupe=merge))
                 folder = _arg(query, "folder") or None
                 needle = _arg(query, "q").strip().casefold()
                 offset = max(0, _int(_arg(query, "offset"), 0))
                 limit = min(MAX_LIMIT, max(1, _int(_arg(query, "limit"), 50)))
                 tag = _arg(query, "tag") or None  # "star", a tag ID, or no filter
                 try:
-                    body = store.messages(source_ids, folder, needle, offset, limit, tag)
+                    body = store.messages(source_ids, folder, needle, offset, limit, tag, dedupe=merge)
                 except ValueError:
                     return self._json(400, {"error": "invalid tag"})
                 return self._json(200, body)
@@ -1115,9 +1173,27 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._json(404, {"error": "unknown message"})
                 ident = store.ident(src, mid) or ""  # "" if the .eml is missing: no marks then
                 mark = tags.marks([ident])[ident]
+                names = {s.id: s.name for s in lib.sources}
+                copies = [c | {"name": names[c["source"]]}
+                          for c in store.copies(ident, selected_sources(lib, {}) or [])]
                 return self._json(200, load_message(hit[0], mid, hit[1]) | {
-                    "starred": mark["starred"], "tags": mark["tags"], "markable": ident != ""})
+                    "starred": mark["starred"], "tags": mark["tags"], "markable": ident != "",
+                    "copies": copies})
             self._json(404, {"error": "not found"})
+
+        def _cleanup_preview(self, store: Store, query: dict[str, list[str]]) -> None:
+            """What a cleanup would do, from the index and the files. Changes nothing."""
+            try:
+                tgt, ref = viewer.check_cleanup(_arg(query, "target"), _arg(query, "reference"))
+                plan = plan_cleanup(store.duplicate_pairs(tgt.id, ref.id),
+                                    viewer.mail_dir_for(tgt), viewer.mail_dir_for(ref))
+            except Busy as exc:
+                return self._json(409, {"error": str(exc)})
+            except KeyError:
+                return self._json(404, {"error": "unknown source"})
+            except (ValueError, OSError) as exc:
+                return self._json(400, {"error": str(exc)})
+            self._json(200, asdict(plan) | {"target": tgt.id, "reference": ref.id})
 
         def _attachment(self, store: Store, src: str, mid: str, n: int) -> None:
             hit = store.message(src, mid)
@@ -1161,6 +1237,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._add_source(raw)
                 if path == "/api/import":
                     return self._import(raw)
+                if path == "/api/cleanup":
+                    return self._cleanup(raw)
                 return self._settings(raw)
             source_id = unquote(m[1])
             if m[2] == "icon":
@@ -1344,6 +1422,22 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             except (ValueError, OSError) as exc:  # LibraryError included
                 return self._json(400, {"error": str(exc)})
             self._json(200, {"started": True})
+
+        def _cleanup(self, raw: bytes) -> None:
+            try:
+                body = load_json_object(raw)
+                only_keys(body, CLEANUP_FIELDS)
+                target, reference = _text(body, "target"), _text(body, "reference")
+                if body.get("action") not in ACTIONS:
+                    raise ValueError("Die Aktion muss link oder delete sein.")
+                viewer.start_cleanup(target, reference, body["action"])
+            except Busy as exc:
+                return self._json(409, {"error": str(exc)})
+            except KeyError:
+                return self._json(404, {"error": "unknown source"})
+            except (ValueError, OSError) as exc:
+                return self._json(400, {"error": str(exc)})
+            self._json(202, {"state": "running"})
 
         def _set_library(self, raw: bytes) -> None:
             try:

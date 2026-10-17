@@ -419,5 +419,123 @@ class TagQueryTests(unittest.TestCase):
         self.assertTrue(all(m["starred"] is False and m["tags"] == [] for m in rows))
 
 
+class DedupeQueryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.export = fx.make_export(self.tmp, "a")
+        self.copy = os.path.join(self.tmp, "b")  # copy of a: ID_PLAIN in fewer folders and read
+        shutil.copytree(self.export, self.copy)
+        fx.write_json(os.path.join(self.copy, fx.ID_PLAIN + ".metadata.json"), fx.meta(
+            fx.ID_PLAIN, "Grüße aus Köln", ("Jürgen Müller", "juergen@example.test"),
+            [("Ann", "ann@example.test")], 1700000300, ["5", "7"], cc=[("Carl", "carl@example.test")]))
+        self.only_rich = fx.make_export(self.tmp, "c")  # only ID_RICH stays
+        for mid in (fx.ID_PLAIN, fx.ID_ALT, fx.ID_GHOST):
+            os.remove(os.path.join(self.only_rich, mid + ".metadata.json"))
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(os.path.join(self.only_rich, mid + ".eml"))
+        os.remove(os.path.join(self.only_rich, "broken_EEEE.metadata.json"))
+        # make_export draws new MIME boundaries each time, so copy the .eml to keep the same identity
+        shutil.copy(os.path.join(self.export, fx.ID_RICH + ".eml"), self.only_rich)
+        self.tags_db = os.path.join(self.tmp, "tags.db")
+        self.tags = tags.TagStore(self.tags_db)
+        self.addCleanup(self.tags.close)
+        self.store = store.Store(os.path.join(self.tmp, "archive.db"), self.tags_db)
+        self.addCleanup(self.store.close)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.store.sync_source("s1", self.export)
+            self.store.sync_source("s2", self.copy)
+            self.store.sync_source("s3", self.only_rich)
+
+    def test_without_dedupe_lists_every_copy(self):
+        r = self.store.messages(["s1", "s2"], None, "", 0, 50)
+        self.assertEqual(r["total"], 8)
+        self.assertEqual({m["copies"] for m in r["messages"]}, {1})
+
+    def test_dedupe_one_row_per_identity(self):
+        r = self.store.messages(["s1", "s2"], None, "", 0, 50, dedupe=True)
+        self.assertEqual(r["total"], 5)
+        rows = [(m["source"], m["id"], m["copies"]) for m in r["messages"]]
+        self.assertCountEqual(rows, [
+            ("s1", fx.ID_PLAIN, 2), ("s1", fx.ID_ALT, 2), ("s1", fx.ID_RICH, 2),
+            ("s1", fx.ID_GHOST, 1), ("s2", fx.ID_GHOST, 1)])
+
+    def test_order_of_sources_picks_representative(self):
+        r = self.store.messages(["s2", "s1"], None, "", 0, 50, dedupe=True)
+        merged = [m for m in r["messages"] if m["id"] != fx.ID_GHOST]
+        self.assertEqual(len(merged), 3)
+        self.assertEqual({m["source"] for m in merged}, {"s2"})
+
+    def test_filter_matches_any_copy(self):
+        r = self.store.messages(["s2", "s1"], "sys:0", "", 0, 50, dedupe=True)
+        plain = [m for m in r["messages"] if m["id"] == fx.ID_PLAIN]
+        self.assertEqual([(m["source"], m["copies"]) for m in plain], [("s1", 2)])
+
+    def test_ghost_mails_are_never_merged(self):
+        r = self.store.messages(["s1", "s2"], None, "", 0, 50, dedupe=True)
+        ghosts = [m for m in r["messages"] if m["id"] == fx.ID_GHOST]
+        self.assertEqual(sorted(m["source"] for m in ghosts), ["s1", "s2"])
+        self.assertEqual({m["copies"] for m in ghosts}, {1})
+
+    def test_three_sources_count_copies(self):
+        r = self.store.messages(["s1", "s2", "s3"], None, "", 0, 50, dedupe=True)
+        self.assertEqual(r["total"], 5)
+        rich = [m for m in r["messages"] if m["id"] == fx.ID_RICH]
+        self.assertEqual([m["copies"] for m in rich], [3])
+
+    def test_pages_cover_groups_once(self):
+        seen = []
+        for offset in range(5):
+            r = self.store.messages(["s1", "s2"], None, "", offset, 1, dedupe=True)
+            self.assertEqual(r["total"], 5)
+            seen += [(m["source"], m["id"]) for m in r["messages"]]
+        self.assertEqual(len(set(seen)), 5)
+        named = [mid for _, mid in seen if mid != fx.ID_GHOST]
+        self.assertEqual(len(set(named)), 3)
+
+    def test_folders_count_groups(self):
+        f = {x["key"]: x for x in self.store.folders(["s1", "s2"], dedupe=True)}
+        self.assertEqual(f["sys:5"]["count"], 2)
+        self.assertEqual((f["sys:0"]["count"], f["sys:0"]["unread"]), (4, 2))
+        # reversed order: unread still comes from the best-ranked copy that carries the label
+        g = {x["key"]: x for x in self.store.folders(["s2", "s1"], dedupe=True)}
+        self.assertEqual((g["sys:0"]["count"], g["sys:0"]["unread"]), (4, 2))
+
+    def test_tag_counts_dedupe(self):
+        self.tags.set_marks(self.store.ident("s1", fx.ID_PLAIN), True, [])
+        self.assertEqual(self.store.tag_counts(["s1", "s2"], dedupe=True)["star"], 1)
+        self.assertEqual(self.store.tag_counts(["s1", "s2"])["star"], 2)
+
+    def test_copies_lists_sources_in_order(self):
+        ident = self.store.ident("s1", fx.ID_PLAIN)
+        copies = self.store.copies(ident, ["s2", "s1"])
+        self.assertEqual([c["source"] for c in copies], ["s2", "s1"])
+        self.assertEqual({c["id"] for c in copies}, {fx.ID_PLAIN})
+        by_source = {c["source"]: c for c in copies}
+        self.assertEqual(by_source["s1"]["folders"], ["Inbox", "Sent", "All Mail"])
+        self.assertNotIn("Inbox", by_source["s2"]["folders"])
+
+    def test_copies_respects_selection(self):
+        ident = self.store.ident("s1", fx.ID_PLAIN)
+        self.assertEqual([c["source"] for c in self.store.copies(ident, ["s1"])], ["s1"])
+
+    def test_copies_of_ghost_is_empty(self):
+        self.assertEqual(self.store.copies("", ["s1", "s2"]), [])
+
+    def test_duplicate_pairs(self):
+        self.assertEqual(self.store.duplicate_pairs("s2", "s1"),
+                         [(fx.ID_PLAIN, fx.ID_PLAIN), (fx.ID_ALT, fx.ID_ALT), (fx.ID_RICH, fx.ID_RICH)])
+        self.assertEqual(self.store.duplicate_pairs("s3", "s1"), [(fx.ID_RICH, fx.ID_RICH)])
+
+    def test_duplicate_pairs_picks_smallest_reference(self):
+        fx.write_json(os.path.join(self.export, "zz_COPY.metadata.json"), fx.meta(
+            "zz_COPY", "Rechnung", ("Pia Post", "pia@example.test"), [("Bob", "bob@example.test")],
+            1700000100, ["0"]))
+        shutil.copy(os.path.join(self.export, fx.ID_RICH + ".eml"), os.path.join(self.export, "zz_COPY.eml"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.store.sync_source("s1", self.export)
+        self.assertEqual(self.store.duplicate_pairs("s3", "s1"), [(fx.ID_RICH, fx.ID_RICH)])
+
+
 if __name__ == "__main__":
     unittest.main()

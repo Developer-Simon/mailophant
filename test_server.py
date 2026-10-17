@@ -22,6 +22,7 @@ from unittest import mock
 from urllib.parse import quote, urlencode
 
 import server
+from cleanup import CleanupResult
 from library import LIBRARY_FILE, Library
 from outlook import ImportReport, Unreadable
 from test_outlook import FakeReader, folder
@@ -2049,6 +2050,255 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(server.import_slug("x" * 50), "x" * 40)
         self.assertEqual(server.import_slug("..."), "---")
         self.assertEqual(server.import_slug(""), "outlook")
+
+
+class CleanupRouteTests(unittest.TestCase):
+    """Combined views and the cleanup routes. s1 is the maildir export, s2 an imported Outlook copy of
+    it under sources/. Each test gets its own library and server."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the index logs skipped files
+        self.servers = []
+        self.addCleanup(self.stop_all)  # runs before the redirect ends, so the jobs stay quiet
+        self.export = make_export(self.tmp, "export")
+        self.config = os.path.join(self.tmp, "config.json")
+
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            self.stop(srv)
+
+    def stop(self, srv):
+        if srv in self.servers:
+            self.servers.remove(srv)
+        srv.shutdown()
+        srv.server_close()
+        if srv.viewer.store is not None:
+            srv.viewer.store.close()
+        if srv.viewer.tags is not None:
+            srv.viewer.tags.close()
+
+    def serve(self, library_dir, wait=True):
+        srv = server.make_server(library_dir, 0, self.tmp, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        if wait:
+            wait_job(srv.server_port)
+        return srv
+
+    def archive_library(self):
+        """Library with the maildir export s1 and a copy of it as the imported Outlook source s2."""
+        root = make_library(self.tmp, self.export)
+        archive = os.path.join(root, "sources", "archiv")
+        shutil.copytree(self.export, archive)
+        Library.open(root).add_source(archive, "Archiv", kind="outlook")
+        return root
+
+    def post(self, srv, path, body=None, *, raw=None, origin="same"):
+        """POST and return (status, parsed JSON). Origin defaults to the server's own."""
+        if raw is None:
+            raw = json.dumps(body if body is not None else {}).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{srv.server_port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        status, _, data = request_raw(srv.server_port, "POST", path, raw, headers)
+        return status, json.loads(data)
+
+    def cleanup_body(self, action="link", target="s2", reference="s1"):
+        return {"target": target, "reference": reference, "action": action}
+
+    def preview(self, srv, query):
+        return request(srv.server_port, "GET", f"/api/cleanup/preview?{query}")
+
+    def cleanup_logs(self, root):
+        return sorted(n for n in os.listdir(root) if n.startswith("cleanup-") and n.endswith(".log"))
+
+    def test_combined_list_merges_copies(self):
+        srv = self.serve(self.archive_library())
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s1,s2")
+        self.assertEqual((status, data["total"]), (200, 5))
+        merged = sorted(m["id"] for m in data["messages"] if m["copies"] == 2)
+        self.assertEqual(merged, sorted([ID_PLAIN, ID_ALT, ID_RICH]))
+        self.assertTrue(all(m["source"] == "s1" for m in data["messages"] if m["copies"] == 2))
+        ghosts = [m for m in data["messages"] if m["id"] == ID_GHOST]
+        self.assertEqual([m["copies"] for m in ghosts], [1, 1])  # no identity, never merged
+
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s1")
+        self.assertEqual(data["total"], 4)
+        self.assertTrue(all(m["copies"] == 1 for m in data["messages"]))
+
+    def test_representative_follows_source_order(self):
+        srv = self.serve(self.archive_library())
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s2,s1")
+        merged = [m for m in data["messages"] if m["copies"] == 2]
+        self.assertEqual(len(merged), 3)
+        self.assertTrue(all(m["source"] == "s2" for m in merged))
+
+    def test_folders_and_tags_count_merged_mails(self):
+        srv = self.serve(self.archive_library())
+        status, folders = request(srv.server_port, "GET", "/api/folders?sources=s1,s2")
+        counts = {f["key"]: f["count"] for f in folders}
+        self.assertEqual(counts["sys:0"], 4)  # ID_PLAIN, ID_RICH and two ghosts
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s1,s2&folder=sys:0")
+        self.assertEqual(data["total"], 4)
+        status, tags = request(srv.server_port, "GET", "/api/tags?sources=s1,s2")
+        self.assertEqual(tags["star"], 0)
+
+    def test_detail_lists_copies_and_hides_hidden_sources(self):
+        srv = self.serve(self.archive_library())
+        path = f"/api/message/s1/{quote(ID_PLAIN, safe='')}"
+        status, m = request(srv.server_port, "GET", path)
+        self.assertEqual([(c["source"], c["name"]) for c in m["copies"]], [("s1", "export"), ("s2", "Archiv")])
+        self.assertIn("Inbox", m["copies"][0]["folders"])
+        self.assertEqual(self.post(srv, "/api/sources/s2", {"hidden": True})[0], 200)
+        status, m = request(srv.server_port, "GET", path)
+        self.assertEqual([c["source"] for c in m["copies"]], ["s1"])
+
+    def test_preview_counts_pairs(self):
+        srv = self.serve(self.archive_library())
+        status, data = self.preview(srv, "target=s2&reference=s1")
+        self.assertEqual(status, 200)
+        self.assertEqual((data["count"], data["link_possible"], data["target"], data["reference"]),
+                         (3, True, "s2", "s1"))
+
+    def test_preview_and_post_reject_bad_requests_and_change_nothing(self):
+        root = self.archive_library()
+        archive = os.path.join(root, "sources", "archiv")
+        srv = self.serve(root)
+        before = (snapshot(archive), snapshot(self.export))
+        bad_previews = [
+            ("target=s1&reference=s2", 400),  # maildir target
+            ("target=s2&reference=s2", 400),  # same source
+            ("target=s2&reference=s9", 404),  # unknown reference
+            ("target=s9&reference=s1", 404),  # unknown target
+            ("target=s2", 400),  # missing reference
+            ("reference=s1", 400),  # missing target
+        ]
+        for query, status in bad_previews:
+            self.assertEqual(self.preview(srv, query)[0], status, query)
+        bad_bodies = [
+            (self.cleanup_body(target="s1"), 400),
+            (self.cleanup_body(reference="s2"), 400),
+            (self.cleanup_body(target="s2", reference="s2"), 400),
+            (self.cleanup_body(reference="s9"), 404),
+            (self.cleanup_body(action="move"), 400),
+            ({"target": "s2", "reference": "s1"}, 400),  # no action
+            (self.cleanup_body() | {"force": True}, 400),  # unknown key
+            ({"target": 5, "reference": "s1", "action": "link"}, 400),  # wrong type
+            ({"target": ["s2"], "reference": "s1", "action": "link"}, 400),
+        ]
+        for body, status in bad_bodies:
+            self.assertEqual(self.post(srv, "/api/cleanup", body)[0], status, body)
+        self.assertEqual(self.post(srv, "/api/cleanup", raw=b"[]")[0], 400)
+        self.assertEqual((snapshot(archive), snapshot(self.export)), before)
+        self.assertEqual(self.cleanup_logs(root), [])
+
+    def test_hidden_reference_is_400(self):
+        srv = self.serve(self.archive_library())
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"hidden": True})[0], 200)
+        self.assertEqual(self.preview(srv, "target=s2&reference=s1")[0], 400)
+        self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 400)
+
+    def test_cleanup_link_job(self):
+        root = self.archive_library()
+        archive = os.path.join(root, "sources", "archiv")
+        srv = self.serve(root)
+        before = snapshot(self.export)
+        status, data = self.post(srv, "/api/cleanup", self.cleanup_body("link"))
+        self.assertEqual((status, data), (202, {"state": "running"}))
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["kind"]), ("done", "cleanup"))
+        self.assertEqual(job["result"]["linked"], 3)
+        for mid in (ID_PLAIN, ID_ALT, ID_RICH):
+            self.assertTrue(os.path.samefile(os.path.join(archive, mid + ".eml"),
+                                             os.path.join(self.export, mid + ".eml")))
+        logs = self.cleanup_logs(root)
+        self.assertEqual(logs, [job["result"]["log_file"]])
+        with open(os.path.join(root, logs[0]), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(sum(line.startswith("link ") for line in lines), 3)
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s2")
+        self.assertEqual(data["total"], 4)
+        self.assertEqual(snapshot(self.export), before)  # the reference is only read
+
+    def test_cleanup_delete_job(self):
+        root = self.archive_library()
+        srv = self.serve(root)
+        self.assertEqual(self.post(srv, f"/api/message/s1/{quote(ID_PLAIN, safe='')}/marks",
+                                   {"starred": True})[0], 200)
+        status, data = self.post(srv, "/api/cleanup", self.cleanup_body("delete"))
+        self.assertEqual(status, 202)
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["result"]["deleted"]), ("done", 3))
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s2")
+        self.assertEqual([m["id"] for m in data["messages"]], [ID_GHOST])
+        # the star belongs to the mail's identity, so it still shows through the reference
+        status, data = request(srv.server_port, "GET", "/api/messages?sources=s1&tag=star")
+        self.assertEqual([m["id"] for m in data["messages"]], [ID_PLAIN])
+
+    def test_cleanup_reindexes_target_after_failure(self):
+        srv = self.serve(self.archive_library())
+        calls = []
+        original = server.Store.sync_source
+
+        def spy(store, source_id, *args, **kwargs):
+            calls.append(source_id)
+            return original(store, source_id, *args, **kwargs)
+
+        with mock.patch.object(server.Store, "sync_source", spy), \
+                mock.patch("server.run_cleanup", side_effect=RuntimeError("boom")):
+            self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 202)
+            job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["message"]), ("error", "boom"))
+        self.assertEqual(calls, ["s2"])
+
+    def test_cleanup_busy_while_job_runs(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)  # frees the held job even if the test fails early
+
+        def held(*args, **kwargs):
+            gate.wait(10)
+            return CleanupResult()
+
+        srv = self.serve(self.archive_library())
+        with mock.patch("server.run_cleanup", side_effect=held):
+            self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 202)
+            self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body("delete"))[0], 409)
+            gate.set()
+            self.assertEqual(wait_job(srv.server_port)["state"], "done")
+
+    def test_link_across_file_systems_is_400_delete_allowed(self):
+        root = self.archive_library()
+        real_stat = os.stat
+
+        def other_device(path, *args, **kwargs):
+            st = real_stat(path, *args, **kwargs)
+            if os.path.realpath(path) == os.path.realpath(self.export):  # the reference only
+                fields = list(st)
+                fields[2] += 1  # st_dev
+                return os.stat_result(fields[:10])
+            return st
+
+        srv = self.serve(root)
+        with mock.patch("cleanup.os.stat", side_effect=other_device):
+            status, data = self.post(srv, "/api/cleanup", self.cleanup_body("link"))
+            self.assertEqual(status, 400)
+            self.assertIn("verschiedenen Dateisystemen", data["error"])
+            self.assertEqual(self.cleanup_logs(root), [])
+            status, data = self.post(srv, "/api/cleanup", self.cleanup_body("delete"))
+            self.assertEqual(status, 202)
+            self.assertEqual(wait_job(srv.server_port)["result"]["deleted"], 3)
+
+    def test_cleanup_needs_origin(self):
+        srv = self.serve(self.archive_library())
+        self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body(), origin=None)[0], 403)
+        self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body(),
+                                   origin="http://evil.example")[0], 403)
+        self.assertEqual(wait_job(srv.server_port)["kind"], "index")  # only the initial index ran
 
 
 class CliOverrideTests(unittest.TestCase):
