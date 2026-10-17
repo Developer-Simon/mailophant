@@ -30,4 +30,7 @@ args=(--port "$PORT")
 if [ "$OPEN" = 1 ]; then
   (sleep 1 && { xdg-open "http://127.0.0.1:$PORT/" >/dev/null 2>&1 || true; }) &
 fi
-exec python3 "$HERE/server.py" "${args[@]}"
+# Das venv enthält das optionale pypff (Outlook-Import).
+PY=python3
+[ -x "$HERE/.venv/bin/python" ] && PY="$HERE/.venv/bin/python"
+exec "$PY" "$HERE/server.py" "${args[@]}"
