@@ -5,219 +5,421 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mail-Viewer</title>
 <style>
-/* ---------- Theme (CSS variables, light + dark) ---------- */
+/* ---------- Theme (system colour tokens, light + dark) ---------- */
 :root {
-  --bg: #f4f4f6; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
-  --border: #d8d8dc; --accent: #0a66c2; --sel: #d6e6fb; --hover: #ececf0;
-  --warn-bg: #fff4e0; --warn-text: #7a4300; --warn-border: #f0c070;
+  --sidebar: #f0f0f3; --content: #ffffff; --content-2: #f5f5f7;
+  --label: #1d1d1f; --label-2: #6e6e73; --label-3: #a1a1a6;
+  --separator: rgba(60, 60, 67, .18);
+  --fill: rgba(120, 120, 128, .12); --fill-press: rgba(120, 120, 128, .22);
+  --accent: #0066d6; --on-accent: #ffffff; --sel-strong: #0063e1;
+  --sel-muted: rgba(120, 120, 128, .16);
+  --star: #c97a00;
+  --warn: #b25000; --warn-fill: rgba(255, 149, 0, .12);
+  --danger: #d70015; --danger-fill: rgba(255, 59, 48, .10);
+  --success: #248a3d;
+  --material: rgba(255, 255, 255, .72);
+  /* theme-independent */
+  --focus-ring: color-mix(in srgb, var(--accent) 55%, transparent);
+  --radius-s: .375rem; --radius-m: .5rem; --radius-l: .75rem;
+  --dur-fast: 120ms; --dur-spring: 450ms;
+  --ease-out: cubic-bezier(.22, 1, .36, 1); --ease-in: cubic-bezier(.64, 0, .78, 0);
+  --spring: linear(0, .092 6.3%, .268 12.5%, .447 18.8%, .599 25%, .718 31.3%, .805 37.5%, .868 43.8%, .911 50%, .941 56.3%, .961 62.5%, .975 68.8%, .984 75%, .989 81.3%, .993 87.5%, .996 93.8%, 1);
+  --blur: blur(20px) saturate(180%);
+  --list-head: 4.75rem;
+  /* type scale (size only; weight, line height and tracking live on the selectors) */
+  --fs-caption: .6875rem; --fs-footnote: .75rem; --fs-body: .8125rem; --fs-headline: .8125rem;
+  --fs-callout: .9375rem; --fs-title: 1.375rem; --fs-dialog-title: 1.0625rem;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #161618; --panel: #1f1f22; --text: #f2f2f5; --muted: #98989f;
-    --border: #3a3a40; --accent: #5aa9ff; --sel: #1d3a5c; --hover: #2a2a2f;
-    --warn-bg: #3a2c12; --warn-text: #ffd48a; --warn-border: #7a5a20;
+    --sidebar: #232326; --content: #1c1c1e; --content-2: #2c2c2e;
+    --label: #f5f5f7; --label-2: #98989d; --label-3: #6e6e73;
+    --separator: rgba(255, 255, 255, .12);
+    --fill: rgba(120, 120, 128, .24); --fill-press: rgba(120, 120, 128, .34);
+    --accent: #0a84ff; --on-accent: #ffffff; --sel-strong: #0058d0;
+    --sel-muted: rgba(120, 120, 128, .28);
+    --star: #ff9f0a;
+    --warn: #ffb340; --warn-fill: rgba(255, 159, 10, .16);
+    --danger: #ff6961; --danger-fill: rgba(255, 69, 58, .16);
+    --success: #30d158;
+    --material: rgba(28, 28, 30, .72);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #161618; --panel: #1f1f22; --text: #f2f2f5; --muted: #98989f;
-  --border: #3a3a40; --accent: #5aa9ff; --sel: #1d3a5c; --hover: #2a2a2f;
-  --warn-bg: #3a2c12; --warn-text: #ffd48a; --warn-border: #7a5a20;
+  --sidebar: #232326; --content: #1c1c1e; --content-2: #2c2c2e;
+  --label: #f5f5f7; --label-2: #98989d; --label-3: #6e6e73;
+  --separator: rgba(255, 255, 255, .12);
+  --fill: rgba(120, 120, 128, .24); --fill-press: rgba(120, 120, 128, .34);
+  --accent: #0a84ff; --on-accent: #ffffff; --sel-strong: #0058d0;
+  --sel-muted: rgba(120, 120, 128, .28);
+  --star: #ff9f0a;
+  --warn: #ffb340; --warn-fill: rgba(255, 159, 10, .16);
+  --danger: #ff6961; --danger-fill: rgba(255, 69, 58, .16);
+  --success: #30d158;
+  --material: rgba(28, 28, 30, .72);
 }
 
 /* ---------- Base ---------- */
+html { font-size: 100%; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  background: var(--bg); color: var(--text);
-  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: var(--fs-body)/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--content); color: var(--label);
+  -webkit-font-smoothing: antialiased;
 }
 button, input { font: inherit; color: inherit; }
-.muted { color: var(--muted); }
+.muted { color: var(--label-2); }
 [hidden] { display: none !important; }
+.time, .count, #count, .stand, #job-text, .size, .attachments small { font-variant-numeric: tabular-nums; }
+
+/* Focus: one ring for every control */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+  outline: 3px solid var(--focus-ring); outline-offset: 1px;
+}
+input:focus-visible:not([type="checkbox"]):not([type="radio"]), select:focus-visible {
+  outline-offset: 0; border-color: var(--accent);
+}
+
+/* Text fields and buttons share one surface */
+#search, .tag-input, .field input, .pathbar input, .group-row input[type="text"], .group-row select, .cleanup-fields select {
+  min-width: 0; padding: .4375rem .625rem; border: 1px solid transparent; border-radius: var(--radius-m);
+  background: var(--fill);
+}
+#search::placeholder, .tag-input::placeholder, .field input::placeholder, .pathbar input::placeholder {
+  color: var(--label-3); opacity: 1;
+}
+.btn {
+  padding: .4375rem .875rem; border: 1px solid transparent; border-radius: var(--radius-m);
+  background: var(--fill); cursor: pointer;
+}
+.btn.primary { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.btn:disabled { opacity: .6; cursor: default; }
+
+/* Press feedback: buttons scale, row-like controls tint */
+button {
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease,
+    transform 100ms var(--ease-out), opacity var(--dur-fast) ease;
+}
+.btn:active:not(:disabled), .m-star:active:not(:disabled), #rail button:active:not(:disabled),
+.icon-btn:active:not(:disabled), .fetch-btn:active:not(:disabled) {
+  transform: scale(.97);
+}
 
 /* ---------- Layout ---------- */
-.app { display: grid; grid-template-columns: 52px 200px minmax(260px, 360px) 1fr; height: 100vh; }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#folders, #list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); overflow: hidden; }
-#list-pane { border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
-#reader { min-width: 0; min-height: 0; background: var(--panel); overflow: auto; padding: 20px 24px; }
+.app { display: grid; grid-template-columns: 3.25rem 12.5rem minmax(16.25rem, 22.5rem) 1fr; height: 100vh; }
+#folders, #list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--content); overflow: hidden; }
+#folders { background: var(--sidebar); }
+/* The list pane is the scroll container; the head is sticky inside it. */
+#list-pane { overflow: auto; scroll-padding-top: var(--list-head); border-left: 1px solid var(--separator); border-right: 1px solid var(--separator); }
+#reader { min-width: 0; min-height: 0; background: var(--content); overflow: auto; padding: 0 1.5rem; }
+/* Wrapper of the rail and the folders: invisible on wide windows, one level on narrow ones. */
+#nav-root { display: contents; }
 
 /* Source rail */
-#rail { flex: none; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 0; background: var(--bg); border-right: 1px solid var(--border); min-height: 0; overflow: auto; }
-#rail-sources { display: flex; flex-direction: column; align-items: center; gap: 8px; }
-#rail button { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: none; cursor: pointer; flex: none; }
-#rail button:hover { background: var(--hover); }
-#rail button[aria-current="true"] { background: var(--sel); box-shadow: inset 0 0 0 2px var(--accent); }
+#rail { flex: none; display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: .625rem 0; background: var(--sidebar); border-right: 0; min-height: 0; overflow: auto; }
+#rail-sources { display: flex; flex-direction: column; align-items: center; gap: .5rem; }
+#rail button { position: relative; display: flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; padding: 0; border: 0; border-radius: var(--radius-l); background: none; cursor: pointer; flex: none; }
+@media (hover: hover) { #rail button:hover { background: var(--fill); } }
+#rail button[aria-current="true"] { background: var(--sel-muted); }
+#rail button[aria-current="true"]::before { content: ""; position: absolute; top: 50%; left: -.25rem; width: 3px; height: 1.25rem; margin-top: -.625rem; border-radius: 2px; background: var(--accent); }
 #rail button.unavailable { opacity: .4; }
-#rail-add, #rail-settings { font-size: 20px; color: var(--muted); }
+#rail-add, #rail-settings { font-size: 1.25rem; color: var(--label-2); }
 #rail-settings { margin-top: auto; }
-.src-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; color: #ffffff; font-weight: 700; font-size: 13px; line-height: 1; object-fit: cover; user-select: none; }
-.src-icon.glyph { background: none; color: inherit; font-size: 20px; font-weight: 400; }
-.src-icon.all { background: var(--accent); color: var(--panel); font-size: 18px; }
-.src-icon.list { width: 16px; height: 16px; border-radius: 4px; font-size: 8px; }
-.src-icon.list.glyph { font-size: 12px; }
+.src-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; height: 2.25rem; border-radius: .625rem; color: var(--on-accent); font-weight: 700; font-size: .8125rem; line-height: 1; object-fit: cover; user-select: none; }
+.src-icon.glyph { background: none; color: inherit; font-size: 1.25rem; font-weight: 400; }
+.src-icon.all { background: var(--accent); color: var(--on-accent); font-size: 1.125rem; }
+.src-icon.list { width: 1rem; height: 1rem; border-radius: .25rem; font-size: .5rem; }
+.src-icon.list.glyph { font-size: .75rem; }
 
 /* Folders */
-#folders { padding: 12px 8px; }
-#folders h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 4px 8px 8px; }
+#folders { padding: .75rem .5rem; }
+#folders h2 { font-size: var(--fs-caption); font-weight: 600; line-height: 1.3; letter-spacing: .01em; color: var(--label-2); margin: 1rem .5rem .5rem; }
 #folder-list, #tag-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
-.folder { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
-.folder:hover { background: var(--hover); }
-.folder[aria-current="true"] { background: var(--sel); }
+.folder { display: flex; align-items: center; gap: .5rem; width: 100%; height: 1.75rem; padding: 0 .5rem; border: 0; border-radius: var(--radius-s); background: none; text-align: left; cursor: pointer; }
+.folder:active { background: var(--fill-press); }
+@media (hover: hover) { .folder:hover { background: var(--fill); } }
+.folder[aria-current="true"] { background: var(--sel-muted); }
 .folder .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folder .unread { font-weight: 700; }
-.folder .count { color: var(--muted); font-size: 12px; }
-.tag-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.tag-form { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 160px; padding: 2px 8px; }
-.tag-input { width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
-.tag-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.tag-form .warn { margin: 0; padding: 4px 8px; font-size: 12px; }
+.folder .icon { color: var(--accent); }
+.folder .icon.star { color: var(--star); }
+.folder .unread { font-weight: 600; color: var(--label); }
+.folder .count { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
+.tag-dot { flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--label-2); }
+.tag-form { display: flex; flex-direction: column; gap: .25rem; width: 100%; min-width: 10rem; padding: .125rem .5rem; }
+.tag-input { width: 100%; }
+.tag-form .warn { margin: 0; padding: .25rem .5rem; font-size: var(--fs-footnote); }
 
 /* Message list */
-#list-pane .head { flex: none; padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
-#search { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-#search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-#count { font-size: 12px; }
-#messages { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; }
-.msg { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
-.msg:hover { background: var(--hover); }
-.msg.selected { background: var(--sel); }
-.msg .row { display: flex; align-items: center; gap: 8px; }
+/* The head is sticky inside #list-pane; the scroll listener in the script only toggles .scrolled. */
+#list-pane .head { position: sticky; top: 0; z-index: 2; flex: none; height: var(--list-head); padding: .625rem .75rem; display: flex; flex-direction: column; justify-content: center; gap: .375rem; background: var(--content); transition: background-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease; }
+#list-pane .head.scrolled { background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--separator); }
+label.search { position: relative; display: block; }
+.search-icon { position: absolute; left: .5625rem; top: 50%; transform: translateY(-50%); display: flex; color: var(--label-2); pointer-events: none; }
+#search { width: 100%; padding-left: 1.875rem; }
+#count { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
+#messages { list-style: none; margin: 0; padding: 0; flex: none; }
+/* Row colours go through --ink, --ink-2 and --dot so the selected row can switch in one place. */
+.msg { --ink: var(--label); --ink-2: var(--label-2); --dot: var(--accent); position: relative; display: flex; align-items: flex-start; margin: 0 .375rem; padding: .5625rem .75rem .5625rem .375rem; border-radius: var(--radius-m); color: var(--ink); cursor: pointer; }
+.msg + .msg::before { content: ""; position: absolute; top: 0; left: 1rem; right: 0; height: 1px; background: var(--separator); }
+.msg.selected::before, .msg.selected + .msg::before { opacity: 0; }
+.msg:active { background: var(--fill-press); }
+@media (hover: hover) { .msg:hover { background: var(--fill); } }
+.unread-col { flex: none; display: flex; align-items: center; width: .625rem; height: 1.3em; font-size: var(--fs-headline); }
+.unread-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--dot); }
+.msg .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .125rem; }
+.msg .row { display: flex; align-items: center; gap: .5rem; }
 .msg .row .time { align-self: baseline; }
-.msg .sender { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg .time { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.msg .subject { display: flex; align-items: center; gap: 4px; color: var(--muted); }
-.subject-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg .star { flex: none; color: var(--accent); }
-.msg.unread .sender, .msg.unread .subject-text { font-weight: 700; color: var(--text); }
-.clip { width: 13px; height: 13px; flex: none; }
-.more { flex: none; margin: 8px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.msg .sender { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-headline); font-weight: 600; line-height: 1.3; }
+.msg .time { color: var(--ink-2); font-size: var(--fs-footnote); line-height: 1.35; white-space: nowrap; }
+.msg .subject { display: flex; align-items: center; gap: .25rem; min-width: 0; color: var(--ink-2); }
+.subject-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg .star { flex: none; color: var(--star); }
+.msg .badge { color: var(--ink-2); border-color: var(--ink-2); }
+.msg.unread .sender { font-weight: 700; }
+.msg.unread .subject-text { font-weight: 700; color: var(--ink); }
+.msg.selected { --ink: var(--on-accent); --ink-2: rgba(255, 255, 255, .92); --dot: rgba(255, 255, 255, .85); background: var(--sel-strong); color: var(--on-accent); }
+.msg.selected .star { color: var(--ink-2); }
+.msg.selected .tag-dot { box-shadow: 0 0 0 1.5px #fff; }
+/* Focus in a text field or an open dialog: the selection drops to the muted grey. */
+body.typing .msg.selected { --ink: var(--label); --ink-2: var(--label-2); --dot: var(--accent); background: var(--sel-muted); color: inherit; }
+body.typing .msg.selected .star { color: var(--star); }
+body.typing .msg.selected .tag-dot { box-shadow: none; }
+.icon { width: 1.125em; height: 1.125em; flex: none; vertical-align: -.2em; }
+.icon.star { color: var(--star); }
+#messages .empty { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: 2.5rem 1rem; color: var(--label-2); font-size: var(--fs-body); text-align: center; overflow-wrap: anywhere; }
+#messages .empty .icon { width: 3rem; height: 3rem; color: var(--label-3); }
+.more { display: block; flex: none; margin: .75rem auto; padding: .4375rem .875rem; border: 1px solid transparent; border-radius: var(--radius-m); background: var(--fill); cursor: pointer; }
 .more:disabled { opacity: .6; cursor: default; }
-.badge { flex: none; padding: 0 5px; border: 1px solid var(--muted); border-radius: 6px; color: var(--muted); font-size: 11px; line-height: 16px; white-space: nowrap; }
+.badge { flex: none; padding: 0 .3125rem; border: 1px solid var(--label-2); border-radius: var(--radius-s); color: var(--label-2); font-size: var(--fs-caption); font-weight: 600; line-height: 1.3; letter-spacing: .01em; white-space: nowrap; }
 
 /* Reader */
-#placeholder { margin-top: 40px; text-align: center; }
-#mail h1 { font-size: 20px; margin: 0 0 12px; overflow-wrap: anywhere; }
-.meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 12px; font-size: 13px; }
-.meta div { display: contents; }
-.meta dt { color: var(--muted); }
-.meta dd { margin: 0; overflow-wrap: anywhere; }
-.attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.attachments a { padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); text-decoration: none; font-size: 13px; }
-.attachments a:hover { background: var(--hover); }
-.attachments small { color: var(--muted); margin-left: 4px; }
-.copies { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; font-size: 13px; }
-.copy { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+#placeholder { margin-top: 2.5rem; text-align: center; }
+#placeholder .icon { display: block; width: 3rem; height: 3rem; margin: 0 auto .75rem; color: var(--label-3); }
+#mail { padding-top: 1.25rem; transition: opacity 200ms ease; }
+#mail.stale { opacity: .45; }
+#mail h1 { font-size: var(--fs-title); font-weight: 700; line-height: 1.2; letter-spacing: -.02em; margin: 0 0 .75rem; overflow-wrap: anywhere; }
+/* Sender head: circle with initials, name and address, date on the right */
+.sender { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; }
+.avatar { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2.5rem; height: 2.5rem; border-radius: 50%; color: #ffffff; font-size: var(--fs-callout); font-weight: 600; line-height: 1; user-select: none; }
+.sender-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sender-name { font-size: var(--fs-headline); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.sender-addr, .sender-date { font-size: var(--fs-footnote); line-height: 1.35; color: var(--label-2); }
+.sender-addr { overflow-wrap: anywhere; }
+.sender-date { flex: none; align-self: flex-start; text-align: right; }
+.recips { margin-bottom: .75rem; }
+.recips-line { margin: 0 0 .125rem; font-size: var(--fs-footnote); line-height: 1.35; color: var(--label-2); overflow-wrap: anywhere; }
+.recips-more summary { font-size: var(--fs-footnote); line-height: 1.35; color: var(--label-2); cursor: pointer; overflow-wrap: anywhere; }
+.recips-more[open] summary { margin-bottom: .125rem; }
+.attachments { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.attachments a { display: inline-flex; align-items: center; gap: .375rem; max-width: 100%; padding: .375rem .625rem; border: 0; border-radius: var(--radius-m); background: var(--fill); color: var(--label); text-decoration: none; font-size: var(--fs-body); }
+.attachments a .icon { color: var(--label-2); }
+.attach-name { overflow-wrap: anywhere; }
+@media (hover: hover) { .attachments a:hover { background: var(--fill-press); } }
+.attachments small { color: var(--label-2); margin-left: .25rem; font-size: var(--fs-footnote); }
+.copies { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; margin-bottom: .75rem; font-size: var(--fs-body); }
+.copy { display: inline-flex; align-items: center; gap: .375rem; padding: .25rem .5rem; border: 1px solid var(--separator); border-radius: var(--radius-m); background: var(--content-2); }
 button.copy { cursor: pointer; }
-button.copy:hover { background: var(--hover); }
-.copy[aria-current="true"] { background: var(--sel); border-color: var(--accent); font-weight: 600; }
-.copy small { color: var(--muted); }
-.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
-.toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
-.toggle button { border: 0; background: none; padding: 5px 12px; cursor: pointer; }
-.toggle button[aria-pressed="true"] { background: var(--sel); font-weight: 600; }
-#m-body iframe { display: block; width: 100%; min-height: 300px; border: 0; border-radius: 8px; background: #ffffff; }
-#m-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font: inherit; }
-#m-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; }
+button.copy:active { background: var(--fill-press); }
+@media (hover: hover) { button.copy:hover { background: var(--fill); } }
+.copy[aria-current="true"] { background: var(--sel-muted); border-color: var(--accent); font-weight: 600; }
+.copy small { color: var(--label-2); }
+.warn { background: var(--warn-fill); color: var(--warn); border: 0; border-radius: var(--radius-m); padding: .625rem .75rem; margin-bottom: .75rem; }
+.toggle { display: inline-flex; gap: .125rem; padding: .125rem; border-radius: var(--radius-m); background: var(--fill); margin-bottom: .75rem; }
+.toggle button { border: 0; border-radius: var(--radius-s); background: none; color: var(--label); padding: .3125rem .75rem; cursor: pointer; }
+.toggle button[aria-pressed="true"] { background: var(--content); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+#m-body iframe { display: block; width: 100%; min-height: 18.75rem; border: 0; border-radius: var(--radius-m); background: #ffffff; }
+#m-body pre { margin: 0; max-width: 70ch; font: inherit; font-size: var(--fs-callout); line-height: 1.55; white-space: pre-wrap; word-wrap: break-word; }
+#m-head { display: flex; align-items: flex-start; gap: .5rem; margin-bottom: .75rem; }
+/* Short bar: appears once the big subject has scrolled away. No flow height, so it does not push the mail down. */
+#m-bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: .5rem; height: 2.75rem; margin: 0 -1.5rem -2.75rem; padding: 0 1.5rem; background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--separator); opacity: 0; pointer-events: none; transition: opacity var(--dur-fast) ease; }
+#m-bar.show { opacity: 1; pointer-events: auto; }
+#m-bar .back-slot:empty { display: none; }
+.bar-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-headline); font-weight: 600; }
 #m-head h1 { flex: 1; min-width: 0; margin: 0; }
-.m-star { flex: none; padding: 2px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--muted); font-size: 20px; line-height: 1.3; cursor: pointer; }
-.m-star[aria-pressed="true"] { color: var(--accent); }
+.icon-btn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--label-2); cursor: pointer; }
+.icon-btn .icon { width: 1.25rem; height: 1.25rem; }
+@media (hover: hover) { .icon-btn:hover:not(:disabled) { background: var(--fill); } }
+.m-star { color: var(--label-2); }
+.m-star[aria-pressed="true"] { color: var(--star); }
 .m-star:disabled, .m-chip button:disabled { opacity: .5; cursor: default; }
-#m-tags { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+#m-tags { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; margin-bottom: .75rem; }
 #m-chips { display: contents; }
-.m-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
-.m-chip button { padding: 0 4px; border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
-#m-tags .tag-input { flex: 1 1 160px; width: auto; max-width: 260px; }
-#m-tag-suggest { position: absolute; top: 100%; z-index: 5; margin: 2px 0 0; padding: 4px; list-style: none; min-width: 160px; max-width: 260px; max-height: 220px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
-#m-tag-suggest li { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
-#m-tag-suggest li:hover, #m-tag-suggest li[aria-selected="true"] { background: var(--sel); }
-#m-nomark { margin-bottom: 12px; font-size: 13px; }
+.m-chip { display: inline-flex; align-items: center; gap: .375rem; padding: .125rem .25rem .125rem .5rem; border: 1px solid var(--separator); border-radius: 999px; font-size: var(--fs-body); }
+.m-chip button { padding: 0 .25rem; border: 0; background: none; color: var(--label-2); font-size: 1rem; line-height: 1; cursor: pointer; }
+#m-tags .tag-input { flex: 1 1 10rem; width: auto; max-width: 16.25rem; }
+#m-tag-suggest { position: absolute; top: 100%; z-index: 5; margin: .125rem 0 0; padding: .25rem; list-style: none; min-width: 10rem; max-width: 16.25rem; max-height: 13.75rem; overflow: auto; border: 1px solid var(--separator); border-radius: var(--radius-m); background: var(--content); box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
+#m-tag-suggest li { display: flex; align-items: center; gap: .375rem; padding: .3125rem .5rem; border-radius: var(--radius-s); cursor: pointer; }
+#m-tag-suggest li:active { background: var(--fill-press); }
+@media (hover: hover) { #m-tag-suggest li:hover { background: var(--fill); } }
+#m-tag-suggest li[aria-selected="true"] { background: var(--sel-muted); }
+#m-nomark { margin-bottom: .75rem; font-size: var(--fs-body); }
 
 /* ---------- Fetch (Abruf) ---------- */
-#side-foot { flex: none; margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
-#side-foot .warn { margin: 0; font-size: 12px; }
-#job-status { font-size: 12px; }
+#side-foot { flex: none; margin-top: auto; padding-top: .75rem; display: flex; flex-direction: column; gap: .375rem; }
+#side-foot .notice { margin: 0; }
+/* Feedback boxes: status, done, warn, error. --tone colours the icon; warn and error also tint the box. Also the reader's warn boxes. */
+.notice { --tone: var(--label-2); display: flex; align-items: flex-start; gap: .5rem; margin: 0 0 .75rem; padding: .5rem .625rem; border-radius: var(--radius-m); background: var(--fill); color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; overflow-wrap: anywhere; }
+.notice.done { --tone: var(--success); }
+.notice.warn { --tone: var(--warn); background: var(--warn-fill); color: var(--warn); }
+.notice.error { --tone: var(--danger); background: var(--danger-fill); color: var(--danger); }
+.notice-icon { flex: none; display: flex; width: 1rem; height: 1rem; margin-top: .0625rem; color: var(--tone); }
+.notice-icon .icon { width: 100%; height: 100%; }
+.notice-body, .notice-text { flex: 1; min-width: 0; }
+.notice-close.icon-btn { flex: none; width: 1.5rem; height: 1.5rem; margin: -.25rem -.25rem -.25rem 0; color: inherit; }
+.notice-close .icon { width: 1rem; height: 1rem; }
+.notice details { margin-top: .25rem; }
+.notice summary { cursor: pointer; font-weight: 600; }
+.notice ul { margin: .25rem 0 0; padding-left: 1.125rem; max-height: 7.5rem; overflow: auto; overflow-wrap: anywhere; }
 #job-last { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#job-warn-list { margin: 6px 0; padding-left: 18px; max-height: 120px; overflow: auto; overflow-wrap: anywhere; }
-#job-warn-close, #load-warn-close { padding: 4px 8px; font-size: 12px; }
-#fetch-area { display: flex; flex-direction: column; gap: 6px; }
-.fetch-btn { width: 100%; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--panel); font-weight: 600; cursor: pointer; }
-.fetch-btn.busy { background: var(--hover); color: var(--muted); border-color: var(--border); }
-.stand { font-size: 12px; padding: 0 2px; }
-#fetch-dialog, #library-dialog, #settings-dialog { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); margin: auto; padding: 20px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); overflow: auto; }
-#fetch-dialog::backdrop, #library-dialog::backdrop, #settings-dialog::backdrop { background: rgba(0, 0, 0, .45); }
-#library-dialog { width: min(560px, calc(100vw - 32px)); }
-#settings-dialog { width: min(560px, calc(100vw - 32px)); }
-#fetch-dialog h2, #library-dialog h2, #settings-dialog h2 { font-size: 16px; margin: 0 0 12px; }
-.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.field input { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-.field input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.hint { color: var(--muted); font-size: 12px; }
-.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.btn { padding: 7px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); cursor: pointer; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 600; }
-.btn:disabled { opacity: .6; cursor: default; }
-#fetch-status { margin: 0 0 8px; }
-#fetch-log { margin: 0; height: 240px; max-height: 40vh; overflow: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Progress: track is --fill-press (a step darker than the box), bar scales from the left. */
+.progress { height: .25rem; margin: .375rem 0 .125rem; border-radius: 999px; background: var(--fill-press); overflow: hidden; }
+.progress > div { width: 100%; height: 100%; border-radius: inherit; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform var(--dur-fast) ease; }
+.progress.indeterminate > div { width: 40%; transition: none; animation: progress-slide 1.4s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+#fetch-area { display: flex; flex-direction: column; gap: .375rem; }
+.fetch-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: .375rem; padding: .5rem .625rem; border: 1px solid transparent; border-radius: var(--radius-m); background: var(--fill); color: var(--accent); font-weight: 600; cursor: pointer; }
+.fetch-btn .icon { width: 1rem; height: 1rem; }
+.fetch-btn.busy { opacity: .6; }
+.stand { font-size: var(--fs-footnote); padding: 0 .125rem; }
+/* Dialogs materialise on open (spring) and shrink back on close (short ease-in). Closing never waits on JS:
+   display and overlay use allow-discrete, so the browser removes the dialog when the transition ends. */
+.sheet { max-height: calc(100vh - 2rem); margin: auto; padding: 1.25rem 1.375rem; border: 0; border-radius: var(--radius-l); background: var(--content); color: var(--label); box-shadow: 0 20px 60px rgba(0, 0, 0, .25), 0 0 0 .5px rgba(0, 0, 0, .12); overflow: auto;
+  opacity: 0; transform: scale(.96);
+  transition: opacity 150ms var(--ease-in), transform 150ms var(--ease-in), overlay 150ms allow-discrete, display 150ms allow-discrete; }
+.sheet[open] { opacity: 1; transform: none;
+  transition: opacity 200ms ease, transform var(--dur-spring) var(--spring), overlay 150ms allow-discrete, display 150ms allow-discrete; }
+@starting-style { .sheet[open] { opacity: 0; transform: scale(.96); } }
+.sheet::backdrop { background: rgba(0, 0, 0, 0); backdrop-filter: blur(0);
+  transition: background-color 150ms var(--ease-in), backdrop-filter 150ms var(--ease-in), overlay 150ms allow-discrete, display 150ms allow-discrete; }
+.sheet[open]::backdrop { background: rgba(0, 0, 0, .32); backdrop-filter: blur(6px);
+  transition: background-color 200ms ease, backdrop-filter 200ms ease, overlay 150ms allow-discrete, display 150ms allow-discrete; }
+@starting-style { .sheet[open]::backdrop { background: rgba(0, 0, 0, 0); backdrop-filter: blur(0); } }
+#fetch-dialog { width: min(26.25rem, calc(100vw - 2rem)); }
+#library-dialog { width: min(35rem, calc(100vw - 2rem)); }
+#settings-dialog { width: min(35rem, calc(100vw - 2rem)); }
+.sheet h2 { font-size: var(--fs-dialog-title); font-weight: 600; line-height: 1.3; letter-spacing: -.01em; margin: 0 0 .75rem; }
+.field { display: flex; flex-direction: column; gap: .25rem; margin-bottom: .75rem; }
+.hint { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
+.actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
+#fetch-status { margin: 0 0 .5rem; }
+#fetch-log { margin: 0; height: 15rem; max-height: 40vh; overflow: auto; padding: .5rem .625rem; border: 0; border-radius: var(--radius-m); background: var(--content-2); font: .75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- Verzeichnis-Auswahl ---------- */
-.pathbar { display: flex; gap: 6px; margin-bottom: 10px; }
-.pathbar input { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.pathbar input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-#dir-list { list-style: none; margin: 0 0 10px; padding: 4px; height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-#dir-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
-#dir-list button:hover, #dir-list button:focus-visible { background: var(--hover); }
+.pathbar { display: flex; gap: .375rem; margin-bottom: .625rem; }
+.pathbar input { flex: 1; font: .8125rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+#dir-list { margin: 0 0 .625rem; height: 17.5rem; overflow: auto; }
+#dir-list .group-row { padding: 0; }
+#dir-list button { display: flex; align-items: center; gap: .5rem; width: 100%; padding: .625rem .75rem; border: 0; border-radius: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+#dir-list .icon { flex: none; width: 1.25rem; height: 1.25rem; color: var(--label-2); }
+#dir-list button.library .icon { color: var(--accent); }
+#dir-list button:active { background: var(--fill-press); }
+@media (hover: hover) { #dir-list button:hover { background: var(--fill); } }
 #dir-list button.library { font-weight: 600; }
-#dir-list .tag { margin-left: auto; font-size: 11px; color: var(--accent); white-space: nowrap; }
-#dir-list .empty { padding: 8px; }
-#dir-list button.picked { background: var(--hover); outline: 1px solid var(--accent); }
-#dir-list .size { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
-#job-note ul { margin: 4px 0 0; padding-left: 18px; }
-.check { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+#dir-list .tag { margin-left: auto; font-size: var(--fs-caption); font-weight: 600; color: var(--accent); white-space: nowrap; }
+#dir-list .empty { padding: .625rem .75rem; }
+#dir-list button.picked { background: var(--sel-muted); outline: 1px solid var(--accent); }
+#dir-list .size { margin-left: auto; font-size: var(--fs-footnote); color: var(--label-2); white-space: nowrap; }
+.check { display: flex; align-items: center; gap: .5rem; margin-top: .25rem; }
 
 /* ---------- Einstellungen ---------- */
-.settings-section { margin-bottom: 18px; }
-.settings-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 8px; }
-.settings-section > .hint { margin: 0 0 8px; }
-.pathtext { margin: 0 0 4px; overflow-wrap: anywhere; }
+.settings-section { margin-bottom: 1.125rem; }
+.settings-section h3 { font-size: var(--fs-caption); font-weight: 600; line-height: 1.3; letter-spacing: .01em; color: var(--label-2); margin: 0 0 .5rem; }
+.settings-section > .hint { margin: 0 0 .5rem; }
 .cleanup-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
 .cleanup-fields:disabled { opacity: .6; }
-.cleanup-fields select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-.radio { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-#cleanup-preview p { margin: 0 0 4px; }
-#cleanup-report { margin: 8px 0 0; overflow-wrap: anywhere; }
-.src-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.src-row { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
-.src-row .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.src-row .hint { margin: 0; }
-.src-row input[type="text"], .src-row select { padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); min-width: 0; }
-.src-row input.name { flex: 1 1 140px; }
-.src-row input.emoji { width: 72px; }
-.src-row input[type="file"] { max-width: 100%; font-size: 12px; }
-.src-row input[type="color"] { width: 40px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); cursor: pointer; }
-.btn.small { padding: 4px 8px; font-size: 12px; }
+#cleanup-preview p { margin: 0 0 .25rem; }
+#cleanup-report { margin: .5rem 0 0; overflow-wrap: anywhere; }
+.radio { display: flex; align-items: center; gap: .5rem; margin-top: .25rem; }
+/* Grouped list: a rounded card with inset hairlines between its rows. */
+.group { margin: 0; padding: 0; list-style: none; background: var(--content-2); border-radius: var(--radius-l); }
+.group-row { position: relative; display: flex; align-items: center; gap: .5rem; padding: .625rem .75rem; }
+.group-row + .group-row::before { content: ""; position: absolute; top: 0; left: .75rem; right: 0; height: 1px; background: var(--separator); }
+.group-row.stack { flex-direction: column; align-items: stretch; gap: .375rem; }
+.group-row.field { margin: 0; }
+.group-row .hint { margin: 0; }
+.group-row .line { display: flex; align-items: center; gap: .375rem; flex-wrap: wrap; }
+.group-row input.name { flex: 1 1 8.75rem; }
+.group-row input.emoji { width: 4.5rem; }
+.group-row input[type="file"] { max-width: 100%; font-size: var(--fs-footnote); }
+.group-row input[type="color"] { width: 2.5rem; height: 1.875rem; padding: .125rem; border: 1px solid var(--separator); border-radius: var(--radius-m); background: var(--content); cursor: pointer; }
+.libpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-footnote); line-height: 1.35; color: var(--label-2); overflow-wrap: anywhere; }
+#settings-warn { position: sticky; top: 0; z-index: 1; }
+.settings-foot { position: sticky; bottom: 0; z-index: 1; display: flex; justify-content: flex-end; margin: 1rem -1.375rem -1.25rem; padding: .75rem 1.375rem; background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 -1px 0 var(--separator); }.btn.small { padding: .25rem .5rem; font-size: var(--fs-footnote); }
 
-/* ---------- Narrow screens: stack the three panes ---------- */
+/* ---------- Narrow screens: navigation levels ---------- */
+/* Below 900px the panes lie on top of each other: 0 folders and tags, 1 message list, 2 mail.
+   The script moves them (applyNav). Back buttons are hidden on wide windows. */
+.nav-back { display: none; align-items: center; gap: .25rem; padding: .25rem .5rem .25rem .125rem; border: 0; border-radius: var(--radius-s); background: none; color: var(--accent); font-weight: 600; cursor: pointer; }
+.nav-back .icon { width: 1rem; height: 1rem; }
+#reader-nav { display: none; }
+.edge-swipe { display: none; }
 @media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
-  #folders, #list-pane { overflow: visible; }
-  #list-pane { border: 0; border-top: 1px solid var(--border); max-height: 60vh; overflow: hidden; }
-  #folder-list, #tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
-  .folder { width: auto; }
-  #reader { overflow: visible; padding: 16px; border-top: 1px solid var(--border); }
-  #folders { padding: 12px 16px; }
-  #rail { flex-direction: row; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden; }
+  :root { --list-head: 7.5rem; }
+  .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); grid-template-areas: "stack"; height: 100dvh; overflow: hidden; overflow: clip; /* clip: no programmatic horizontal scroll */ }
+  #nav-root, #list-pane, #reader { grid-area: stack; position: relative; min-width: 0; min-height: 0; will-change: transform; }
+  #nav-root { display: flex; flex-direction: column; background: var(--sidebar); }
+  /* Dimming of a level that lies behind the one in front; --dim is set by applyNav. */
+  #nav-root::after { content: ""; position: absolute; inset: 0; z-index: 10; background: #000; opacity: var(--dim, 0); pointer-events: none; }
+  /* Scroll containers: a zero-size sticky box first in the flow stays at the top of the visible pane. Its huge spread shadow covers the visible area; the pane clips it, so it does not scroll away. */
+  #list-pane::before, #reader::before { content: ""; display: block; position: sticky; top: 0; left: 0; width: 0; height: 0; z-index: 10; pointer-events: none; box-shadow: 0 0 0 100vmax rgb(0 0 0 / var(--dim, 0)); }
+  /* Block flow, so the sticky edge strip has a non-flex containing block and stays at the edge while the pane scrolls. */
+  #list-pane { border: 0; display: block; }
+  /* Edge swipe strip (level 1 and 2): full height, sticky at the top of its scroll pane. The negative bottom margin keeps it out of the flow. */
+  .edge-swipe { display: block; position: sticky; top: 0; z-index: 3; width: 1.25rem; height: 100dvh; margin: 0 0 -100dvh; touch-action: pan-y; user-select: none; }
+  #reader > .edge-swipe { margin-left: -1rem; } /* #reader has a 1rem side padding */
+  #folders { flex: 1 1 auto; overflow: auto; padding: .75rem 1rem; }
+  #rail { flex-direction: row; padding: .5rem .75rem; border-right: 0; border-bottom: 1px solid var(--separator); overflow-x: auto; overflow-y: hidden; }
   #rail-sources { flex-direction: row; }
+  #rail button[aria-current="true"]::before { top: auto; bottom: 0; left: 50%; width: 1.25rem; height: 3px; margin: 0 0 0 -.625rem; }
   #rail-settings { margin-top: 0; margin-left: auto; }
+  .nav-back { display: inline-flex; }
+  #back-folders { align-self: flex-start; margin-left: .5rem; } /* clears the edge strip (1.25rem) past the head's .75rem padding */
+  /* The back row over the reader stays visible; the short mail bar sits below it. */
+  #reader { padding: 0 1rem; }
+  #reader-nav { display: flex; align-items: center; position: sticky; top: 0; z-index: 4; flex: none; height: 2.5rem; margin: 0 -1rem; padding: 0 1rem; background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--separator); }
+  #m-bar { top: 2.5rem; margin: 0 -1rem -2.75rem; padding: 0 1rem; }
+}
+
+/* ---------- Accessibility ---------- */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-spring: 0ms; }
+  #m-bar { transition: none; }
+  .progress > div { transition: none; }
+  .progress.indeterminate > div { animation: none; transform: none; width: 50%; }
+  .btn:active:not(:disabled), .m-star:active:not(:disabled), #rail button:active:not(:disabled),
+  .icon-btn:active:not(:disabled), .fetch-btn:active:not(:disabled) {
+    transform: none;
+  }
+  .sheet, .sheet[open] { transform: none; transition: opacity 150ms ease, overlay 150ms allow-discrete, display 150ms allow-discrete; }
+  @starting-style { .sheet[open] { transform: none; } }
+  .sheet::backdrop, .sheet[open]::backdrop { transition: background-color 150ms ease, overlay 150ms allow-discrete, display 150ms allow-discrete; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root, :root:not([data-theme="light"]), :root[data-theme="dark"] { --material: var(--content); }
+  *, *::before, *::after, *::backdrop { backdrop-filter: none !important; }
+}
+@media (prefers-contrast: more) {
+  :root, :root[data-theme="light"] { --separator: rgba(60, 60, 67, .5); --label-2: #4a4a4f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --separator: rgba(255, 255, 255, .35); --label-2: #c0c0c6; }
+  }
+  :root[data-theme="dark"] { --separator: rgba(255, 255, 255, .35); --label-2: #c0c0c6; }
+  #search, .tag-input, .field input, .pathbar input, .group-row input[type="text"], .group-row select,
+  .cleanup-fields select, .btn {
+    border-color: var(--label-2);
+  }
+  .msg.selected { --ink-2: #fff; --dot: #fff; }
 }
 </style>
 </head>
 <body>
 <div class="app">
+  <div id="nav-root">
   <nav id="rail" aria-label="Quellen">
     <div id="rail-sources"></div>
-    <button id="rail-add" type="button" title="Quelle hinzufügen" aria-label="Quelle hinzufügen">＋</button>
-    <button id="rail-settings" type="button" title="Einstellungen" aria-label="Einstellungen">⚙</button>
+    <button id="rail-add" type="button" title="Quelle hinzufügen" aria-label="Quelle hinzufügen"></button>
+    <button id="rail-settings" type="button" title="Einstellungen" aria-label="Einstellungen"></button>
   </nav>
 
   <aside id="folders">
@@ -226,35 +428,58 @@ button.copy:hover { background: var(--hover); }
     <h2>Tags</h2>
     <ul id="tag-list"></ul>
     <div id="side-foot">
-      <div id="load-warn" class="warn" role="alert" hidden>
-        <div id="load-warn-text"></div>
-        <button id="load-warn-close" class="btn" type="button">Ausblenden</button>
+      <div id="load-warn" class="notice warn" role="alert" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div id="load-warn-text" class="notice-text"></div>
+        <button id="load-warn-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
       </div>
-      <div id="job-status" class="muted" role="status" hidden>
-        <div id="job-text"></div>
-        <div id="job-last"></div>
+      <div id="job-status" class="notice status" role="status" hidden>
+        <span class="notice-icon" data-icon="info"></span>
+        <div class="notice-body">
+          <div id="job-text"></div>
+          <div id="job-progress" class="progress"><div id="job-bar"></div></div>
+          <div id="job-last"></div>
+        </div>
       </div>
-      <div id="job-error" class="warn" role="alert" hidden></div>
-      <div id="job-note" class="hint" hidden>
-        <div id="job-note-text"></div>
-        <ul id="job-note-list"></ul>
-        <button id="job-note-close" class="btn" type="button">Ausblenden</button>
+      <div id="job-error" class="notice error" role="alert" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div id="job-error-text" class="notice-text"></div>
       </div>
-      <div id="job-warn" class="warn" hidden>
-        <div>Einzelne Quellen sind fehlgeschlagen:</div>
-        <ul id="job-warn-list"></ul>
-        <button id="job-warn-close" class="btn" type="button">Ausblenden</button>
+      <div id="job-note" class="notice done" hidden>
+        <span class="notice-icon" data-icon="check"></span>
+        <div class="notice-body">
+          <div id="job-note-text"></div>
+          <details id="job-note-details">
+            <summary id="job-note-sum">Details (0)</summary>
+            <ul id="job-note-list"></ul>
+          </details>
+        </div>
+        <button id="job-note-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
+      </div>
+      <div id="job-warn" class="notice warn" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div class="notice-body">
+          <div>Einzelne Quellen sind fehlgeschlagen:</div>
+          <details id="job-warn-details">
+            <summary id="job-warn-sum">Details (0)</summary>
+            <ul id="job-warn-list"></ul>
+          </details>
+        </div>
+        <button id="job-warn-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
       </div>
       <div id="fetch-area" hidden>
-        <button id="fetch-btn" class="fetch-btn" type="button">Abrufen</button>
+        <button id="fetch-btn" class="btn fetch-btn" type="button"><span data-icon="arrow-down"></span><span id="fetch-label">Abrufen</span></button>
         <div id="stand" class="muted stand"></div>
       </div>
     </div>
   </aside>
+  </div>
 
   <section id="list-pane">
+    <div class="edge-swipe" aria-hidden="true"></div>
     <div class="head">
-      <input id="search" type="search" placeholder="In diesem Ordner suchen…" aria-label="Suche">
+      <button id="back-folders" class="nav-back" type="button"><span data-icon="chevron-left"></span>Ordner</button>
+      <label class="search"><span id="search-icon" class="search-icon"></span><input id="search" type="search" placeholder="In diesem Ordner suchen…" aria-label="Suche"></label>
       <div id="count" class="muted"></div>
     </div>
     <ul id="messages" role="listbox" aria-label="Nachrichten"></ul>
@@ -262,28 +487,40 @@ button.copy:hover { background: var(--hover); }
   </section>
 
   <main id="reader">
-    <div id="placeholder" class="muted">Keine Nachricht ausgewählt.</div>
+    <div class="edge-swipe" aria-hidden="true"></div>
+    <div id="reader-nav">
+      <button id="back-list" class="nav-back" type="button"><span data-icon="chevron-left"></span><span id="back-list-text"></span></button>
+    </div>
+    <div id="m-bar" hidden>
+      <div class="back-slot"></div>
+      <div id="m-bar-subject" class="bar-subject"></div>
+      <button id="m-bar-star" class="icon-btn m-star" type="button" aria-pressed="false" title="Markieren"></button>
+    </div>
+    <div id="placeholder" class="muted"></div>
     <article id="mail" hidden>
       <div id="m-head">
         <h1 id="m-subject"></h1>
-        <button id="m-star" class="m-star" type="button" aria-pressed="false" title="Markieren">☆</button>
+        <button id="m-star" class="icon-btn m-star" type="button" aria-pressed="false" title="Markieren"></button>
       </div>
       <div id="m-copies" class="copies" hidden></div>
-      <dl class="meta">
-        <div><dt>Von</dt><dd id="m-from"></dd></div>
-        <div><dt>An</dt><dd id="m-to"></dd></div>
-        <div id="row-cc"><dt>Cc</dt><dd id="m-cc"></dd></div>
-        <div><dt>Datum</dt><dd id="m-date"></dd></div>
-      </dl>
+      <div class="sender">
+        <span id="m-avatar" class="avatar" aria-hidden="true"></span>
+        <div class="sender-text">
+          <div id="m-from" class="sender-name"></div>
+          <div id="m-from-addr" class="sender-addr" hidden></div>
+        </div>
+        <div id="m-date" class="sender-date"></div>
+      </div>
+      <div id="m-recips" class="recips"></div>
       <div id="m-tags" hidden>
         <div id="m-chips"></div>
         <input id="m-tag-input" class="tag-input" type="text" maxlength="40" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="m-tag-suggest" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen">
         <ul id="m-tag-suggest" role="listbox" hidden></ul>
       </div>
       <div id="m-nomark" class="muted" hidden>Markieren nicht möglich, die .eml-Datei fehlt.</div>
-      <div id="m-mark-warn" class="warn" role="alert" hidden></div>
+      <div id="m-mark-warn" class="notice warn" role="alert" hidden></div>
       <div id="m-attachments" class="attachments" hidden></div>
-      <div id="m-error" class="warn" role="alert" hidden></div>
+      <div id="m-error" class="notice warn" role="alert" hidden></div>
       <div id="m-toggle" class="toggle" hidden>
         <button type="button" data-mode="html">HTML</button>
         <button type="button" data-mode="text">Text</button>
@@ -293,17 +530,17 @@ button.copy:hover { background: var(--hover); }
   </main>
 </div>
 
-<dialog id="library-dialog" aria-labelledby="library-title">
+<dialog id="library-dialog" class="sheet" aria-labelledby="library-title">
   <h2 id="library-title">Bibliothek wählen</h2>
   <div id="library-warn" class="warn" role="alert" hidden></div>
   <form id="library-form">
     <div class="pathbar">
-      <button id="dir-up" class="btn" type="button" title="Übergeordnetes Verzeichnis" aria-label="Übergeordnetes Verzeichnis">↑</button>
-      <button id="dir-home" class="btn" type="button" title="Home-Verzeichnis" aria-label="Home-Verzeichnis">~</button>
+      <button id="dir-up" class="icon-btn" type="button" title="Übergeordnetes Verzeichnis" aria-label="Übergeordnetes Verzeichnis"></button>
+      <button id="dir-home" class="icon-btn" type="button" title="Home-Verzeichnis" aria-label="Home-Verzeichnis"></button>
       <input id="dir-path" name="path" type="text" spellcheck="false" autocomplete="off" aria-label="Pfad">
       <button id="dir-go" class="btn" type="button">Gehe zu</button>
     </div>
-    <ul id="dir-list" aria-label="Unterverzeichnisse"></ul>
+    <ul id="dir-list" class="group" aria-label="Unterverzeichnisse"></ul>
     <p class="hint" id="dir-hint"></p>
     <label id="import-name-row" class="field" hidden><span>Name der Quelle</span>
       <input id="import-name" type="text" autocomplete="off" maxlength="80"></label>
@@ -318,7 +555,7 @@ button.copy:hover { background: var(--hover); }
   </form>
 </dialog>
 
-<dialog id="fetch-dialog" aria-labelledby="fetch-title">
+<dialog id="fetch-dialog" class="sheet" aria-labelledby="fetch-title">
   <h2 id="fetch-title">Mails abrufen</h2>
   <div id="fetch-warn" class="warn" role="alert" hidden></div>
 
@@ -348,27 +585,36 @@ button.copy:hover { background: var(--hover); }
   </div>
 </dialog>
 
-<dialog id="settings-dialog" aria-labelledby="settings-title">
+<dialog id="settings-dialog" class="sheet" aria-labelledby="settings-title">
   <h2 id="settings-title" tabindex="-1">Einstellungen</h2>
-  <div id="settings-warn" class="warn" role="alert" hidden></div>
+  <div id="settings-warn" class="notice warn" role="alert" hidden></div>
 
   <section class="settings-section" aria-labelledby="settings-view-title">
     <h3 id="settings-view-title">Ansicht</h3>
-    <div id="settings-view" role="radiogroup" aria-labelledby="settings-view-title">
-      <label class="check"><input type="radio" name="view" value="combined"> <span>Kombiniert: „∑“ zeigt alle sichtbaren Quellen</span></label>
-      <label class="check"><input type="radio" name="view" value="single"> <span>Einzeln: nur die gewählte Quelle, ohne „∑“</span></label>
+    <div id="settings-view" class="group" role="radiogroup" aria-labelledby="settings-view-title">
+      <label class="group-row"><input type="radio" name="view" value="combined"> <span>Kombiniert: „∑“ zeigt alle sichtbaren Quellen</span></label>
+      <label class="group-row"><input type="radio" name="view" value="single"> <span>Einzeln: nur die gewählte Quelle, ohne „∑“</span></label>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-theme-title">
+    <h3 id="settings-theme-title">Erscheinungsbild</h3>
+    <div id="settings-theme" class="group" role="radiogroup" aria-labelledby="settings-theme-title">
+      <label class="group-row"><input type="radio" name="theme" value="system"> <span>System</span></label>
+      <label class="group-row"><input type="radio" name="theme" value="light"> <span>Hell</span></label>
+      <label class="group-row"><input type="radio" name="theme" value="dark"> <span>Dunkel</span></label>
     </div>
   </section>
 
   <section class="settings-section" aria-labelledby="settings-sources-title">
     <h3 id="settings-sources-title">Quellen</h3>
     <p class="hint">Reihenfolge wie in der Leiste. Ausgeblendete Quellen erscheinen weder in der Leiste noch in „∑“.</p>
-    <ul id="settings-sources" class="src-list" aria-label="Quellen"></ul>
+    <ul id="settings-sources" class="group" aria-label="Quellen"></ul>
   </section>
 
   <section class="settings-section" aria-labelledby="settings-tags-title">
     <h3 id="settings-tags-title">Tags</h3>
-    <ul id="settings-tags" class="src-list" aria-label="Tags"></ul>
+    <ul id="settings-tags" class="group" aria-label="Tags"></ul>
     <form id="settings-tag-new">
       <label class="field"><span>Neuer Tag</span>
         <input name="name" type="text" maxlength="40" autocomplete="off"></label>
@@ -405,11 +651,13 @@ button.copy:hover { background: var(--hover); }
   <section class="settings-section" aria-labelledby="settings-proton-title">
     <h3 id="settings-proton-title">Proton-Abruf</h3>
     <form id="settings-proton">
-      <label class="field"><span>E-Mail</span>
-        <input name="proton_email" type="email" autocomplete="off"></label>
-      <label class="field"><span>CLI-Pfad</span>
-        <input name="cli" type="text" spellcheck="false" autocomplete="off">
-        <span class="hint">Nur ein absoluter Pfad zu einer ausführbaren Datei wird verwendet.</span></label>
+      <div class="group">
+        <label class="group-row stack field"><span>E-Mail</span>
+          <input name="proton_email" type="email" autocomplete="off"></label>
+        <label class="group-row stack field"><span>CLI-Pfad</span>
+          <input name="cli" type="text" spellcheck="false" autocomplete="off">
+          <span class="hint">Nur ein absoluter Pfad zu einer ausführbaren Datei wird verwendet.</span></label>
+      </div>
       <p id="settings-cli-override" class="hint" hidden></p>
       <p class="hint">Passwörter werden nie gespeichert. Sie werden bei jedem Abruf abgefragt.</p>
       <div class="actions"><button class="btn primary" type="submit">Speichern</button></div>
@@ -418,14 +666,36 @@ button.copy:hover { background: var(--hover); }
 
   <section class="settings-section" aria-labelledby="settings-library-title">
     <h3 id="settings-library-title">Bibliothek</h3>
-    <p class="pathtext">Aktuell: <span id="settings-library-path"></span></p>
-    <div class="actions"><button id="settings-library-change" class="btn" type="button">Bibliothek wechseln…</button></div>
+    <div class="group">
+      <div class="group-row">
+        <span id="settings-library-path" class="libpath"></span>
+        <button id="settings-library-change" class="btn small" type="button">Wechseln…</button>
+      </div>
+    </div>
   </section>
 
-  <div class="actions"><button id="settings-close" class="btn" type="button">Schließen</button></div>
+  <div class="settings-foot"><button id="settings-close" class="btn primary" type="button">Schließen</button></div>
 </dialog>
 
 <script>
+// Theme: "system" follows the OS; "light"/"dark" set data-theme on <html>. Applied first so there is no flash.
+const THEME_KEY = 'mbv-theme';
+function storedTheme() {
+  try { const t = localStorage.getItem(THEME_KEY); return t === 'light' || t === 'dark' ? t : 'system'; } catch (_) { return 'system'; }
+}
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+}
+applyTheme(storedTheme());
+document.querySelectorAll('input[name="theme"]').forEach((r) => {
+  r.checked = r.value === storedTheme();
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    applyTheme(r.value);
+    try { localStorage.setItem(THEME_KEY, r.value); } catch (_) { /* not remembered, e.g. private window */ }
+  });
+});
 (() => {
 'use strict';
 
@@ -478,19 +748,112 @@ function fileSize(bytes) {
   return `${v.toLocaleString('de-DE', { maximumFractionDigits: 1 })} ${units[i]}`;
 }
 
-function clipIcon() {
+/* ---------- Pure helpers (tested by test_ui.py) ---------- */
+// Picks the sidebar icon for a folder name. Rules are checked in order.
+function folderIconName(name) {
+  const n = String(name).toLocaleLowerCase('de-DE');
+  if (/^(inbox|posteingang)$/.test(n)) return 'tray';
+  if (/sent|gesendet/.test(n)) return 'paperplane';
+  if (/draft|entw[uü]rf/.test(n)) return 'doc';
+  if (/trash|deleted|papierkorb|gelöscht/.test(n)) return 'trash';
+  if (/spam|junk/.test(n)) return 'junk';
+  if (/archiv/.test(n)) return 'archivebox';
+  return 'folder';
+}
+
+// Initials for the sender circle: "Anna Müller" -> "AM", "max.mustermann@x.org" -> "MM", nothing usable -> "?".
+// Uses the name if there is one, else the part of the address before "@". Non-letters are dropped from each word.
+function personInitials(addr) {
+  const name = String(addr?.name ?? '').replace(/"/g, '').trim();
+  const words = name
+    ? name.split(/\s+/)
+    : String(addr?.address ?? '').split('@')[0].split(/[._-]+/);
+  const letters = words.map((w) => w.replace(/\P{L}/gu, '')).filter(Boolean);
+  if (letters.length === 0) return '?';
+  const first = [...letters[0]][0];
+  const last = [...letters[letters.length - 1]][0];
+  return (letters.length === 1 ? first : first + last).toLocaleUpperCase('de-DE');
+}
+
+// Gesture math (no DOM, no state). Pixels; velocities in px/s unless noted.
+// Projected travel after a flick, Apple's formula: where a decelerating scroll would come to rest.
+function project(velocity, decelerationRate = 0.998) {
+  return (velocity / 1000) * decelerationRate / (1 - decelerationRate);
+}
+
+// Resistance past an edge: the further the overshoot, the less it moves, never beyond dimension.
+function rubberband(overshoot, dimension, constant = 0.55) {
+  return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+}
+
+// Swipe from the left edge: go back if the projected position is past half the width (offset > 0 = to the right).
+function shouldGoBack(offset, velocity, width) {
+  return offset + project(velocity) > width / 2;
+}
+
+// One semi-implicit Euler step of a unit-mass spring towards target, critically damped by default.
+// Callers split dt into steps of at most 1/240 s.
+function springStep(s, target, dt, response = 0.35, damping = 1) {
+  const k = (2 * Math.PI / response) ** 2;
+  const c = 4 * Math.PI * damping / response;
+  const v = s.v + (-k * (s.x - target) - c * s.v) * dt;
+  return { x: s.x + v * dt, v };
+}
+
+// Icon path data (24x24 grid, stroke icons). Source: Lucide (ISC licence), https://lucide.dev
+// "star-fill" is "star" drawn filled, see icon().
+const STAR_PATH = 'M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z';
+const ICONS = {
+  plus: ['M5 12h14', 'M12 5v14'],
+  gear: ['M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
+  star: [STAR_PATH],
+  'star-fill': [STAR_PATH],
+  'chevron-up': ['m18 15-6-6-6 6'],
+  'chevron-left': ['m15 18-6-6 6-6'],
+  house: ['M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8', 'M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
+  paperclip: ['M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'],
+  tray: ['M22 12h-6l-2 3h-4l-2-3H2', 'M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'],
+  paperplane: ['M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z', 'm21.854 2.147-10.94 10.939'],
+  doc: ['M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z', 'M14 2v4a2 2 0 0 0 2 2h4', 'M10 9H8', 'M16 13H8', 'M16 17H8'],
+  trash: ['M3 6h18', 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6', 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2'],
+  junk: ['M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z', 'M12 8v4', 'M12 16h.01'],
+  archivebox: ['M3 3h18a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z', 'M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8', 'M10 12h4'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  envelope: ['M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z', 'm22 6-10 7L2 6'],
+  search: ['M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'm21 21-4.34-4.34'],
+  xmark: ['M18 6 6 18', 'm6 6 12 12'],
+  'arrow-down': ['M12 5v14', 'm19 12-7 7-7-7'],
+  warn: ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3', 'M12 9v4', 'M12 17h.01'],
+  info: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 16v-4', 'M12 8h.01'],
+  check: ['M20 6 9 17l-5-5'],
+  tag: ['M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z', 'M7.5 7.5h.01'],
+};
+/* ---------- End pure helpers ---------- */
+
+// Builds an inline SVG icon from ICONS. Without a label it is decorative (aria-hidden).
+function icon(name, label) {
+  const paths = ICONS[name];
+  if (!paths) throw new Error(`unbekanntes Icon: ${name}`);
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('class', 'icon');
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'clip');
-  svg.setAttribute('fill', 'none');
+  svg.setAttribute('fill', name.endsWith('-fill') ? 'currentColor' : 'none');
   svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Anhänge');
-  const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', 'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48');
-  svg.append(path);
+  svg.setAttribute('stroke-width', '1.75');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  if (label) {
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', label);
+  } else {
+    svg.setAttribute('aria-hidden', 'true');
+  }
+  for (const d of paths) {
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+  }
   return svg;
 }
 
@@ -537,9 +900,10 @@ const state = {
   tags: [], starCount: 0, tag: null, tagSeq: 0, // tag: "star", a tag ID as string, or null; never with folder
   messages: [], total: 0, loading: false, listSeq: 0,
   selectedKey: null, detailSeq: 0,
-  mail: null, mailSource: null, mode: 'html',
+  mail: null, mailSource: null, mailStale: false, mode: 'html', // mailStale: a new mail is loading, see startLoad()
   sources: [], settings: null, view: null, viewSeq: 0, config: null,
   iconVer: {}, // per source: bumped after an icon upload, so the image URL changes
+  navLevel: 0, navPos: 0, // narrow layout: 0 folders, 1 list, 2 mail; navPos glides towards navLevel
 };
 
 // Message identity across sources: the same mail id may exist in two sources.
@@ -599,6 +963,7 @@ function selectView(view) {
   storeView(view);
   renderRail();
   updateFetchArea();
+  goTo(0);
   loadFolders();
 }
 
@@ -615,7 +980,7 @@ async function loadFolders(keep = false) {
     $('folder-list').replaceChildren(el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' }));
     state.messages = [];
     state.total = 0;
-    showPlaceholder('Keine Nachricht ausgewählt.');
+    showEmpty('none', 'Keine Nachricht ausgewählt');
     renderList();
     updateSearchPlaceholder();
     loadTags();
@@ -656,12 +1021,16 @@ function renderFolders() {
   $('folder-list').replaceChildren(...state.folders.map((f) => {
     const btn = el('button', { class: 'folder', type: 'button' });
     btn.setAttribute('aria-current', String(f.key === state.folder));
-    btn.append(el('span', { class: 'name', text: f.name || '' }));
+    btn.append(icon(folderIconName(f.name || '')), el('span', { class: 'name', text: f.name || '' }));
     if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
     btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
-    btn.addEventListener('click', () => selectFolder(f.key));
+    btn.addEventListener('click', () => {
+      selectFolder(f.key);
+      goTo(1);
+    });
     return el('li', {}, [btn]);
   }));
+  updateBackList();
 }
 
 function selectFolder(key) {
@@ -732,12 +1101,17 @@ async function loadTags() {
 }
 
 function renderTags() {
+  const starIcon = icon('star-fill');
+  starIcon.classList.add('star');
   const starred = el('button', { class: 'folder', type: 'button' }, [
-    el('span', { class: 'name', text: '★ Markiert' }),
+    el('span', { class: 'name' }, [starIcon, 'Markiert']),
     el('span', { class: 'count', text: String(state.starCount) }),
   ]);
   starred.setAttribute('aria-current', String(state.tag === 'star'));
-  starred.addEventListener('click', () => selectTag('star'));
+  starred.addEventListener('click', () => {
+    selectTag('star');
+    goTo(1);
+  });
   const items = [el('li', {}, [starred])];
   for (const t of state.tags) {
     const btn = el('button', { class: 'folder', type: 'button' }, [
@@ -746,15 +1120,19 @@ function renderTags() {
       el('span', { class: 'count', text: String(t.count ?? 0) }),
     ]);
     btn.setAttribute('aria-current', String(state.tag === String(t.id)));
-    btn.addEventListener('click', () => selectTag(String(t.id)));
+    btn.addEventListener('click', () => {
+      selectTag(String(t.id));
+      goTo(1);
+    });
     items.push(el('li', {}, [btn]));
   }
   const addLi = el('li');
-  const add = el('button', { class: 'folder', type: 'button' }, [el('span', { class: 'name', text: '＋ Tag' })]);
+  const add = el('button', { class: 'folder', type: 'button' }, [el('span', { class: 'name' }, [icon('plus'), 'Tag'])]);
   add.addEventListener('click', () => openTagInput(addLi));
   addLi.append(add);
   items.push(addLi);
   $('tag-list').replaceChildren(...items);
+  updateBackList();
 }
 
 // Replaces the "＋ Tag" entry with an input. Enter creates the tag, Escape cancels.
@@ -818,7 +1196,7 @@ function reloadList() {
   state.messages = [];
   state.total = 0;
   state.selectedKey = null;
-  showPlaceholder('Keine Nachricht ausgewählt.');
+  showEmpty('none', 'Keine Nachricht ausgewählt');
   renderList();
   loadPage(true);
 }
@@ -844,6 +1222,7 @@ async function loadPage(reset) {
     if (seq !== state.listSeq) return; // stale response
     state.total = data.total ?? 0;
     state.messages = reset ? data.messages : state.messages.concat(data.messages);
+    state.loading = false; // renderList shows the empty notice only when nothing is loading
     renderList();
   } catch (e) {
     if (seq !== state.listSeq) return;
@@ -866,6 +1245,8 @@ function renderList() {
     const li = el('li', { class: 'msg' + (m.unread ? ' unread' : '') + (selected ? ' selected' : ''), role: 'option' });
     li.dataset.key = key;
     li.setAttribute('aria-selected', String(selected));
+    const unreadCol = el('span', { class: 'unread-col' });
+    if (m.unread) unreadCol.append(el('span', { class: 'unread-dot', role: 'img', 'aria-label': 'Ungelesen' }));
     const row = el('div', { class: 'row' });
     const src = combined ? sourceById(m.source) : null;
     if (src) row.append(sourceIcon(src, 'list'));
@@ -874,19 +1255,40 @@ function renderList() {
       el('span', { class: 'time', text: listDate(m.time) }),
     );
     if (m.copies >= 2) row.append(el('span', { class: 'badge', text: `${m.copies} Quellen`, title: `In ${m.copies} Quellen vorhanden` }));
+    // Subject first, then star, tag dots and paperclip right-aligned at the end of the line.
     const subject = el('div', { class: 'subject' });
-    if (m.starred) subject.append(el('span', { class: 'star', role: 'img', 'aria-label': 'Markiert', text: '★' }));
     subject.append(el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }));
+    if (m.starred) {
+      const star = icon('star-fill', 'Markiert');
+      star.classList.add('star');
+      subject.append(star);
+    }
     for (const id of m.tags || []) {
       const tag = tagById.get(String(id)); // IDs unknown to the sidebar are skipped
       if (tag) subject.append(tagDot(tag));
     }
-    if (m.attachments > 0) subject.append(clipIcon());
-    li.append(row, subject);
-    li.addEventListener('click', () => selectMessage(m.source, m.id));
+    if (m.attachments > 0) {
+      const clip = icon('paperclip', 'Anhänge');
+      clip.classList.add('clip');
+      subject.append(clip);
+    }
+    li.append(unreadCol, el('div', { class: 'text' }, [row, subject]));
+    li.addEventListener('click', () => {
+      selectMessage(m.source, m.id);
+      goTo(2);
+    });
     return li;
   }));
+  // Drawn here, not only after a load, so a later renderList() cannot erase it.
+  if (state.messages.length === 0 && !state.loading) $('messages').append(emptyListItem());
   updateMore();
+}
+
+// Shown in the list when a load returns nothing: no mail in the folder, or no search hit.
+// The search text goes in via textContent.
+function emptyListItem() {
+  const text = state.q ? `Keine Treffer für „${state.q}“` : 'Keine Mails in diesem Ordner';
+  return el('li', { class: 'empty', role: 'presentation' }, [icon('tray'), el('div', { text })]);
 }
 
 function updateMore() {
@@ -902,6 +1304,8 @@ function move(delta) {
   let idx = items.findIndex((m) => msgKey(m.source, m.id) === state.selectedKey);
   idx = idx < 0 ? 0 : Math.min(items.length - 1, Math.max(0, idx + delta));
   selectMessage(items[idx].source, items[idx].id);
+  // On narrow windows a list that is not in front is off-screen; scrolling it would shift the app's layout.
+  if (NARROW.matches && state.navLevel !== 1) return;
   $('messages').children[idx]?.scrollIntoView({ block: 'nearest' });
 }
 
@@ -916,37 +1320,82 @@ function selectMessage(source, id) {
   loadDetail(source, id);
 }
 
+const STALE_DELAY = 150; // ms: a faster load shows no change at all
+let staleTimer = 0;
+
 async function loadDetail(source, id) {
   const seq = ++state.detailSeq;
-  showPlaceholder('Lädt…');
+  startLoad(seq);
   try {
     const m = await api(`/api/message/${encodeURIComponent(source)}/${encodeURIComponent(id)}`);
     if (seq !== state.detailSeq) return; // a newer selection won
     renderMail(source, m);
   } catch (e) {
     if (seq !== state.detailSeq) return;
-    showPlaceholder(`Nachricht konnte nicht geladen werden (${e.message}).`);
+    showEmpty('error', `Nachricht konnte nicht geladen werden (${e.message}).`);
   }
 }
 
-function showPlaceholder(text) {
-  $('placeholder').textContent = text;
-  $('placeholder').hidden = false;
-  $('mail').hidden = true;
+// While a new mail loads, the old one (if shown) is inert, so nothing acts on it, and dims only
+// after STALE_DELAY. Without a shown mail, the loading text appears after STALE_DELAY.
+function startLoad(seq) {
+  clearTimeout(staleTimer);
+  state.mailStale = true;
+  const mail = $('mail');
+  mail.inert = true;
+  updateBar();
+  staleTimer = setTimeout(() => {
+    if (seq !== state.detailSeq) return;
+    if (mail.hidden) showEmpty('loading', 'Lädt…');
+    else mail.classList.add('stale');
+  }, STALE_DELAY);
 }
 
+// Ends a load: no timer, no dimming, the reader takes input again.
+function endLoad() {
+  clearTimeout(staleTimer);
+  state.mailStale = false;
+  const mail = $('mail');
+  mail.inert = false;
+  mail.classList.remove('stale');
+  updateBar();
+}
+
+// Shows a text in place of the mail. 'none': nothing selected; 'loading': slow load; 'error': load failed.
+function showEmpty(kind, text = '') {
+  if (kind !== 'loading') endLoad();
+  $('placeholder').replaceChildren(icon('envelope'), el('div', { text }));
+  $('placeholder').hidden = false;
+  $('mail').hidden = true;
+  updateBar();
+}
+
+// Short bar: shown while the mail is open and its big subject is scrolled out of the reader.
+// Inert while a mail loads, so its star cannot act on the old mail.
+let subjectOut = false;
+function updateBar() {
+  const bar = $('m-bar');
+  const shown = subjectOut && !$('mail').hidden;
+  bar.hidden = $('mail').hidden;
+  bar.classList.toggle('show', shown);
+  bar.inert = !shown || state.mailStale;
+}
+new IntersectionObserver(([entry]) => {
+  subjectOut = !entry.isIntersecting;
+  updateBar();
+}).observe($('m-subject')); // root: the viewport, so it also works in the stacked narrow layout
+
 function renderMail(source, m) {
+  endLoad();
   state.mail = m;
   state.mailSource = source;
   showMarkWarn('');
   renderMarks();
-  $('m-subject').textContent = m.subject || '(ohne Betreff)';
-  $('m-from').textContent = addrText(m.from) || '(unbekannt)';
-  $('m-to').textContent = addrList(m.to) || '(keine)';
-  const cc = addrList(m.cc);
-  $('row-cc').hidden = !cc;
-  $('m-cc').textContent = cc;
-  $('m-date').textContent = longDate(m.time);
+  const subject = m.subject || '(ohne Betreff)';
+  $('m-subject').textContent = subject;
+  $('m-bar-subject').textContent = subject;
+  renderSender(m);
+  renderRecipients(m);
   renderAttachments(source, m);
   renderCopies(source, m);
 
@@ -961,6 +1410,40 @@ function renderMail(source, m) {
   $('placeholder').hidden = true;
   $('mail').hidden = false;
   $('reader').scrollTop = 0;
+  subjectOut = false; // the subject is back at the top, so the short bar stays hidden
+  updateBar();
+}
+
+// Avatar with initials and colour from the sender address; name and address as two lines when both exist.
+function renderSender(m) {
+  const from = m.from || null;
+  const name = from?.name || '';
+  const addr = from?.address || '';
+  const avatar = $('m-avatar');
+  avatar.textContent = personInitials(from);
+  avatar.style.background = colorFor(addr);
+  $('m-from').textContent = name || addr || '(unbekannt)';
+  const twoLines = Boolean(name && addr && name !== addr);
+  $('m-from-addr').textContent = twoLines ? addr : '';
+  $('m-from-addr').hidden = !twoLines;
+  $('m-date').textContent = longDate(m.time);
+}
+
+// To and Cc as footnote lines. More than 3 recipients in total: collapsed under a summary.
+function renderRecipients(m) {
+  const to = m.to || [];
+  const cc = m.cc || [];
+  const lines = [el('p', { class: 'recips-line' }, ['An: ', el('span', { id: 'm-to', text: addrList(to) || '(keine)' })])];
+  const ccText = addrList(cc);
+  if (ccText) lines.push(el('p', { class: 'recips-line', id: 'row-cc' }, ['Cc: ', el('span', { id: 'm-cc', text: ccText })]));
+  const all = [...to, ...cc];
+  if (all.length > 3) {
+    const names = all.map((a) => a.name || a.address || '?');
+    const summary = `An: ${names[0]}, ${names[1]} und ${all.length - 2} weitere`;
+    $('m-recips').replaceChildren(el('details', { class: 'recips-more' }, [el('summary', { text: summary }), ...lines]));
+  } else {
+    $('m-recips').replaceChildren(...lines);
+  }
 }
 
 function renderAttachments(source, m) {
@@ -968,7 +1451,8 @@ function renderAttachments(source, m) {
   $('m-attachments').replaceChildren(...list.map((a) => {
     const href = `/api/message/${encodeURIComponent(source)}/${encodeURIComponent(m.id)}/attachment/${encodeURIComponent(a.index)}`;
     return el('a', { href }, [
-      document.createTextNode(a.name || `Anhang ${a.index}`),
+      icon('paperclip'),
+      el('span', { class: 'attach-name', text: a.name || `Anhang ${a.index}` }),
       el('small', { text: fileSize(a.size) }),
     ]);
   }));
@@ -1031,7 +1515,7 @@ const marksPending = new Set(); // keys of mails with a marks request under way;
 let tagAdding = false; // a tag is being created from the input
 const foldName = (s) => s.toLocaleLowerCase('de-DE');
 // Key of the mail the reader shows right now, or null while it loads or shows nothing.
-const shownKey = () => (state.mail && !$('mail').hidden ? msgKey(state.mailSource, state.mail.id) : null);
+const shownKey = () => (state.mail && !state.mailStale && !$('mail').hidden ? msgKey(state.mailSource, state.mail.id) : null);
 
 function showMarkWarn(text) {
   $('m-mark-warn').textContent = text;
@@ -1043,14 +1527,15 @@ function renderMarks() {
   const m = state.mail;
   const markable = m.markable !== false;
   const busy = marksPending.has(msgKey(state.mailSource, m.id));
-  const starBtn = $('m-star');
-  starBtn.hidden = !markable;
+  for (const starBtn of [$('m-star'), $('m-bar-star')]) {
+    starBtn.hidden = !markable;
+    starBtn.replaceChildren(icon(m.starred ? 'star-fill' : 'star'));
+    starBtn.setAttribute('aria-pressed', String(!!m.starred));
+    starBtn.title = m.starred ? 'Markierung entfernen' : 'Markieren';
+    starBtn.disabled = busy;
+  }
   $('m-tags').hidden = !markable;
   $('m-nomark').hidden = markable;
-  starBtn.textContent = m.starred ? '★' : '☆';
-  starBtn.setAttribute('aria-pressed', String(!!m.starred));
-  starBtn.title = m.starred ? 'Markierung entfernen' : 'Markieren';
-  starBtn.disabled = busy;
 
   const tagById = new Map(state.tags.map((t) => [String(t.id), t]));
   const current = (m.tags || []).map(String);
@@ -1058,7 +1543,7 @@ function renderMarks() {
   for (const id of current) {
     const tag = tagById.get(id);
     if (!tag) continue; // IDs unknown to the sidebar are skipped
-    const remove = el('button', { type: 'button', text: '×', 'aria-label': `Tag ${tag.name || ''} entfernen` });
+    const remove = el('button', { type: 'button', 'aria-label': `Tag ${tag.name || ''} entfernen` }, [icon('xmark')]);
     remove.disabled = busy;
     remove.addEventListener('click', () => {
       saveMarks(state.mailSource, m.id, { tags: (m.tags || []).filter((x) => String(x) !== id) });
@@ -1200,7 +1685,7 @@ function standText(name) {
 
 function setFetchBusy(busy) {
   const btn = $('fetch-btn');
-  btn.textContent = busy ? 'Abruf läuft…' : 'Abrufen';
+  $('fetch-label').textContent = busy ? 'Abruf läuft…' : 'Abrufen';
   btn.classList.toggle('busy', busy);
 }
 
@@ -1254,9 +1739,13 @@ function renderJob(st) {
       : st.kind === 'cleanup' ? 'Aufräumen läuft…'
       : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
     $('job-last').textContent = (st.log || []).at(-1) || '';
+    // Bar: scaled to done/total when the total is known, otherwise an indeterminate sweep.
+    const total = st.progress?.total || 0;
+    $('job-progress').classList.toggle('indeterminate', total === 0);
+    $('job-bar').style.transform = total === 0 ? '' : `scaleX(${Math.min(1, (st.progress.done || 0) / total)})`;
   }
   $('job-error').hidden = st.state !== 'error';
-  $('job-error').textContent = st.state === 'error' ? (st.message || 'Der Auftrag ist fehlgeschlagen.') : '';
+  $('job-error-text').textContent = st.state === 'error' ? (st.message || 'Der Auftrag ist fehlgeschlagen.') : '';
   renderJobWarnings(st);
   renderImportNote(st);
 }
@@ -1272,7 +1761,10 @@ function renderImportNote(st) {
   if (skipped) parts.push(`${skipped} übersprungen`);
   if (r.unreadable) parts.push(`${r.unreadable} nicht lesbar`);
   $('job-note-text').textContent = parts.join(', ');
-  $('job-note-list').replaceChildren(...(r.failed_folders || []).map((f) => el('li', { text: `Ordner nicht lesbar: ${f}` })));
+  const folders = r.failed_folders || [];
+  $('job-note-list').replaceChildren(...folders.map((f) => el('li', { text: `Ordner nicht lesbar: ${f}` })));
+  $('job-note-sum').textContent = `Details (${folders.length})`;
+  $('job-note-details').hidden = folders.length === 0;
 }
 
 // Lines containing "Fehler" are sources that failed although the job itself finished.
@@ -1280,6 +1772,8 @@ function renderJobWarnings(st) {
   const failed = (st.log || []).filter((line) => line.includes('Fehler'));
   $('job-warn').hidden = failed.length === 0 || dismissedJob === st.started;
   $('job-warn-list').replaceChildren(...failed.map((line) => el('li', { text: line })));
+  $('job-warn-sum').textContent = `Details (${failed.length})`;
+  $('job-warn-details').hidden = failed.length === 0;
 }
 
 // Follows the job while the fetch dialog is open: progress of a running fetch, a notice while another job runs.
@@ -1520,7 +2014,7 @@ async function browseTo(path) {
       : 'Wähle ein Mail-Verzeichnis (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.');
   updateLibSubmit();
   const dirItems = data.dirs.length || (data.files || []).length ? data.dirs.map((d) => {
-    const btn = el('button', { type: 'button' }, [el('span', { text: '📁' }), el('span', { text: d.name })]);
+    const btn = el('button', { type: 'button' }, [icon(d.library ? 'archivebox' : 'folder'), el('span', { text: d.name })]);
     if (d.library) {
       btn.classList.add('library');
       btn.append(el('span', { class: 'tag', text: 'Bibliothek' }));
@@ -1528,11 +2022,11 @@ async function browseTo(path) {
       btn.append(el('span', { class: 'tag', text: 'Mail-Export' }));
     }
     btn.addEventListener('click', () => browseTo(`${data.path.replace(/\/$/, '')}/${d.name}`));
-    return el('li', {}, [btn]);
+    return el('li', { class: 'group-row' }, [btn]);
   }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })];
   const fileItems = (data.files || []).map((f) => {
     const btn = el('button', { type: 'button' }, [
-      el('span', { text: '📧' }), el('span', { text: f.name }), el('span', { class: 'size', text: humanSize(f.size) }),
+      icon('envelope'), el('span', { text: f.name }), el('span', { class: 'size', text: humanSize(f.size) }),
     ]);
     btn.addEventListener('click', () => {
       dirState.file = `${data.path.replace(/\/$/, '')}/${f.name}`;
@@ -1541,7 +2035,7 @@ async function browseTo(path) {
       $('import-name').value = f.name.replace(/\.[^.]*$/, '');
       updateLibSubmit();
     });
-    return el('li', {}, [btn]);
+    return el('li', { class: 'group-row' }, [btn]);
   });
   $('dir-list').replaceChildren(...dirItems, ...fileItems);
 }
@@ -1661,6 +2155,17 @@ $('library-cancel').addEventListener('click', () => $('library-dialog').close())
 $('library-dialog').addEventListener('cancel', (e) => {
   if ($('library-dialog').dataset.required) e.preventDefault(); // Esc must not skip the initial choice
 });
+// Static glyph buttons get their SVG icons once at start-up; aria-label and title stay as they are.
+$('rail-add').replaceChildren(icon('plus'));
+$('rail-settings').replaceChildren(icon('gear'));
+$('dir-up').replaceChildren(icon('chevron-up'));
+$('dir-home').replaceChildren(icon('house'));
+$('m-star').replaceChildren(icon('star'));
+$('m-bar-star').replaceChildren(icon('star'));
+showEmpty('none', 'Keine Nachricht ausgewählt'); // start: nothing selected yet
+$('search-icon').replaceChildren(icon('search'));
+// Notice and button icons are named in data-icon attributes (the close buttons carry aria-label).
+for (const slot of document.querySelectorAll('[data-icon]')) slot.replaceChildren(icon(slot.dataset.icon));
 $('dir-up').addEventListener('click', () => { if (dirState.parent) browseTo(dirState.parent); });
 $('dir-home').addEventListener('click', () => browseTo(dirState.home || '~'));
 $('dir-go').addEventListener('click', () => browseTo($('dir-path').value.trim()));
@@ -1681,7 +2186,6 @@ const isTimeout = (err) => err?.name === 'TimeoutError';
 function showSettingsWarn(msg) {
   $('settings-warn').textContent = msg || '';
   $('settings-warn').hidden = !msg;
-  if (msg) $('settings-warn').scrollIntoView({ block: 'nearest' }); // the list may be scrolled down
 }
 
 // All settings work (changes, reloads) runs in one queue, one after another. A stalled request times out, so the queue moves on.
@@ -1866,7 +2370,7 @@ function settingsRow(src, i, count) {
   const url = `/api/sources/${encodeURIComponent(src.id)}`;
   const icon = src.icon || {};
   const kind = icon.type === 'emoji' || icon.type === 'image' ? icon.type : 'auto';
-  const li = el('li', { class: 'src-row', 'data-id': src.id });
+  const li = el('li', { class: 'group-row stack', 'data-id': src.id });
 
   const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', autocomplete: 'off', 'data-action': 'name' });
   name.value = src.name;
@@ -1936,7 +2440,7 @@ function renderSettingsSources() {
   const list = state.sources;
   $('settings-sources').replaceChildren(...(list.length
     ? list.map((src, i) => settingsRow(src, i, list.length))
-    : [el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' })]));
+    : [el('li', { class: 'group-row muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' })]));
   restoreFocus(key);
 }
 
@@ -1980,7 +2484,7 @@ function changeTags(task) {
 
 function settingsTagRow(t) {
   const url = `/api/tags/${encodeURIComponent(t.id)}`;
-  const li = el('li', { class: 'src-row' });
+  const li = el('li', { class: 'group-row stack' });
 
   const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', maxlength: '40', autocomplete: 'off' });
   name.value = t.name || '';
@@ -2018,7 +2522,7 @@ function settingsTagRow(t) {
 function renderSettingsTags() {
   $('settings-tags').replaceChildren(...(state.tags.length
     ? state.tags.map(settingsTagRow)
-    : [el('li', { class: 'muted', text: 'Noch keine Tags.' })]));
+    : [el('li', { class: 'group-row muted', text: 'Noch keine Tags.' })]));
 }
 
 /* ---------- Duplikate aufräumen (Einstellungen) ---------- */
@@ -2218,9 +2722,265 @@ $('settings-library-change').addEventListener('click', () => {
 });
 $('settings-close').addEventListener('click', () => $('settings-dialog').close());
 
+/* ---------- Narrow layout: navigation levels ---------- */
+// Narrow windows show one level at a time: 0 folders and tags, 1 message list, 2 mail.
+// Wide windows keep all columns; there only state.navLevel changes and nothing is transformed.
+const NARROW = matchMedia('(max-width: 900px)');
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)');
+const levelEls = [$('nav-root'), $('list-pane'), $('reader')];
+let navAnim = null; // running spring: { s: {x, v}, target, id }
+let navFade = null; // running fade-in (reduced motion)
+
+function updateBackList() {
+  let text = 'Ordner';
+  if (state.tag === 'star') text = 'Markiert';
+  else if (state.tag) text = state.tags.find((t) => String(t.id) === state.tag)?.name || 'Tag';
+  else if (state.folder) text = state.folders.find((f) => f.key === state.folder)?.name || 'Ordner';
+  $('back-list-text').textContent = text;
+}
+
+// Places the levels for position pos (0..2, may be fractional while a level moves).
+// Level i has d = i - pos: d >= 0 lies to the right, d < 0 is pushed a little to the left and darkened.
+// Levels at least one step away are inert and hidden from assistive tech; the target level never is.
+function applyNav(pos) {
+  state.navPos = pos;
+  // Safety: overflow clip should prevent it, but a horizontal scroll of the app would leave the layout off by that much.
+  if (NARROW.matches) {
+    const app = document.querySelector('.app');
+    if (app.scrollLeft) app.scrollLeft = 0;
+  }
+  levelEls.forEach((node, i) => {
+    if (!NARROW.matches) {
+      node.style.transform = '';
+      node.style.removeProperty('--dim');
+      node.inert = false;
+      node.removeAttribute('aria-hidden');
+      return;
+    }
+    const d = i - pos;
+    node.style.transform = d >= 0
+      ? `translateX(${Math.min(d, 1) * 100}%)`
+      : `translateX(${Math.max(d, -1) * 30}%)`;
+    node.style.setProperty('--dim', String(d < 0 ? Math.min(-d, 1) * 0.12 : 0));
+    const away = Math.abs(d) >= 1 && i !== state.navLevel;
+    node.inert = away;
+    if (away) node.setAttribute('aria-hidden', 'true');
+    else node.removeAttribute('aria-hidden');
+  });
+}
+
+function stopNavSpring() {
+  if (navAnim) cancelAnimationFrame(navAnim.id);
+  navAnim = null;
+}
+
+// Moves navPos to target with a critically damped spring, one step per frame, starting from the current position and velocity (levels/s).
+function runNavSpring(target, velocity) {
+  const anim = { s: { x: state.navPos, v: velocity }, target, id: 0 };
+  let last = 0;
+  navAnim = anim;
+  const frame = (now) => {
+    if (navAnim !== anim) return;
+    let left = last ? Math.min((now - last) / 1000, 1 / 30) : 1 / 60;
+    last = now;
+    while (left > 0) {
+      const h = Math.min(left, 1 / 240);
+      anim.s = springStep(anim.s, target, h);
+      left -= h;
+    }
+    if (Math.abs(anim.s.x - target) < 0.001 && Math.abs(anim.s.v) < 0.01) {
+      navAnim = null;
+      applyNav(target); // exact target
+      return;
+    }
+    applyNav(anim.s.x);
+    anim.id = requestAnimationFrame(frame);
+  };
+  anim.id = requestAnimationFrame(frame);
+}
+
+// Reduced motion: the level is placed at once and only its opacity eases in.
+function fadeInLevel(level) {
+  navFade?.cancel();
+  navFade = levelEls[level].animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease' }) ?? null;
+}
+
+// Moves to a level. velocity is in levels/s (from a swipe); 0 keeps the velocity of a spring that is still running.
+function goTo(level, velocity = 0) {
+  const v0 = navAnim && velocity === 0 ? navAnim.s.v : velocity;
+  stopNavSpring();
+  state.navLevel = level;
+  // The target is not inert before focusLevel() runs (applyNav excludes state.navLevel); the position does not change.
+  if (NARROW.matches) applyNav(state.navPos);
+  if (!NARROW.matches) {
+    state.navPos = level;
+    applyNav(level);
+    return;
+  }
+  if (REDUCED.matches) {
+    state.navPos = level;
+    applyNav(level);
+    fadeInLevel(level);
+    return;
+  }
+  if (v0 === 0 && state.navPos === level) {
+    applyNav(level);
+    return;
+  }
+  runNavSpring(level, v0);
+}
+
+// Focus after a step back goes to the back button of the new level, or to the selected folder or tag on level 0.
+function focusLevel(level) {
+  const target = level === 1
+    ? $('back-folders')
+    : document.querySelector('#folder-list .folder[aria-current="true"], #tag-list .folder[aria-current="true"]');
+  target?.focus({ preventScroll: true });
+}
+
+function goBack() {
+  if (!NARROW.matches || state.navLevel === 0) return;
+  const next = state.navLevel - 1;
+  goTo(next);
+  focusLevel(next);
+}
+
+$('back-folders').addEventListener('click', goBack);
+$('back-list').addEventListener('click', goBack);
+
+// Edge swipe: the strip at the left edge of the list (level 1) or of the reader (level 2) drags that level back.
+// One swipe at a time. pointerdown stops a running spring, so a grab continues from the current navPos.
+const SWIPE_SLOP = 10; // px of movement before a gesture counts as a swipe
+const SWIPE_WINDOW = 100; // ms of history used for the release velocity
+let swipe = null; // { id, strip, at, width, base, x0, y0, moving, ref, off0, L, offset, hist }
+
+function releaseSwipe(g) {
+  if (g.strip.hasPointerCapture(g.id)) g.strip.releasePointerCapture(g.id);
+}
+
+// Finger velocity in px/s over the last SWIPE_WINDOW ms before t; positive = to the right. A pause before release counts as rest.
+function swipeVelocity(hist, t) {
+  const recent = hist.filter((p) => p.t >= t - SWIPE_WINDOW);
+  if (recent.length < 2) return 0;
+  const a = recent[0];
+  const b = recent[recent.length - 1];
+  return b.t > a.t ? (b.x - a.x) / ((b.t - a.t) / 1000) : 0;
+}
+
+// Position in levels for the current gesture. Past the start point further left, the excess is rubberbanded.
+// Without a grab during a spring (L = 0) this is navPos = level - offset/width, with rubberband for offset < 0.
+function swipePos(g) {
+  const travel = g.offset < g.L ? g.L + rubberband(g.offset - g.L, g.width) : g.offset;
+  const pos = g.at - travel / g.width;
+  // Past the starting level (dragging left) only a rubberband of at most 0.08 levels, so the next level never slides in.
+  if (pos > g.at) return g.at + rubberband(pos - g.at, 0.08);
+  return Math.max(g.at - 1, pos);
+}
+
+function cancelSwipe() {
+  if (!swipe) return;
+  releaseSwipe(swipe);
+  swipe = null;
+}
+
+function swipeDown(e) {
+  if (swipe || e.button !== 0 || !NARROW.matches) return;
+  const strip = e.currentTarget;
+  const at = levelEls.indexOf(strip.parentElement);
+  if (state.navLevel !== at) return; // only the level in front can be dragged back
+  stopNavSpring();
+  strip.setPointerCapture(e.pointerId);
+  swipe = {
+    id: e.pointerId, strip, at, width: strip.parentElement.clientWidth, base: state.navPos,
+    x0: e.clientX, y0: e.clientY, moving: false, ref: 0, off0: 0, L: 0, offset: 0,
+    hist: [{ x: e.clientX, t: e.timeStamp }],
+  };
+}
+
+function swipeMove(e) {
+  const g = swipe;
+  if (!g || e.pointerId !== g.id) return;
+  if (!g.moving) {
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (Math.hypot(dx, dy) < SWIPE_SLOP) return;
+    if (Math.abs(dx) <= Math.abs(dy)) { // vertical: not ours, give the pointer back and settle
+      releaseSwipe(g);
+      swipe = null;
+      goTo(g.at);
+      return;
+    }
+    // Start from where the level is now, so the first pixels after the slop do not jump.
+    g.moving = true;
+    g.ref = e.clientX;
+    g.off0 = (g.at - g.base) * g.width;
+    g.L = Math.min(g.off0, 0);
+  }
+  g.offset = g.off0 + (e.clientX - g.ref);
+  g.hist.push({ x: e.clientX, t: e.timeStamp });
+  g.hist = g.hist.filter((p) => p.t >= e.timeStamp - SWIPE_WINDOW);
+  applyNav(swipePos(g));
+}
+
+function swipeUp(e) {
+  const g = swipe;
+  if (!g || e.pointerId !== g.id) return;
+  swipe = null;
+  releaseSwipe(g);
+  if (!g.moving) { goTo(g.at); return; }
+  const v = swipeVelocity(g.hist, e.timeStamp);
+  const back = shouldGoBack(g.offset, v, g.width);
+  const to = back ? g.at - 1 : g.at;
+  // The position falls when the finger moves right, so the spring gets -v/width in levels/s.
+  if (REDUCED.matches) {
+    stopNavSpring();
+    state.navLevel = to;
+    applyNav(to);
+  } else {
+    goTo(to, -v / g.width);
+  }
+  if (back) focusLevel(to);
+}
+
+for (const strip of document.querySelectorAll('.edge-swipe')) {
+  strip.addEventListener('pointerdown', swipeDown);
+  strip.addEventListener('pointermove', swipeMove);
+  strip.addEventListener('pointerup', swipeUp);
+  strip.addEventListener('pointercancel', swipeUp);
+}
+
+// A window that changes width stops the spring, drops any swipe and takes the new layout at once.
+NARROW.addEventListener('change', () => {
+  cancelSwipe();
+  stopNavSpring();
+  navFade?.cancel();
+  navFade = null;
+  applyNav(state.navLevel);
+});
+updateBackList();
+applyNav(state.navLevel);
+
 /* ---------- Events ---------- */
 $('more').addEventListener('click', () => {
   if (!state.loading) loadPage(false);
+});
+
+// Sticky head: the shadow and blur appear only once the list has scrolled.
+const listHead = document.querySelector('#list-pane .head');
+$('list-pane').addEventListener('scroll', () => {
+  listHead.classList.toggle('scrolled', $('list-pane').scrollTop > 0);
+}, { passive: true });
+
+// Typing state: while a field or an open dialog has focus, the selection turns grey and j/k is off.
+function updateTyping() {
+  const field = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  document.body.classList.toggle('typing', field || document.querySelector('dialog[open]') !== null);
+}
+document.addEventListener('focusin', updateTyping);
+document.addEventListener('focusout', updateTyping);
+document.addEventListener('close', updateTyping, true); // dialog close: focus may return to the body
+$('search').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') e.target.blur(); // back to the blue selection
 });
 
 let searchTimer = 0;
@@ -2242,6 +3002,7 @@ for (const b of document.querySelectorAll('#m-toggle button')) {
 }
 
 $('m-star').addEventListener('click', toggleStar);
+$('m-bar-star').addEventListener('click', toggleStar);
 $('m-tag-input').addEventListener('keydown', (e) => {
   if (e.isComposing) return;
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -2269,6 +3030,10 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('dialog[open]')) return; // no list navigation behind a modal dialog
   const t = e.target;
   if (t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  if (e.key === 'Escape') {
+    if (NARROW.matches && state.navLevel > 0) { e.preventDefault(); goBack(); }
+    return;
+  }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
   else if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
   else if (e.key === 's') { e.preventDefault(); toggleStar(); }
