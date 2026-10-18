@@ -14,19 +14,13 @@ from email.parser import Parser
 from email.utils import formataddr, formatdate, getaddresses
 from typing import Protocol
 
+from mailviewer import i18n
 from mailviewer.store import META_SUFFIX, mail_ident
 
 BOUNDARY_PREFIX = "=_mbv_"
 RTF_NAME = "Nachricht.rtf"
 TMP_EML = ".tmp.eml"
 MAIL_CLASS_PREFIXES = ("ipm.note", "ipm.schedule.meeting", "report.ipm.note")
-INSTALL_HINT = (os.environ.get("MAILVIEWER_INSTALL_HINT")
-                or ("Für den Outlook-Import fehlt das Python-Modul pypff. Installieren mit: "
-                    "python3 -m venv .venv && .venv/bin/pip install libpff-python, "
-                    "danach den Viewer neu starten."))
-NO_MAIL_HINT = ("In der Datei wurden keine lesbaren Mails gefunden. Bei einer OST-Datei: "
-                "in Outlook als PST exportieren und diese importieren.")
-NO_MAILBOX_MSG = "Im Postfach wurde kein Posteingang gefunden."
 INBOX_NAMES = ("posteingang", "inbox")  # the mailbox top is the folder that holds one of these
 # MAPI property tags used with pypff record sets
 PR_MESSAGE_CLASS = 0x001A
@@ -335,8 +329,26 @@ def _person(p: Person) -> dict:
     return {"Name": p.name, "Address": p.address}
 
 
+def install_hint() -> i18n.Msg:
+    """How to get pypff, by how the app was installed (Electron sets MAILVIEWER_INSTALL_MODE)."""
+    mode = os.environ.get("MAILVIEWER_INSTALL_MODE")
+    return i18n.msg({"system": "err.pst_missing_system", "bundled": "err.pst_missing_bundled"}.get(mode, "err.pst_missing_pip"))
+
+
 class ImportUnavailable(Exception):
-    """pypff is not installed. str() is INSTALL_HINT."""
+    """pypff is not installed. msg says how to install it."""
+
+    def __init__(self) -> None:
+        self.msg = install_hint()
+        super().__init__(self.msg.text)
+
+
+class MailboxError(OSError):
+    """A mailbox problem the user sees: constructed with a message code and its parameters."""
+
+    def __init__(self, code: str, **params) -> None:
+        self.msg = i18n.msg(code, **params)
+        super().__init__(self.msg.text)
 
 
 def pypff_available() -> bool:
@@ -351,7 +363,7 @@ def _import_pypff():
     try:
         import pypff
     except ImportError as exc:
-        raise ImportUnavailable(INSTALL_HINT) from exc
+        raise ImportUnavailable() from exc
     return pypff
 
 
@@ -375,7 +387,7 @@ class PypffReader:
             raise
         except Exception as exc:
             self._file.close()
-            raise OSError(f"Datei nicht lesbar: {exc}") from exc
+            raise MailboxError("err.file_unreadable", detail=i18n.detail(exc)) from exc
 
     def folders(self) -> Iterator[Folder]:
         """All folders below the mailbox top. Folders outside it (search folders etc.) are left out."""
@@ -389,14 +401,14 @@ class PypffReader:
             count = parent.number_of_sub_folders
         except Exception as exc:
             # the subtree cannot be listed: report it, so it does not vanish silently
-            yield Folder(path + ("(Unterordner)",), 0, lambda: iter(()), error=str(exc) or "unlesbar")
+            yield Folder(path + ("(Unterordner)",), 0, lambda: iter(()), error=str(exc) or "unreadable")
             return
         for index in range(count):
             try:
                 sub = parent.get_sub_folder(index)
                 name = sub.name or "(ohne Name)"
             except Exception as exc:
-                yield Folder(path + (f"#{index}",), 0, lambda: iter(()), error=str(exc) or "unlesbar")
+                yield Folder(path + (f"#{index}",), 0, lambda: iter(()), error=str(exc) or "unreadable")
                 continue
             sub_path = path + (name,)
             yield self._folder(sub, sub_path)
@@ -406,7 +418,7 @@ class PypffReader:
         try:
             count = folder.number_of_sub_messages
         except Exception as exc:
-            return Folder(path, 0, lambda: iter(()), error=str(exc) or "unlesbar")
+            return Folder(path, 0, lambda: iter(()), error=str(exc) or "unreadable")
         return Folder(path, count, lambda: _messages(folder, count))
 
 
@@ -419,7 +431,7 @@ def _mailbox_top(root):
             continue
         if _has_inbox(child):
             return child
-    raise OSError(NO_MAILBOX_MSG)
+    raise MailboxError("err.no_inbox")
 
 
 def _has_inbox(folder) -> bool:
@@ -439,7 +451,7 @@ def _messages(folder, count: int) -> Iterator[OutlookMessage | Unreadable]:
         try:
             entry = _read_message(folder.get_sub_message(index))
         except Exception as exc:
-            entry = Unreadable(str(exc) or "unlesbar")
+            entry = Unreadable(str(exc) or "unreadable")
         yield entry
 
 

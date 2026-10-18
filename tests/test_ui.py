@@ -14,10 +14,13 @@ START = '/* ---------- Pure helpers (tested by test_ui.py) ---------- */'
 END = '/* ---------- End pure helpers ---------- */'
 
 
-def run_js(expr: str):
+I18N_JS = PURE_JS.parent / 'i18n.js'
+
+
+def run_js(expr: str, extra: str = ''):
     src = PURE_JS.read_text(encoding='utf-8')
     block = src[src.index(START):src.index(END) + len(END)]
-    code = f"{block}\nprocess.stdout.write(JSON.stringify({expr}))"
+    code = f"{block}\n{extra}\nprocess.stdout.write(JSON.stringify({expr}))"
     out = subprocess.run(['node', '-e', code], capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
@@ -377,3 +380,61 @@ class ElectronDetectTest(unittest.TestCase):
 
     def test_falls_back_to_user_agent_without_platform(self):
         self.assertEqual(run_electron_detect(self.ELECTRON_MAC, ''), ['electron', 'platform-mac'])
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class FormatMessageTest(unittest.TestCase):
+    def test_counts(self):
+        de = {"one": "{count} Mail", "other": "{count} Mails"}
+        en = {"one": "{count} mail", "other": "{count} mails"}
+        got = run_js(f"[0,1,1234].map(n => formatMessage({json.dumps(de)}, {{count: n}}, 'de', 'de-DE'))")
+        self.assertEqual(got, ["0 Mails", "1 Mail", "1.234 Mails"])
+        got = run_js(f"[0,1,1234].map(n => formatMessage({json.dumps(en)}, {{count: n}}, 'en', 'en-US'))")
+        self.assertEqual(got, ["0 mails", "1 mail", "1,234 mails"])
+
+    def test_user_text_not_expanded(self):
+        self.assertEqual(run_js("formatMessage('Ordner {name}', {name: '{count}'}, 'de', 'de-DE')"), "Ordner {count}")
+
+    def test_unknown_placeholder_stays(self):
+        self.assertEqual(run_js("formatMessage('{x}', {}, 'en', 'en')"), "{x}")
+
+    def test_size(self):
+        self.assertEqual(run_js("formatMessage('{n:size}', {n: 1536}, 'de', 'de-DE')"), "1,5 KB")
+
+    def test_plural_falls_back_to_other(self):
+        self.assertEqual(run_js("formatMessage({other: 'x'}, {count: 1}, 'en', 'en')"), "x")
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class PickLocaleTest(unittest.TestCase):
+    def test_cases(self):
+        self.assertEqual(run_js("pickLocale('en', ['de-DE', 'en-GB'])"), "en-GB")
+        self.assertEqual(run_js("pickLocale('de', ['en-US'])"), "de")
+        self.assertEqual(run_js("pickLocale('de', undefined)"), "de")
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class MessageRuntimeTest(unittest.TestCase):
+    """js/i18n.js without a DOM: window carries the boot data, document is undefined."""
+    BOOT = {"lang": "de", "setting": "de", "languages": [],
+            "messages": {"err.known": "Bekannt {name}"},
+            "fallback": {"err.known": "Known {name}", "err.only_en": "Only English", "ui.error.http": "HTTP {status}"}}
+
+    def js(self, expr):
+        extra = f"globalThis.window = {{I18N_BOOT: {json.dumps(self.BOOT)}}};\n" + I18N_JS.read_text(encoding='utf-8')
+        return run_js(expr, extra)
+
+    def test_msg_text(self):
+        self.assertEqual(self.js("I18N.msgText({text: 'disk full'})"), "disk full")
+        self.assertEqual(self.js("I18N.msgText({code: 'err.known', params: {name: 'A'}, text: 'Known A'})"), "Bekannt A")
+        self.assertEqual(self.js("I18N.msgText({code: 'err.only_en', text: 'X'})"), "Only English")
+        self.assertEqual(self.js("I18N.msgText({code: 'err.nowhere', text: 'English'})"), "English")
+        self.assertEqual(self.js("I18N.msgText(null)"), "")
+
+    def test_nested_message_param(self):
+        self.assertEqual(self.js("t('err.known', {name: {text: 'boom'}})"), "Bekannt boom")
+
+    def test_error_text(self):
+        self.assertEqual(self.js("I18N.errorText({error: 'nope'}, 500)"), "nope")
+        self.assertEqual(self.js("I18N.errorText(null, 502)"), "HTTP 502")
+        self.assertEqual(self.js("I18N.errorText({code: 'err.nowhere', error: 'English'}, 400)"), "English")

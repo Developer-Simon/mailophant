@@ -21,7 +21,8 @@ from email.utils import formataddr
 from unittest import mock
 from urllib.parse import quote, urlencode
 
-from mailviewer import browse, config, exports, mailparse, server, validation
+from mailviewer.i18n import raw
+from mailviewer import browse, config, i18n, exports, mailparse, server, validation
 from mailviewer.cleanup import CleanupResult
 from mailviewer.library import LIBRARY_FILE, Library
 from mailviewer.outlook import ImportReport, Unreadable
@@ -38,6 +39,15 @@ ID_PLAIN = "id1_AAAA"
 ID_ALT = "id2-BBBB=="
 ID_RICH = "id3_CCCC"
 ID_GHOST = "id4=DDDD"  # metadata only, .eml missing
+
+
+def texts(log):
+    """The English text of each job log entry."""
+    return [e["text"] for e in log]
+
+
+def codes(log):
+    return [e.get("code") for e in log]
 
 
 def add_headers(msg, subject, sender, to, cc=()):
@@ -216,7 +226,7 @@ class FolderTests(Base):
 
     def test_unknown_source_400(self):
         status, data = self.get_json("/api/folders?sources=nope")
-        self.assertEqual((status, data), (400, {"error": "unknown source"}))
+        self.assertEqual((status, data["code"]), (400, "err.unknown_source"))
 
 
 class ListTests(Base):
@@ -376,7 +386,7 @@ class SecurityTests(Base):
     def test_unknown_source_400(self):
         status, _, body = self.get("/api/messages?sources=nope")
         self.assertEqual(status, 400)
-        self.assertEqual(json.loads(body), {"error": "unknown source"})
+        self.assertEqual(json.loads(body)["code"], "err.unknown_source")
 
     def test_unknown_route_404(self):
         self.assert_404("/api/unknown")
@@ -575,7 +585,7 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(validation.parse_fetch_body(raw), ("s1", "", PW, "", "123"))
         for bad, reason in ((b"{x", "invalid JSON body"), (b"[]", "body must be a JSON object"),
                             (b'{"password": "p"}', "missing source"),
-                            (b'{"source": "s1", "email": "a@b"}', "missing password"),
+                            (b'{"source": "s1", "email": "a@b"}', "password is required"),
                             (b'{"source": "s1", "password": "p", "email": "../x"}', "invalid email")):
             with self.assertRaisesRegex(ValueError, reason):
                 validation.parse_fetch_body(bad)
@@ -687,10 +697,6 @@ class DedupeTests(unittest.TestCase):
         viewer._link_previous(os.path.join(self.tmp, "gone"), self.new)
         self.assertEqual(viewer.job.status()["log"], [])
 
-    def test_human_size(self):
-        self.assertEqual(server.human_size(1_200_000_000), "1,2 GB")
-        self.assertEqual(server.human_size(561_000), "561,0 KB")
-
 
 class FetchTests(unittest.TestCase):
     """Fetch per proton source through the job slot. Each test gets its own account dir and server,
@@ -771,7 +777,7 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(st["result"], {"source": "s1", "export": NEW})
         self.assertIsNone(st["message"])
         self.assertIsInstance(st["started"], int)
-        self.assertTrue(any(line.startswith(f"login {ACCOUNT} ") for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith(f"login {ACCOUNT} ") for line in texts(st["log"])), st["log"])
         _, msgs = self.get("/api/messages")
         self.assertEqual(msgs["total"], 1)
         self.assertEqual(msgs["messages"][0]["id"], "new_FFFF")
@@ -793,14 +799,14 @@ class FetchTests(unittest.TestCase):
         text = json.dumps(st, ensure_ascii=False)
         for secret in (PW, MB, TOTP):
             self.assertNotIn(secret, text)
-        self.assertTrue(any(line.startswith("login ") and "***" in line for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith("login ") and "***" in line for line in texts(st["log"])), st["log"])
 
     def test_failing_cli_keeps_old_index(self):
         self.serve(mode="fail")
         self.assertEqual(self.post({"password": PW})[0], 202)
         st = self.wait_fetch()
-        self.assertEqual((st["state"], st["message"], st["result"]), ("error", "CLI exited with code 3", None))
-        self.assertIn("login failed", st["log"])
+        self.assertEqual((st["state"], st["message"], st["result"]), ("error", {"text": "CLI exited with code 3"}, None))
+        self.assertIn("login failed", texts(st["log"]))
         self.assertNotIn(PW, json.dumps(st))
         self.assertEqual(self.get("/api/messages")[1]["total"], 4)
         self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
@@ -810,7 +816,7 @@ class FetchTests(unittest.TestCase):
         self.serve(mode="empty")
         self.post({"password": PW})
         st = self.wait_fetch()
-        self.assertEqual((st["state"], st["message"]), ("error", "CLI produced no mail export"))
+        self.assertEqual((st["state"], st["message"]), ("error", {"text": "CLI produced no mail export"}))
         self.assertEqual(self.get("/api/messages")[1]["total"], 4)
 
     def test_second_fetch_while_running_is_409(self):
@@ -844,7 +850,7 @@ class FetchTests(unittest.TestCase):
         new_eml = os.path.join(self.account, NEW, ID_PLAIN + ".eml")
         self.assertTrue(os.path.samefile(old_eml, new_eml))
         self.assertEqual(os.stat(os.path.join(self.account, NEW, "new_FFFF.eml")).st_nlink, 1)
-        self.assertTrue(any(line.startswith("Hardlinks:") for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith("Hardlinks:") for line in texts(st["log"])), st["log"])
         _, msgs = self.get("/api/messages")
         self.assertEqual(sorted(m["id"] for m in msgs["messages"]), sorted([ID_PLAIN, "new_FFFF"]))
 
@@ -854,7 +860,7 @@ class FetchTests(unittest.TestCase):
             self.post({"password": PW})
             st = self.wait_fetch()
         self.assertEqual((st["state"], st["result"]["export"]), ("done", NEW))
-        self.assertTrue(any(line.startswith("Hardlinks") for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith("Hardlinks") for line in texts(st["log"])), st["log"])
         self.assertEqual(self.get("/api/messages")[1]["total"], 1)
 
     def test_bad_origin_or_host_403(self):
@@ -921,7 +927,7 @@ class FetchTests(unittest.TestCase):
         self.post({"password": PW})
         st = self.wait_fetch()
         self.assertEqual((st["state"], st["result"]), ("done", {"source": "s1", "export": NEW}))
-        self.assertTrue(any(line.startswith("login other@example.test ") for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith("login other@example.test ") for line in texts(st["log"])), st["log"])
 
     def test_no_cli_404(self):
         self.serve(cli="/nonexistent/" + CLI_NAME)
@@ -959,7 +965,7 @@ class FetchTests(unittest.TestCase):
         with mock.patch.object(server.Store, "sync_source", flaky):
             self.post({"password": PW})
             st = self.wait_fetch()
-        self.assertEqual((st["state"], st["message"]), ("error", "boom"))
+        self.assertEqual((st["state"], st["message"]), ("error", {"text": "boom"}))
         self.assertEqual(len(calls), 2)  # the new export, then the restore of the previous one
         self.assertFalse(os.path.exists(os.path.join(self.account, NEW)))
         self.assertTrue(os.path.isdir(os.path.join(self.account, OLD)))
@@ -1007,10 +1013,10 @@ class FetchTests(unittest.TestCase):
         self.serve(mode="fail")
         self.post({"password": pw})
         st = self.wait_fetch()
-        text = "\n".join([*st["log"], st["message"] or ""])
+        text = "\n".join([*texts(st["log"]), (st["message"] or {}).get("text", "")])
         for form in (pw, quote(pw, safe=""), json.dumps(pw)[1:-1]):
             self.assertNotIn(form, text)
-        self.assertTrue(any(line.startswith("echo ") and "***" in line for line in st["log"]), st["log"])
+        self.assertTrue(any(line.startswith("echo ") and "***" in line for line in texts(st["log"])), st["log"])
 
     def test_deeply_nested_json_400(self):
         self.serve()
@@ -1019,7 +1025,7 @@ class FetchTests(unittest.TestCase):
         headers = {"Content-Type": "application/json", "Host": f"127.0.0.1:{self.port}",
                    "Origin": f"http://127.0.0.1:{self.port}"}
         self.assertEqual(request(self.port, "POST", "/api/library", raw, headers),
-                         (400, {"error": "invalid JSON body"}))
+                         (400, {"error": "invalid JSON body", "code": "err.invalid_json", "params": {}}))
 
 
 class JobTests(unittest.TestCase):
@@ -1035,13 +1041,13 @@ class JobTests(unittest.TestCase):
         job = server.Job()
 
         def boom(j):
-            j.log("start")
+            j.log(raw("start"))
             raise RuntimeError("kaputt")
 
         self.assertTrue(job.start("index", boom))
         st = self.wait_idle(job)
         self.assertEqual((st["state"], st["kind"], st["message"], st["log"]),
-                         ("error", "index", "kaputt", ["start"]))
+                         ("error", "index", {"text": "kaputt"}, [{"text": "start"}]))
 
     def test_one_slot_while_running(self):
         job = server.Job()
@@ -1135,7 +1141,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(request(srv.server_port, "GET", "/api/config")[1]["configured"], False)
         for path in ("/api/folders", "/api/messages", "/api/message/x"):
             status, data = request(srv.server_port, "GET", path)
-            self.assertEqual((status, data), (409, {"error": "no library chosen"}), path)
+            self.assertEqual((status, data["code"]), (409, "err.no_library"), path)
         self.assertEqual(request(srv.server_port, "GET", "/api/job")[1]["state"], "idle")
 
     def test_create_open_and_remember(self):
@@ -1196,8 +1202,7 @@ class LibraryTests(unittest.TestCase):
         root = os.path.join(self.tmp, "lib")
         status, data = self.post(srv, {"path": root, "create": True, "add_legacy": True})
         self.assertEqual(status, 400)
-        self.assertEqual(data["error"], f"Bisheriges Verzeichnis {gone} nicht gefunden. "
-                                        "Haken entfernen oder Verzeichnis anschließen.")
+        self.assertEqual((data["code"], data["params"]), ("err.legacy_missing", {"path": gone}))
         self.assertFalse(os.path.exists(os.path.join(root, LIBRARY_FILE)))
         status, _ = self.post(srv, {"path": root, "create": True})  # the retry without the legacy source works
         self.assertEqual(status, 200)
@@ -1239,8 +1244,8 @@ class LibraryTests(unittest.TestCase):
             srv = self.serve(lib_root)
             st = wait_job(srv.server_port)
         self.assertEqual(st["state"], "done")
-        self.assertTrue(any(line.startswith("export: Fehler") for line in st["log"]), st["log"])
-        self.assertIn("second: +4 ~0 -0", st["log"])
+        self.assertTrue(any(line.startswith("export: error") for line in texts(st["log"])), st["log"])
+        self.assertIn("second: +4 ~0 -0", texts(st["log"]))
 
     def test_remember_key_absent_keeps_saved_library(self):
         root = os.path.join(self.tmp, "lib")
@@ -1291,7 +1296,7 @@ class LibraryTests(unittest.TestCase):
         srv = self.serve(lib_root)
         st = wait_job(srv.server_port)
         self.assertEqual(st["state"], "done")
-        self.assertIn("second: nicht erreichbar", st["log"])
+        self.assertIn({"source": "second"}, [e["params"] for e in st["log"] if e.get("code") == "log.source_unreachable"])
         viewer = srv.viewer
         self.assertFalse(viewer.available(viewer.library.get("s2")))
         self.assertTrue(viewer.available(viewer.library.get("s1")))
@@ -1325,14 +1330,94 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual((st["state"], st["kind"]), ("done", "index"))
         # 4 mails plus the broken metadata file: store.py counts every metadata file it must parse
         self.assertEqual(st["progress"], {"done": 5, "total": 5})
-        self.assertEqual(st["log"], ["export: +4 ~0 -0"])
+        self.assertEqual(texts(st["log"]), ["export: +4 ~0 -0"])
 
     def test_cli_exits_without_library_json(self):
         empty = os.path.join(self.tmp, "empty")
         os.makedirs(empty)
         with self.assertRaises(SystemExit) as cm:
             server.main([empty, "--config", self.config])
-        self.assertIn("Keine Bibliothek", str(cm.exception.code))
+        self.assertIn("No library", str(cm.exception.code))
+
+
+class ErrorCodeTests(Base):
+    def test_error_carries_code_and_params(self):
+        status, data = self.get_json("/api/folders?sources=nope")
+        self.assertEqual((status, data["code"], data["params"]), (400, "err.unknown_source", {}))
+        self.assertEqual(data["error"], "unknown source")
+
+
+class LanguageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.cfgdir = os.path.join(self.tmp, "cfg")
+        os.makedirs(self.cfgdir)
+        self.config_path = os.path.join(self.cfgdir, "config.json")
+        self.srv = server.make_server(None, 0, self.tmp, config_path=self.config_path)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.addCleanup(lambda: (self.srv.shutdown(), self.srv.server_close()))
+        self.port = self.srv.server_port
+
+    def boot(self, accept=None):
+        status, headers, body = request_raw(self.port, "GET", "/i18n.js", headers={"Accept-Language": accept} if accept else {})
+        text = body.decode("utf-8")
+        self.assertEqual(status, 200)
+        self.assertTrue(text.startswith("window.I18N_BOOT = "))
+        return json.loads(text[len("window.I18N_BOOT = "):].rstrip().rstrip(";")), headers
+
+    def post(self, body, origin=True):
+        headers = {"Content-Type": "application/json"}
+        if origin:
+            headers["Origin"] = f"http://127.0.0.1:{self.port}"
+        return request(self.port, "POST", "/api/language", json.dumps(body).encode("utf-8"), headers)
+
+    def test_boot_script_follows_accept_language(self):
+        boot, headers = self.boot("de-DE,de;q=0.9")
+        self.assertEqual((boot["setting"], boot["lang"]), ("system", "de"))
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertTrue(headers["Content-Type"].startswith("text/javascript"))
+
+    def test_saved_language_wins(self):
+        config.update_config(self.config_path, {"language": "en"})
+        boot, _ = self.boot("de")
+        self.assertEqual((boot["setting"], boot["lang"]), ("en", "en"))
+
+    def test_post_language_persists_and_returns_boot(self):
+        status, data = self.post({"language": "de"})
+        self.assertEqual((status, data["lang"], data["setting"]), (200, "de", "de"))
+        self.assertEqual(config.load_language(self.config_path), "de")
+
+    def test_post_system_removes_key(self):
+        config.update_config(self.config_path, {"language": "de", "library": "/x"})
+        status, data = self.post({"language": "system"})
+        self.assertEqual((status, data["setting"]), (200, "system"))
+        self.assertIsNone(config.load_language(self.config_path))
+        self.assertEqual(config.load_saved(self.config_path), "/x")
+
+    def test_post_invalid_language(self):
+        for body in ({"language": "fr"}, {"language": 1}, {}):
+            status, data = self.post(body)
+            self.assertEqual((status, data["code"]), (400, "err.invalid_language"))
+
+    def test_post_language_needs_origin(self):
+        status, _ = self.post({"language": "de"}, origin=False)
+        self.assertEqual(status, 403)
+        self.assertIsNone(config.load_language(self.config_path))
+
+    def test_corrupt_config_falls_back_to_system(self):
+        with open(self.config_path, "w") as f:
+            f.write("{nope")
+        boot, _ = self.boot("de")
+        self.assertEqual((boot["setting"], boot["lang"]), ("system", "de"))
+
+    def test_unwritable_config(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores permissions")
+        os.chmod(self.cfgdir, 0o500)
+        self.addCleanup(os.chmod, self.cfgdir, 0o700)
+        status, data = self.post({"language": "de"})
+        self.assertEqual((status, data["code"]), (500, "err.config_write"))
 
 
 class SourceAdminTests(unittest.TestCase):
@@ -1396,7 +1481,7 @@ class SourceAdminTests(unittest.TestCase):
         self.assertEqual([(s["id"], s["name"]) for s in data], [("s1", "export"), ("s2", "Archiv")])
         st = wait_job(srv.server_port)
         self.assertEqual((st["state"], st["kind"]), ("done", "index"))
-        self.assertEqual(st["log"], ["Archiv: +4 ~0 -0"])  # only the new source is indexed
+        self.assertEqual(texts(st["log"]), ["Archiv: +4 ~0 -0"])  # only the new source is indexed
         status, data = request(srv.server_port, "GET", "/api/sources")
         self.assertEqual({s["id"]: s["count"] for s in data}, {"s1": 4, "s2": 4})
 
@@ -1461,7 +1546,7 @@ class SourceAdminTests(unittest.TestCase):
         with mock.patch.object(server.Store, "drop_source", side_effect=boom):
             status, data = self.post(srv, "/api/sources/s1/remove", {})
         self.assertEqual(status, 500)
-        self.assertIn("index error", data["error"])
+        self.assertEqual(data["code"], "err.index")
         self.assertEqual([s["id"] for s in request(srv.server_port, "GET", "/api/sources")[1]], ["s1"])
         self.assertEqual([s.id for s in Library.open(root).sources], ["s1"])
         self.assertTrue(os.path.exists(os.path.join(root, "icons", "s1.png")))
@@ -1479,7 +1564,7 @@ class SourceAdminTests(unittest.TestCase):
         ]
         for raw, ctype in cases:
             status, data = self.post(srv, "/api/sources/s1/icon", raw=raw, ctype=ctype)
-            self.assertEqual((status, data), (400, {"error": "invalid image"}), (raw, ctype))
+            self.assertEqual((status, data["code"]), (400, "err.invalid_image"), (raw, ctype))
         self.assertFalse(os.path.exists(os.path.join(root, "icons")))
 
     def test_icon_upload_wrong_host_or_origin_403(self):
@@ -1663,7 +1748,7 @@ class SourceAdminTests(unittest.TestCase):
             status, data = request(srv.server_port, "GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertIs(data["outlook_import"], False)
-        self.assertEqual(data["install_hint"], server.INSTALL_HINT)
+        self.assertEqual(data["install_hint"]["code"], "err.pst_missing_pip")
         with mock.patch("mailviewer.server.pypff_available", return_value=True):
             status, data = request(srv.server_port, "GET", "/api/config")
         self.assertIs(data["outlook_import"], True)
@@ -1829,7 +1914,7 @@ class TagRouteTests(unittest.TestCase):
         t = self.create_tag(srv)
         status, data = self.post(srv, self.marks_path(ID_GHOST), {"starred": True, "tags": [t]})
         self.assertEqual(status, 400)
-        self.assertEqual(data["error"], "Diese Mail kann nicht markiert werden, die .eml-Datei fehlt.")
+        self.assertEqual(data["code"], "err.mail_no_eml")
         status, m = request(srv.server_port, "GET", f"/api/message/s1/{quote(ID_GHOST, safe='')}")
         self.assertEqual((status, m["markable"], m["starred"], m["tags"]), (200, False, False, []))
 
@@ -1860,7 +1945,7 @@ class TagRouteTests(unittest.TestCase):
         srv = self.serve(make_library(self.tmp, self.export))
         for value in ["abc", "-1", "1.5"]:
             status, data = request(srv.server_port, "GET", f"/api/messages?tag={value}")
-            self.assertEqual((status, data), (400, {"error": "invalid tag"}), value)
+            self.assertEqual((status, data["code"]), (400, "err.invalid_tag"), value)
 
     def test_tags_survive_index_rebuild(self):
         root = make_library(self.tmp, self.export)
@@ -1984,7 +2069,7 @@ class ImportTests(unittest.TestCase):
         self.enterContext(mock.patch("mailviewer.server.convert", side_effect=RuntimeError("boom")))
         srv = self.serve()
         st = self.run_import(srv)
-        self.assertEqual((st["state"], st["message"]), ("error", "boom"))
+        self.assertEqual((st["state"], st["message"]), ("error", {"text": "boom"}))
         self.assertEqual(self.library_sources(), [])
         self.assertEqual(os.listdir(self.sources), [])
 
@@ -2013,7 +2098,7 @@ class ImportTests(unittest.TestCase):
         ))
         srv = self.serve()
         st = self.run_import(srv)
-        self.assertEqual((st["state"], st["message"]), ("error", server.NO_MAIL_HINT))
+        self.assertEqual((st["state"], st["message"]["code"]), ("error", "err.no_readable_mails"))
         self.assertEqual(self.library_sources(), [])
         self.assertEqual(os.listdir(self.sources), [])
 
@@ -2021,8 +2106,8 @@ class ImportTests(unittest.TestCase):
         self.use_mail(outlook_message(subject="Geheim"))
         srv = self.serve()
         st = self.run_import(srv, name="Log")
-        self.assertIn("Importiert: 1", st["log"])
-        self.assertFalse(any("Geheim" in line for line in st["log"]))
+        self.assertIn("Imported: 1", texts(st["log"]))
+        self.assertFalse(any("Geheim" in line for line in texts(st["log"])))
 
     def test_import_validation(self):
         txt = os.path.join(self.tmp, "mail.txt")
@@ -2047,7 +2132,7 @@ class ImportTests(unittest.TestCase):
         srv = self.serve()
         with mock.patch("mailviewer.server.pypff_available", return_value=False):
             status, data = self.post(srv, {"path": self.pst, "name": "A"})
-        self.assertEqual((status, data), (503, {"error": server.INSTALL_HINT}))
+        self.assertEqual((status, data["code"]), (503, "err.pst_missing_pip"))
         self.assertEqual(self.library_sources(), [])
 
     def test_import_without_library_is_409(self):
@@ -2298,7 +2383,7 @@ class CleanupRouteTests(unittest.TestCase):
                 mock.patch("mailviewer.server.run_cleanup", side_effect=RuntimeError("boom")):
             self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 202)
             job = wait_job(srv.server_port)
-        self.assertEqual((job["state"], job["message"]), ("error", "boom"))
+        self.assertEqual((job["state"], job["message"]), ("error", {"text": "boom"}))
         self.assertEqual(calls, ["s2"])
 
     def test_cleanup_busy_while_job_runs(self):
@@ -2332,7 +2417,7 @@ class CleanupRouteTests(unittest.TestCase):
         with mock.patch("mailviewer.cleanup.os.stat", side_effect=other_device):
             status, data = self.post(srv, "/api/cleanup", self.cleanup_body("link"))
             self.assertEqual(status, 400)
-            self.assertIn("verschiedenen Dateisystemen", data["error"])
+            self.assertEqual(data["code"], "err.cross_device")
             self.assertEqual(self.cleanup_logs(root), [])
             status, data = self.post(srv, "/api/cleanup", self.cleanup_body("delete"))
             self.assertEqual(status, 202)
@@ -2483,7 +2568,7 @@ class ArchiveRouteTests(ArchiveServerTests):
         _, sources = request(srv.server_port, "GET", "/api/sources")
         self.assertEqual(next(s for s in sources if s["id"] == "s1")["archive_target"], "s2")
         status, data = self.post(srv, "/api/sources/s2", {"archive_target": "s1"})
-        self.assertEqual((status, "Archiv" in data["error"]), (400, True))  # only proton sources archive
+        self.assertEqual((status, data["code"]), (400, "err.archive_proton_only"))  # only proton sources archive
 
 
 class ArchiveTransferTests(ArchiveServerTests):
@@ -2544,7 +2629,7 @@ class ArchiveTransferTests(ArchiveServerTests):
         self.assertEqual(rows[ID_PLAIN]["archived"], ["s2"])
         self.assertEqual(rows[ID_ALT]["archived"], [])
         virtual = [f for f in self.folders(srv, "s1") if f["key"] == "virtual:archived"]
-        self.assertEqual((virtual[0]["count"], virtual[0]["name"]), (1, "Online noch zu löschen"))
+        self.assertEqual((virtual[0]["count"], virtual[0]["name"]), (1, "Still to delete online"))
         only = self.messages(srv, "s1", folder="virtual:archived")
         self.assertEqual([m["id"] for m in only["messages"]], [ID_PLAIN])
 
@@ -2603,11 +2688,11 @@ class ArchiveTransferTests(ArchiveServerTests):
         privat = os.path.join(self.tmp, "library", "sources", "privat")
         os.rename(privat, privat + "_weg")
         status, data = self.transfer(srv, [("s1", ID_PLAIN)])
-        self.assertEqual((status, "nicht erreichbar" in data["error"]), (400, True))
+        self.assertEqual((status, data["code"]), (400, "err.source_unreachable"))
         os.rename(privat + "_weg", privat)
         os.rename(self.account, self.account + "_weg")
         status, data = self.transfer(srv, [("s1", ID_PLAIN)])
-        self.assertEqual((status, "nicht erreichbar" in data["error"]), (400, True))
+        self.assertEqual((status, data["code"]), (400, "err.source_unreachable"))
         os.rename(self.account + "_weg", self.account)
 
         gate = threading.Event()
@@ -2716,7 +2801,7 @@ class AutoArchiveTests(ArchiveServerTests):
         job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
         self.assertEqual(self.exports(), ["mail_20260102T000000"])
-        self.assertTrue(any(line.startswith("archiviert 1,") for line in job["log"]), job["log"])
+        self.assertTrue(any(line.startswith("archived 1,") for line in texts(job["log"])), job["log"])
         self.assertEqual(self.source(srv, "s2")["count"], 1)
 
     def test_already_archived_mail_skipped(self):
@@ -2729,8 +2814,7 @@ class AutoArchiveTests(ArchiveServerTests):
         job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.archived(), before)
         self.assertEqual(self.exports(), ["mail_20260102T000000"])
-        self.assertIn("archiviert 0, übersprungen 1 (schon archiviert 1, Spam/Papierkorb/Entwurf 0), "
-                      "Exporte gelöscht 1", job["log"])
+        self.assertIn("archived 0, skipped 1 (already archived 1, spam/trash/draft 0), exports deleted 1", texts(job["log"]))
 
     def test_no_new_candidates_does_not_recreate_inbox_folder(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])])
@@ -2752,8 +2836,7 @@ class AutoArchiveTests(ArchiveServerTests):
         job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
         self.assertEqual(self.exports(), ["mail_20260102T000000"])
-        self.assertIn("archiviert 1, übersprungen 2 (schon archiviert 0, Spam/Papierkorb/Entwurf 2), "
-                      "Exporte gelöscht 1", job["log"])
+        self.assertIn("archived 1, skipped 2 (already archived 0, spam/trash/draft 2), exports deleted 1", texts(job["log"]))
 
     def test_brake_pauses_and_keeps_everything(self):
         mails = [(f"k{n:03d}", ["0"]) for n in range(100)]
@@ -2763,7 +2846,7 @@ class AutoArchiveTests(ArchiveServerTests):
         self.assertEqual(self.archived(), [])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
         self.assertEqual(self.source(srv, "s1")["auto_paused"], {"missing": 50})
-        self.assertIn("Automatik angehalten: 50 Mails fehlen im neuen Export", job["log"])
+        self.assertIn("Automatic archiving paused: 50 mails are missing from the new export", texts(job["log"]))
 
         self.assertEqual(self.auto(srv, "s1", "discard"), (200, {}))
         self.assertIsNone(self.source(srv, "s1")["auto_paused"])
@@ -2776,7 +2859,7 @@ class AutoArchiveTests(ArchiveServerTests):
         self.assertEqual(self.archived(), sorted((k, [self.unsorted_id(), "5"]) for k, _ in mails[50:]))
         self.assertEqual(self.exports(), ["mail_20260103T000000"])
         self.assertIsNone(self.source(srv, "s1")["auto_paused"])
-        self.assertTrue(any(line.startswith("archiviert 50,") for line in job["log"]), job["log"])
+        self.assertTrue(any(line.startswith("archived 50,") for line in texts(job["log"])), job["log"])
 
     def auto(self, srv, sid, action):
         return self.post(srv, f"/api/sources/{sid}/auto", {"action": action})
@@ -2791,7 +2874,7 @@ class AutoArchiveTests(ArchiveServerTests):
     def test_auto_without_pending_pause_is_400(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])])
         self.target(srv)
-        self.assertEqual(self.auto(srv, "s1", "discard"), (400, {"error": "Es steht keine angehaltene Automatik aus."}))
+        self.assertEqual(self.auto(srv, "s1", "discard"), (400, {"error": "There is no paused automatic run.", "code": "err.no_paused_auto", "params": {}}))
         self.assertEqual(self.auto(srv, "s1", "force")[0], 400)
         self.assertEqual(self.exports(), [OLD])
 
@@ -2829,7 +2912,7 @@ class AutoArchiveTests(ArchiveServerTests):
         os.rename(self.archive_dir, self.archive_dir + "_weg")
         job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
-        self.assertIn("Ziel-Archiv nicht erreichbar, Automatik übersprungen", job["log"])
+        self.assertIn("log.auto_target_unreachable", codes(job["log"]))
 
     def test_copy_failure_keeps_exports(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])])
@@ -2837,7 +2920,7 @@ class AutoArchiveTests(ArchiveServerTests):
         with mock.patch("mailviewer.autoarchive.transfer.transfer", return_value=TransferResult(failed=1)):
             job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
-        self.assertTrue(any("Archivieren fehlgeschlagen" in line for line in job["log"]), job["log"])
+        self.assertTrue("log.archive_failed" in codes(job["log"]), job["log"])
 
     def test_verification_failure_keeps_exports(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])])
@@ -2845,7 +2928,7 @@ class AutoArchiveTests(ArchiveServerTests):
         with mock.patch.object(Store, "idents_in", return_value=set()):
             job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
-        self.assertTrue(any("Prüfung fehlgeschlagen" in line for line in job["log"]), job["log"])
+        self.assertTrue("log.verify_failed" in codes(job["log"]), job["log"])
 
     def test_unreadable_old_mail_keeps_exports(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])], ghost=True)
@@ -2853,7 +2936,7 @@ class AutoArchiveTests(ArchiveServerTests):
         job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
-        self.assertIn("1 Mails in alten Exporten sind unlesbar, alte Exporte bleiben liegen", job["log"])
+        self.assertIn("1 mail in old exports is unreadable, old exports are kept", texts(job["log"]))
 
 
 class CliOverrideTests(unittest.TestCase):

@@ -10,6 +10,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
+from mailviewer.i18n import UserError
 
 LIBRARY_FILE = "library.json"
 LIBRARY_VERSION = 1
@@ -23,8 +24,8 @@ ID_RE = re.compile(r"^s([1-9]\d*)$")
 Json = dict[str, Any]
 
 
-class LibraryError(ValueError):
-    """The message is shown to the user as is."""
+class LibraryError(UserError):
+    """Shown to the user: constructed with a message code from static/i18n and its parameters."""
 
 
 @dataclass
@@ -62,7 +63,7 @@ def detect_kind(path: str) -> str:
         return "maildir"
     if _has_mail_dir(path):
         return "proton"
-    raise LibraryError(f"Kein Mail-Export gefunden in {path}.")
+    raise LibraryError("err.no_mail_export", path=path)
 
 
 def is_archive(src: Source) -> bool:
@@ -75,29 +76,29 @@ def is_library(path: str) -> bool:
 
 def _check_icon(icon: Any) -> Json:
     if not isinstance(icon, dict):
-        raise LibraryError("Ungültiges Icon.")
+        raise LibraryError("err.invalid_icon")
     kind = icon.get("type")
     if kind == "auto":
         return {"type": "auto"}
     if kind == "emoji":
         value = icon.get("value")
         if not isinstance(value, str) or not value.strip() or len(value) > MAX_EMOJI_LEN:
-            raise LibraryError(f"Das Emoji muss 1 bis {MAX_EMOJI_LEN} Zeichen lang sein.")
+            raise LibraryError("err.emoji_length", max=MAX_EMOJI_LEN)
         return {"type": "emoji", "value": value}
     if kind == "image":
         file = icon.get("file")
         if not isinstance(file, str) or not file or ".." in file or "/" in file or "\\" in file:
-            raise LibraryError("Ungültiger Dateiname für das Icon.")
+            raise LibraryError("err.invalid_icon_file")
         return {"type": "image", "file": file}
-    raise LibraryError("Unbekannter Icon-Typ.")
+    raise LibraryError("err.unknown_icon_type")
 
 
 def _check_settings(settings: Settings) -> Settings:
     for value in asdict(settings).values():
         if not isinstance(value, str):
-            raise LibraryError("Einstellungen müssen Text sein.")
+            raise LibraryError("err.settings_text")
     if settings.view not in VIEWS:
-        raise LibraryError(f"Ansicht muss {' oder '.join(VIEWS)} sein.")
+        raise LibraryError("err.invalid_view", views=", ".join(VIEWS))
     return settings
 
 
@@ -129,14 +130,14 @@ class Library:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except FileNotFoundError:
-            raise LibraryError(f"Keine Bibliothek in {root}.") from None
+            raise LibraryError("err.no_library_in", root=root) from None
         except (OSError, ValueError) as exc:
-            raise LibraryError(f"{path} ist beschädigt und wird nicht überschrieben.") from exc
+            raise LibraryError("err.library_corrupt", path=path) from exc
         version = data.get("version") if isinstance(data, dict) else None
         if type(version) is not int or version > LIBRARY_VERSION:
-            raise LibraryError(f"{path} stammt aus einer neueren Version und wird nicht geöffnet.")
+            raise LibraryError("err.library_newer", path=path)
         if version != LIBRARY_VERSION:
-            raise LibraryError(f"{path} hat eine unbekannte Version.")
+            raise LibraryError("err.library_version", path=path)
         try:
             sources = [_source_from(item) for item in data["sources"]]
             settings = _check_settings(Settings(**data["settings"]))
@@ -151,15 +152,15 @@ class Library:
                 if not match or int(match.group(1)) >= next_id:
                     raise ValueError("bad id")
         except (KeyError, TypeError, ValueError) as exc:
-            raise LibraryError(f"{path} ist beschädigt und wird nicht überschrieben.") from exc
+            raise LibraryError("err.library_corrupt", path=path) from exc
         return cls(root, sources, settings, next_id)
 
     @classmethod
     def create(cls, root: str) -> Library:
         if os.path.lexists(os.path.join(root, LIBRARY_FILE)):
-            raise LibraryError(f"In {root} gibt es schon eine Bibliothek.")
+            raise LibraryError("err.library_exists", root=root)
         if os.path.exists(root) and not os.path.isdir(root):
-            raise LibraryError(f"{root} ist kein Ordner.")
+            raise LibraryError("err.not_a_folder", root=root)
         lib = cls(root, [], Settings(), next_id=1)
         lib.save()
         return lib
@@ -203,13 +204,13 @@ class Library:
         elif kind in ARCHIVE_KINDS:
             # Outlook files and archives are kept as maildirs, so only a maildir can be added as one.
             if detect_kind(path) != "maildir":
-                raise LibraryError(f"Kein Maildir-Export in {path}.")
+                raise LibraryError("err.no_maildir_export", path=path)
         else:
-            raise LibraryError(f"Unbekannte Quellenart: {kind}")
+            raise LibraryError("err.unknown_source_kind", kind=kind)
         real = os.path.realpath(path)
         # Realpath comparison catches symlinks and "a/../a" spellings of the same folder.
         if any(os.path.realpath(self.abspath(s)) == real for s in self.sources):
-            raise LibraryError("Diese Quelle ist schon in der Bibliothek.")
+            raise LibraryError("err.source_exists")
         root_real = os.path.realpath(self.root)
         if os.path.commonpath([root_real, real]) == root_real:
             stored = os.path.relpath(real, root_real)
@@ -227,9 +228,9 @@ class Library:
                       archive_target: str | None = None) -> Source:
         src = self.get(source_id)
         if name is not None and (not isinstance(name, str) or not name.strip()):
-            raise LibraryError("Der Name darf nicht leer sein.")
+            raise LibraryError("err.name_empty")
         if hidden is not None and not isinstance(hidden, bool):
-            raise LibraryError("Ausblenden muss an oder aus sein.")
+            raise LibraryError("err.hidden_bool")
         if archive_target is not None:
             self._check_archive_target(src, archive_target)
         new_icon = _check_icon(icon) if icon is not None else None
@@ -250,17 +251,17 @@ class Library:
 
     def _check_archive_target(self, src: Source, target: str) -> None:
         if not isinstance(target, str):
-            raise LibraryError("Ungültiges Archiv-Ziel.")
+            raise LibraryError("err.invalid_archive_target")
         if target == "":
             return
         if src.kind != "proton":
-            raise LibraryError("Nur Proton-Quellen können in ein Archiv verschoben werden.")
+            raise LibraryError("err.archive_proton_only")
         try:
             archive = self.get(target)
         except KeyError:
-            raise LibraryError("Das Archiv-Ziel gibt es nicht.") from None
+            raise LibraryError("err.archive_target_missing") from None
         if not is_archive(archive):
-            raise LibraryError("Das Archiv-Ziel ist kein Archiv.")
+            raise LibraryError("err.archive_target_not_archive")
 
     def move_source(self, source_id: str, position: int) -> None:
         src = self.get(source_id)
@@ -291,7 +292,7 @@ class Library:
     def update_settings(self, **fields: str) -> Settings:
         unknown = set(fields) - set(asdict(self.settings))
         if unknown:
-            raise LibraryError(f"Unbekannte Einstellung: {', '.join(sorted(unknown))}")
+            raise LibraryError("err.unknown_setting", names=", ".join(sorted(unknown)))
         settings = _check_settings(replace(self.settings, **fields))
         self.save(settings=settings)
         self.settings = settings

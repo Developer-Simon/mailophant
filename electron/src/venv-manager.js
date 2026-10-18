@@ -1,5 +1,6 @@
 'use strict';
 
+const { t } = require('./i18n');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const path = require('node:path');
@@ -56,7 +57,7 @@ async function exists(fs, p) {
  * @returns {Promise<boolean>} ob pypff installiert ist
  */
 async function installPypff(run, python, onProgress) {
-  onProgress?.('Installiere PST-Unterstützung …');
+  onProgress?.(t('electron.loading.install_pst'));
   try {
     await run(python, ['-m', 'pip', 'install', '--only-binary=:all:', PYPFF_PACKAGE], {
       timeout: PIP_TIMEOUT_MS,
@@ -65,7 +66,7 @@ async function installPypff(run, python, onProgress) {
   } catch {
     // weiter mit dem Quellbuild
   }
-  onProgress?.('Baue PST-Unterstützung aus den Quellen … (kann einige Minuten dauern)');
+  onProgress?.(t('electron.loading.build_pst'));
   try {
     await run(python, ['-m', 'pip', 'install', PYPFF_PACKAGE], { timeout: PIP_TIMEOUT_MS });
     return true;
@@ -112,13 +113,13 @@ async function ensureVenv({
     return { python, pypff, rebuilt: false };
   }
 
-  onProgress?.('Lege Python-Umgebung an …');
+  onProgress?.(t('electron.loading.create_venv'));
   await fs.rm(venvDir, { recursive: true, force: true });
   await run(probe.cmd[0], [...probe.cmd.slice(1), '-m', 'venv', venvDir], {
     timeout: VENV_TIMEOUT_MS,
   });
   if (!(await exists(fs, python))) {
-    throw new Error(`venv ohne Interpreter angelegt: ${python}`);
+    throw new Error(t('electron.venv.no_interpreter', { python }));
   }
 
   // complete bleibt false, bis pypff entschieden ist; so erkennt ein Abbruch den Zustand.

@@ -25,6 +25,10 @@ def load_saved(config_path: str) -> str | None:
     return _config_value(config_path, "library")
 
 
+def load_language(config_path: str) -> str | None:
+    return _config_value(config_path, "language")
+
+
 def load_legacy(config_path: str) -> str | None:
     """Export dir of the viewer before libraries existed; offered once, then added as a source."""
     return _config_value(config_path, "export_dir")

@@ -34,13 +34,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from mailviewer import autoarchive
+from mailviewer import autoarchive, i18n
+from mailviewer.i18n import Msg, UserError, detail, error_body, msg, raw
 from mailviewer.archive import (
     ALL_MAIL, check_name, create_folder, delete_folder, ensure_folder, is_system_folder, move_folder, rename_folder,
     write_empty_archive,
 )
 from mailviewer.browse import browse
-from mailviewer.config import default_config_path, load_legacy, load_saved, update_config
+from mailviewer.config import default_config_path, load_language, load_legacy, load_saved, update_config
 from mailviewer.exports import (
     account_dir_of, account_email, cli_env, dedupe_with_previous, find_cli, is_executable, mail_dirs, newest_fetched,
     redact, resolve_mail_dir,
@@ -53,12 +54,11 @@ from mailviewer.validation import (
 from mailviewer.cleanup import ACTIONS, check_dirs, plan_cleanup, remove_quiet, run_cleanup
 from mailviewer.library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_archive
 from mailviewer.outlook import (
-    INSTALL_HINT,
-    NO_MAIL_HINT,
     ImportReport,
     ImportUnavailable,
     convert,
     open_reader,
+    install_hint,
     pypff_available,
 )
 from mailviewer.store import VIRTUAL_ARCHIVED, Store, addr, read_labels
@@ -66,7 +66,7 @@ from mailviewer.tags import TagStore, TagStoreError
 from mailviewer.transfer import Item, transfer
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
-STATIC_RE = re.compile(r"^/static/((?:css|js)/[a-z-]+\.(css|js))$")
+STATIC_RE = re.compile(r"^/static/((?:css|js)/[a-z0-9-]+\.(css|js))$")
 STATIC_TYPES = {"css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8"}
 MAX_LIMIT = 200
 MSG_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)$")
@@ -81,7 +81,7 @@ ICON_CTYPES = {ext: ctype for ctype, ext in ICON_TYPES.items()}
 ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; sandbox"
 SOURCE_FIELDS = ("name", "icon", "hidden", "position", "archive_target")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
-POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags",
+POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/language", "/api/tags",
                "/api/cleanup", "/api/archives", "/api/transfer")
 ARCHIVE_FOLDERS_RE = re.compile(r"^/api/archives/([^/]+)/folders$")
 ARCHIVE_FOLDER_OPS = ("create", "rename", "move", "delete")
@@ -162,49 +162,6 @@ def free_name(parent: str, name: str) -> str:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def human_size(n: int) -> str:
-    """Byte count as a short German label with 1000-based units, e.g. "1,2 GB"."""
-    size = float(n)
-    for unit in ("B", "KB", "MB"):
-        if size < 1000:
-            return f"{size:.1f} {unit}".replace(".", ",")
-        size /= 1000
-    return f"{size:.1f} GB".replace(".", ",")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def tag_list(store: Store, tags: TagStore, source_ids: list[str]) -> Json:
     """The star count and every tag with its message count, for the given sources."""
     counts = store.tag_counts(source_ids, dedupe=len(source_ids) > 1)
@@ -225,7 +182,7 @@ def import_path(path: str) -> str:
     extension and the file test apply to the file that is actually read. ValueError otherwise."""
     real = os.path.realpath(os.path.expanduser(path))
     if not real.lower().endswith(IMPORT_EXTENSIONS) or not os.path.isfile(real):
-        raise ValueError("not an existing .pst or .ost file")
+        raise UserError("err.not_pst")
     return real
 
 
@@ -244,24 +201,38 @@ def remove_tree(path: str) -> None:
         remove_quiet(path)
 
 
-def import_log_lines(report: ImportReport) -> list[str]:
+def import_log_lines(report: ImportReport) -> list[Msg]:
     """Counts and folder paths only: no subject, address or other mail content is logged."""
-    lines = [f"Importiert: {report.imported}", f"Zusammengeführt: {report.merged}"]
+    lines = [msg("log.imported", count=report.imported), msg("log.merged", count=report.merged)]
     if report.skipped:
-        lines.append("Übersprungen: " + ", ".join(f"{cls} {n}" for cls, n in report.skipped.items()))
+        lines.append(msg("log.skipped_classes", list=", ".join(f"{cls} {n}" for cls, n in report.skipped.items())))
     if report.unreadable:
-        lines.append(f"Nicht lesbar: {report.unreadable}")
+        lines.append(msg("log.unreadable", count=report.unreadable))
     if report.failed_folders:
-        lines.append("Ordner nicht lesbar: " + ", ".join(report.failed_folders))
+        lines.append(msg("log.folders_unreadable", list=", ".join(report.failed_folders)))
     return lines
 
 
+def _redacted(exc: BaseException, secrets: list[str]) -> Msg:
+    """The error text without secrets the message may echo."""
+    return raw(redact(str(exc) or type(exc).__name__, secrets))
+
+
 class Busy(Exception):
-    """The job slot is taken: the library cannot be switched or a second job started meanwhile."""
+    """The job slot is taken: the library cannot be switched or a second job started meanwhile.
+    Constructed with a message code (err.busy_index, err.busy_job, err.no_library)."""
+
+    def __init__(self, code: str) -> None:
+        self.msg = msg(code)
+        super().__init__(self.msg.text)
 
 
 class FetchUnavailable(Exception):
     """No export CLI is known for the source."""
+
+    def __init__(self) -> None:
+        self.msg = msg("err.fetch_unavailable")
+        super().__init__(self.msg.text)
 
 
 class Job:
@@ -286,14 +257,14 @@ class Job:
         try:
             target(self)
         except Exception as exc:  # reported in the status, never raised into the thread
-            self._finish("error", str(exc) or type(exc).__name__)
+            self._finish("error", detail(exc))
         else:
             self._finish("done")
 
-    def log(self, line: str) -> None:
+    def log(self, entry: Msg) -> None:
         with self._lock:
             log = self._state["log"]
-            log.append(line)
+            log.append(entry.to_json())
             del log[:-LOG_LINES]
 
     def progress(self, done: int, total: int) -> None:
@@ -312,9 +283,9 @@ class Job:
         with self._lock:
             self._state["result"] = result
 
-    def _finish(self, state: str, message: str | None = None) -> None:
+    def _finish(self, state: str, message: Msg | None = None) -> None:
         with self._lock:
-            self._state.update(state=state, message=message)
+            self._state.update(state=state, message=message.to_json() if message else None)
 
 
 def _open_stores(lib: Library) -> tuple[Store, TagStore]:
@@ -323,7 +294,7 @@ def _open_stores(lib: Library) -> tuple[Store, TagStore]:
     try:
         tags = TagStore(os.path.join(lib.root, TAGS_DB))
     except (TagStoreError, sqlite3.Error) as exc:
-        raise LibraryError(f"Die Tag-Datenbank kann nicht geöffnet werden: {exc}") from exc
+        raise LibraryError("err.tag_db_open", detail=detail(exc)) from exc
     try:
         store = Store(os.path.join(lib.root, INDEX_DB), os.path.join(lib.root, TAGS_DB))
         try:
@@ -336,7 +307,7 @@ def _open_stores(lib: Library) -> tuple[Store, TagStore]:
             store.close()  # this thread's connection; readers reconnect lazily
     except sqlite3.Error as exc:
         tags.close()
-        raise LibraryError(f"Der Index kann nicht geöffnet werden: {exc}") from exc
+        raise LibraryError("err.index_open", detail=detail(exc)) from exc
     return store, tags
 
 
@@ -355,7 +326,7 @@ class Viewer:
         self.explicit_cli = explicit_cli
         self.config_path = config_path
         self.saved: str | None = load_saved(config_path) if config_path else None
-        self.saved_error: str | None = None
+        self.saved_error: i18n.Msg | None = None
         self.library: Library | None = None
         self.store: Store | None = None
         self.tags: TagStore | None = None
@@ -373,14 +344,13 @@ class Viewer:
         root = os.path.abspath(os.path.expanduser(path))
         with self._lock:
             if self.job.status()["state"] == "running":
-                raise Busy("index job running")
+                raise Busy("err.busy_index")
             legacy = load_legacy(self.config_path) if add_legacy and self.config_path else None
             if legacy:  # checked before anything is written, so a failed request leaves no library.json
                 try:
                     detect_kind(os.path.abspath(os.path.expanduser(legacy)))
                 except LibraryError as exc:
-                    raise LibraryError(f"Bisheriges Verzeichnis {legacy} nicht gefunden. "
-                                       "Haken entfernen oder Verzeichnis anschließen.") from exc
+                    raise LibraryError("err.legacy_missing", path=legacy) from exc
             lib = Library.create(root) if create else Library.open(root)
             if legacy and not _has_path(lib, legacy):
                 lib.add_source(legacy)
@@ -394,8 +364,7 @@ class Viewer:
                 try:
                     update_config(self.config_path, updates)
                 except OSError as exc:
-                    raise LibraryError(f"Die Auswahl kann nicht gespeichert werden: "
-                                       f"{exc.strerror or exc}") from exc
+                    raise LibraryError("err.config_save", detail=raw(str(exc.strerror or exc))) from exc
             if remember is not None:
                 self.saved = root if remember else None
                 self.saved_error = None
@@ -406,9 +375,9 @@ class Viewer:
         """Library and store for an admin change; the caller holds _lock. Busy while a job runs if idle."""
         lib, store = self.library, self.store
         if lib is None or store is None:
-            raise Busy("no library chosen")
+            raise Busy("err.no_library")
         if idle and self.job.running():
-            raise Busy("index job running")
+            raise Busy("err.busy_index")
         return lib, store
 
     def add_source(self, path: str, name: str) -> Source:
@@ -499,14 +468,14 @@ class Viewer:
             try:
                 for src in sources:
                     if not self.available(src):
-                        job.log(f"{src.name}: nicht erreichbar")
+                        job.log(msg("log.source_unreachable", source=src.name))
                         continue
                     try:  # one broken source must not stop the others
                         result = store.sync_source(src.id, self.mail_dir_for(src), job.progress)
                     except (OSError, ValueError, sqlite3.Error) as exc:
-                        job.log(f"{src.name}: Fehler: {exc}")
+                        job.log(msg("log.source_failed", source=src.name, detail=detail(exc)))
                         continue
-                    job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+                    job.log(msg("log.source_synced", source=src.name, added=result.added, updated=result.updated, removed=result.removed))
             finally:
                 store.close()  # the job thread's connection would otherwise be left unclosed
 
@@ -519,20 +488,20 @@ class Viewer:
         with self._lock:
             lib, store = self.library, self.store
             if lib is None or store is None:
-                raise Busy("no library chosen")
+                raise Busy("err.no_library")
             try:
                 src = lib.get(source_id)
             except KeyError as exc:
-                raise ValueError("unknown source") from exc
+                raise UserError("err.unknown_source") from exc
             if src.kind != "proton":
-                raise ValueError("not a proton source")
+                raise UserError("err.not_proton")
             cli = self.cli_for(src)
             if cli is None:
-                raise FetchUnavailable("fetch not available")
+                raise FetchUnavailable()
             account = account_dir_of(lib.abspath(src))
             email = email or lib.settings.proton_email or account_email(account)
             if not email:
-                raise ValueError("missing email")
+                raise UserError("err.missing_email")
             check_email(email)
 
             def fetch(job: Job) -> None:
@@ -542,7 +511,7 @@ class Viewer:
                     store.close()  # the job thread's connection, as in start_index
 
             if not self.job.start("fetch", fetch):
-                raise Busy("job running")
+                raise Busy("err.busy_job")
 
     def start_import(self, path: str, name: str) -> None:
         """Import a PST or OST file as a new source of kind outlook, as the job. The file is only read.
@@ -551,15 +520,15 @@ class Viewer:
         real = import_path(path)
         name = check_text(name, "name").strip()
         if not name:
-            raise ValueError("missing name")
+            raise UserError("err.missing_name")
         with self._lock:
             lib, store = self.library, self.store
             if lib is None or store is None:
-                raise Busy("no library chosen")
+                raise Busy("err.no_library")
             if self.job.running():
-                raise Busy("job running")
+                raise Busy("err.busy_job")
             if not pypff_available():
-                raise ImportUnavailable(INSTALL_HINT)
+                raise ImportUnavailable()
             sources = os.path.join(lib.root, SOURCES_DIR)
             os.makedirs(sources, exist_ok=True)
             for entry in os.listdir(sources):  # left behind by an interrupted import; no job runs now
@@ -573,7 +542,7 @@ class Viewer:
                     store.close()  # the job thread's connection, as in start_index
 
             if not self.job.start("import", import_job):
-                raise Busy("job running")
+                raise Busy("err.busy_job")
 
     def _import(self, job: Job, store: Store, lib: Library, sources: str, path: str, name: str) -> None:
         """Convert the file into a temp dir below sources, move it to a free sources/<slug> and add it as
@@ -589,7 +558,7 @@ class Viewer:
             for line in import_log_lines(report):
                 job.log(line)
             if report.imported == 0:
-                raise RuntimeError(NO_MAIL_HINT)
+                raise UserError("err.no_readable_mails")
             final = os.path.join(sources, free_name(sources, import_slug(name)))
             os.rename(tmp, final)
             tmp = None  # moved; final is removed below if the source is not added
@@ -599,9 +568,9 @@ class Viewer:
             try:
                 result = store.sync_source(src.id, final, job.progress)
             except Exception as exc:  # the files are complete; the next index run picks them up
-                job.log(f"{src.name}: Fehler: {exc}")
+                job.log(msg("log.source_failed", source=src.name, detail=detail(exc)))
             else:
-                job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+                job.log(msg("log.source_synced", source=src.name, added=result.added, updated=result.updated, removed=result.removed))
             job.set_result({"source": src.id, **asdict(report)})
         finally:
             if reader is not None:
@@ -644,14 +613,14 @@ class Viewer:
             def reindex(job: Job) -> None:
                 for src in touched:
                     if not self.available(src):
-                        job.log(f"{src.name}: nicht erreichbar")
+                        job.log(msg("log.source_unreachable", source=src.name))
                         continue
                     try:
                         result = store.sync_source(src.id, self.mail_dir_for(src), job.progress)
                     except (OSError, ValueError, sqlite3.Error) as exc:
-                        job.log(f"{src.name}: Fehler: {exc}")
+                        job.log(msg("log.source_failed", source=src.name, detail=detail(exc)))
                         continue
-                    job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+                    job.log(msg("log.source_synced", source=src.name, added=result.added, updated=result.updated, removed=result.removed))
 
             def archive_job(job: Job) -> None:
                 try:
@@ -663,7 +632,7 @@ class Viewer:
                         store.close()  # the job thread's connection, as in start_index
 
             if not self.job.start("archive", archive_job):
-                raise Busy("job running")
+                raise Busy("err.busy_job")
 
     def start_archive_folders(self, source_id: str, op: str, name: str | None, parent: str | None,
                               folder_id: str | None, index: int | None) -> None:
@@ -674,18 +643,18 @@ class Viewer:
         def prepare(lib: Library) -> tuple[list[Source], Callable[[Job], None]]:
             src = lib.get(source_id)
             if not is_archive(src):
-                raise ValueError(f"Die Quelle {src.name} ist kein Archiv.")
+                raise UserError("err.source_not_archive", source=src.name)
             if not self.available(src):
-                raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+                raise UserError("err.source_unreachable", source=src.name)
             mail_dir = self.mail_dir_for(src)
             labels = {x["ID"] for x in read_labels(mail_dir)}
             if parent is not None and parent not in labels:
-                raise ValueError("Übergeordneter Ordner nicht gefunden.")
+                raise UserError("err.parent_not_found")
             if op in ("rename", "move", "delete"):
                 if folder_id not in labels:
-                    raise ValueError("Ordner nicht gefunden.")
+                    raise UserError("err.folder_not_found")
                 if is_system_folder(folder_id):
-                    raise ValueError("Systemordner können nicht geändert werden.")
+                    raise UserError("err.system_folder_readonly")
 
             def work(job: Job) -> None:
                 if op == "create":
@@ -695,7 +664,7 @@ class Viewer:
                 elif op == "move":
                     move_folder(mail_dir, folder_id, parent, len(labels) if index is None else index)
                 else:
-                    job.log(f"{src.name}: {delete_folder(mail_dir, folder_id, job.log)} Mails aktualisiert")
+                    job.log(msg("log.folder_deleted", source=src.name, count=delete_folder(mail_dir, folder_id, job.log)))
 
             return [src], work
 
@@ -707,33 +676,33 @@ class Viewer:
         must be indexed; the destination and the origins must be available. A new folder (name, parent) is created
         in the job before the transfer. KeyError for unknown sources (404), ValueError (400), Busy."""
         if folder is not None and new_folder is not None:
-            raise ValueError("Ordner und neuer Ordner schließen sich aus.")
+            raise UserError("err.folder_exclusive")
 
         def prepare(lib: Library) -> tuple[list[Source], Callable[[Job], None]]:
             store = self.store  # set: _admin_library checked it under _lock
             dest = lib.get(archive)
             if not is_archive(dest):
-                raise ValueError(f"Die Quelle {dest.name} ist kein Archiv.")
+                raise UserError("err.source_not_archive", source=dest.name)
             if not self.available(dest):
-                raise ValueError(f"Die Quelle {dest.name} ist nicht erreichbar.")
+                raise UserError("err.source_unreachable", source=dest.name)
             dest_dir = self.mail_dir_for(dest)
             labels = {x["ID"] for x in read_labels(dest_dir)}
             if folder is not None and folder not in labels:
-                raise ValueError("Ordner nicht gefunden.")
+                raise UserError("err.folder_not_found")
             if new_folder is not None:
                 name, parent = new_folder
                 check_name(name)
                 if parent is not None and (parent not in labels or parent == ALL_MAIL):
-                    raise ValueError("Übergeordneter Ordner nicht gefunden.")
+                    raise UserError("err.parent_not_found")
             sources = {sid: lib.get(sid) for sid in dict.fromkeys(sid for sid, _ in items)}
             for src in sources.values():
                 if not self.available(src):
-                    raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+                    raise UserError("err.source_unreachable", source=src.name)
             plan = []
             for sid, mid in dict.fromkeys(items):
                 ident = store.ident(sid, mid)
                 if ident is None:
-                    raise ValueError("Eine Mail ist nicht im Index.")
+                    raise UserError("err.mail_not_indexed")
                 src = sources[sid]
                 mode = "refile" if sid == dest.id else "move" if is_archive(src) else "copy"
                 plan.append(Item(self.mail_dir_for(src), mid, ident, mode))
@@ -745,9 +714,9 @@ class Viewer:
                     folder_id = create_folder(dest_dir, name, parent)["ID"]
                 result = transfer(plan, dest_dir, folder_id, job.log, job.progress)
                 job.set_result(asdict(result))
-                job.log(f"{dest.name}: {result.copied} kopiert, {result.reused} schon vorhanden, "
-                        f"{result.refiled} umsortiert, {result.deleted_origin} aus dem Ursprung entfernt, "
-                        f"{result.skipped} übersprungen, {result.failed} fehlgeschlagen")
+                job.log(msg("log.transfer_summary", source=dest.name, copied=result.copied, reused=result.reused,
+                            refiled=result.refiled, deleted=result.deleted_origin, skipped=result.skipped,
+                            failed=result.failed))
 
             return touched, work
 
@@ -757,7 +726,7 @@ class Viewer:
         """The source whose automatic archive is paused. KeyError for unknown ids, ValueError if none is pending."""
         src = lib.get(source_id)
         if src.kind != "proton" or source_id not in self.auto_paused:
-            raise ValueError("Es steht keine angehaltene Automatik aus.")
+            raise UserError("err.no_paused_auto")
         return src
 
     def start_auto(self, source_id: str, action: str) -> None:
@@ -774,13 +743,13 @@ class Viewer:
             store = self.store  # set: _admin_library checked it under _lock
             src = self._paused_source(lib, source_id)
             if not src.archive_target:
-                raise ValueError("Ziel-Archiv nicht erreichbar.")
+                raise UserError("err.target_archive_unreachable")
             try:
                 target = lib.get(src.archive_target)
             except KeyError as exc:
-                raise ValueError("Ziel-Archiv nicht erreichbar.") from exc
+                raise UserError("err.target_archive_unreachable") from exc
             if not is_archive(target) or not self.available(target):
-                raise ValueError("Ziel-Archiv nicht erreichbar.")
+                raise UserError("err.target_archive_unreachable")
             newest = self.mail_dir_for(src)
 
             def work(job: Job) -> None:
@@ -795,19 +764,19 @@ class Viewer:
         pairs. KeyError for unknown ids (404), ValueError for unsuitable ones (400), Busy without a library."""
         lib = self.library
         if lib is None or self.store is None:
-            raise Busy("no library chosen")
+            raise Busy("err.no_library")
         if not target or not reference:
-            raise ValueError("Ziel und Referenz fehlen.")
+            raise UserError("err.cleanup_pair_missing")
         tgt, ref = lib.get(target), lib.get(reference)
         if target == reference:
-            raise ValueError("Ziel und Referenz müssen verschiedene Quellen sein.")
+            raise UserError("err.cleanup_same_source")
         if tgt.kind != "outlook":
-            raise ValueError("Nur importierte Outlook-Quellen können aufgeräumt werden.")
+            raise UserError("err.cleanup_outlook_only")
         if ref.hidden:
-            raise ValueError(f"Die Referenz-Quelle {ref.name} ist ausgeblendet.")
+            raise UserError("err.reference_hidden", source=ref.name)
         for src in (tgt, ref):
             if not self.available(src):
-                raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+                raise UserError("err.source_unreachable", source=src.name)
         return tgt, ref
 
     def start_cleanup(self, target: str, reference: str, action: str) -> None:
@@ -820,7 +789,7 @@ class Viewer:
             tgt_dir, ref_dir = self.mail_dir_for(tgt), self.mail_dir_for(ref)
             link_possible, reason = check_dirs(tgt_dir, ref_dir)  # ValueError for the same folder
             if action == "link" and not link_possible:
-                raise ValueError(reason)
+                raise UserError("err.cross_device")
 
             def cleanup(job: Job) -> None:
                 try:
@@ -829,7 +798,7 @@ class Viewer:
                     store.close()  # the job thread's connection, as in start_index
 
             if not self.job.start("cleanup", cleanup):
-                raise Busy("job running")
+                raise Busy("err.busy_job")
 
     def _cleanup(self, job: Job, store: Store, lib: Library, tgt: Source, ref: Source,
                  tgt_dir: str, ref_dir: str, action: str) -> None:
@@ -837,19 +806,19 @@ class Viewer:
         after an error, so the index never keeps rows for files that were removed."""
         name = f"cleanup-{time.strftime('%Y%m%d-%H%M%S')}.log"
         with open(os.path.join(lib.root, name), "x", encoding="utf-8") as f:  # never overwrites a log
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\nZiel: {tgt.name}\n"
-                    f"Referenz: {ref.name}\nAktion: {action}\n")
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    + msg("log.cleanup_header", target=tgt.name, reference=ref.name, action=action).text + "\n")
 
-            def log(line: str) -> None:
-                job.log(line)
-                f.write(line + "\n")
+            def log(entry: Msg) -> None:
+                job.log(entry)
+                f.write(entry.text + "\n")
 
             try:
                 result = run_cleanup(store.duplicate_pairs(tgt.id, ref.id), tgt_dir, ref_dir, action, log)
                 job.set_result({**asdict(result), "log_file": name})
             finally:
                 sync = store.sync_source(tgt.id, tgt_dir, job.progress)
-                job.log(f"{tgt.name}: +{sync.added} ~{sync.updated} -{sync.removed}")
+                job.log(msg("log.source_synced", source=tgt.name, added=sync.added, updated=sync.updated, removed=sync.removed))
 
     def _fetch(self, job: Job, store: Store, src: Source, cli: str, account: str, email: str,
                password: str, mailbox: str, totp: str) -> None:
@@ -878,14 +847,16 @@ class Viewer:
                 self._restore_index(job, store, src, previous, secrets)
                 shutil.rmtree(dest, ignore_errors=True)  # only links and copies of the new export
                 raise
-            job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+            job.log(msg("log.source_synced", source=src.name, added=result.added, updated=result.updated, removed=result.removed))
             job.set_result({"source": src.id, "export": os.path.basename(dest)})
             try:
                 self._auto_archive(job, store, self.library, src, dest)
             except Exception as exc:  # the fetch itself stays successful, the exports stay in place
-                job.log(redact(f"Automatik fehlgeschlagen: {exc or type(exc).__name__}", secrets))
+                job.log(msg("log.auto_failed", detail=_redacted(exc, secrets)))
         except Exception as exc:  # the message may echo a secret
-            raise RuntimeError(redact(str(exc) or type(exc).__name__, secrets)) from None
+            if isinstance(getattr(exc, "msg", None), Msg) and exc.msg.code:
+                raise exc from None  # coded errors keep their code; they carry no secrets
+            raise RuntimeError(_redacted(exc, secrets).text) from None
         finally:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -901,7 +872,7 @@ class Viewer:
         except KeyError:
             target = None
         if target is None or not is_archive(target) or not self.available(target):
-            job.log("Ziel-Archiv nicht erreichbar, Automatik übersprungen")
+            job.log(msg("log.auto_target_unreachable"))
             return
         account = os.path.dirname(new_dir)
         real_new = os.path.realpath(new_dir)
@@ -911,7 +882,7 @@ class Viewer:
         plan = autoarchive.plan_vanished(old, new_dir)
         if autoarchive.should_brake(plan) and not force:
             self.auto_paused[src.id] = plan.vanished
-            job.log(f"Automatik angehalten: {plan.vanished} Mails fehlen im neuen Export")
+            job.log(msg("log.auto_paused", count=plan.vanished))
             return
         self.auto_paused.pop(src.id, None)
 
@@ -925,23 +896,22 @@ class Viewer:
         folder_id = ensure_folder(dest_dir, autoarchive.INBOX_NAME) if candidates else None
         result = autoarchive.archive_candidates(candidates, dest_dir, folder_id, job.log)
         if result.failed:
-            job.log(f"Archivieren fehlgeschlagen: {result.failed} Mails, alte Exporte bleiben liegen")
+            job.log(msg("log.archive_failed", count=result.failed))
             return
 
         store.sync_source(target.id, dest_dir)
         copied = [c.ident for c in candidates]
         if store.idents_in([target.id], copied) != set(copied):
-            job.log("Prüfung fehlgeschlagen: Mails fehlen im Archiv, alte Exporte bleiben liegen")
+            job.log(msg("log.verify_failed"))
             return
 
         deleted = 0
         if plan.unreadable:
-            job.log(f"{plan.unreadable} Mails in alten Exporten sind unlesbar, alte Exporte bleiben liegen")
+            job.log(msg("log.old_unreadable", count=plan.unreadable))
         else:
             deleted = autoarchive.delete_exports(old, new_dir, job.log)
-        job.log(f"archiviert {len(candidates)}, übersprungen {already + plan.excluded} "
-                f"(schon archiviert {already}, Spam/Papierkorb/Entwurf {plan.excluded}), "
-                f"Exporte gelöscht {deleted}")
+        job.log(msg("log.archived_summary", archived=len(candidates), skipped=already + plan.excluded,
+                    already=already, excluded=plan.excluded, deleted=deleted))
 
     def _restore_index(self, job: Job, store: Store, src: Source, previous: str | None,
                        secrets: list[str]) -> None:
@@ -953,7 +923,7 @@ class Viewer:
             else:
                 store.sync_source(src.id, previous)
         except Exception as exc:
-            job.log(redact(f"{src.name}: Index konnte nicht wiederhergestellt werden: {exc}", secrets))
+            job.log(msg("log.restore_failed", source=src.name, detail=_redacted(exc, secrets)))
 
     def _run_cli(self, cli: str, env: dict[str, str], secrets: list[str]) -> int:
         # CLI 1.0.7 ignores ET_DIR for backups and would prompt for the path on stdin,
@@ -963,7 +933,7 @@ class Viewer:
                                 encoding="utf-8", errors="replace")
         with proc:
             for line in proc.stdout:
-                self.job.log(redact(line.rstrip("\r\n"), secrets))
+                self.job.log(raw(redact(line.rstrip("\r\n"), secrets)))
             return proc.wait()
 
     def _link_previous(self, previous: str | None, dest: str) -> None:
@@ -973,12 +943,12 @@ class Viewer:
         try:
             linked, saved = dedupe_with_previous(previous, dest)
         except Exception as exc:
-            self.job.log(f"Hardlinks fehlgeschlagen: {exc}")
+            self.job.log(msg("log.hardlinks_failed", detail=detail(exc)))
             return
         if linked:
-            self.job.log(f"Hardlinks: {linked} Dateien, {human_size(saved)} gespart")
+            self.job.log(msg("log.hardlinks_saved", count=linked, saved=saved))
         else:
-            self.job.log("Hardlinks: keine identischen Dateien")
+            self.job.log(msg("log.hardlinks_none"))
 
 
 def selected_sources(lib: Library, query: dict[str, list[str]]) -> list[str] | None:
@@ -1050,6 +1020,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             url = urlsplit(self.path)
             if url.path == "/":
                 return self._static("index.html", "text/html; charset=utf-8")
+            if url.path == "/i18n.js":
+                return self._i18n_script()
             static = STATIC_RE.match(url.path)
             if static:
                 return self._static(static.group(1), STATIC_TYPES[static.group(2)])
@@ -1061,15 +1033,15 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._json(200, browse(_arg(query, "path") or viewer.saved or "~",
                                                   files=_arg(query, "files") == "outlook"))
                 except ValueError as exc:
-                    return self._json(400, {"error": str(exc)})
+                    return self._json(400, error_body(detail(exc)))
             if url.path == "/api/job":
                 return self._json(200, viewer.job.status())
             if url.path in LIBRARY_ROUTES or url.path.startswith("/api/message/") or ICON_RE.match(url.path):
                 lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot, even on a switch
                 if lib is None or store is None or tags is None:
-                    return self._json(409, {"error": "no library chosen"})
+                    return self._json(409, error_body(msg("err.no_library")))
                 return self._library_get(lib, store, tags, url)
-            self._json(404, {"error": "not found"})
+            self._json(404, error_body(msg("err.not_found")))
 
         def _library_get(self, lib: Library, store: Store, tags: TagStore, url: Any) -> None:
             query = parse_qs(url.query)
@@ -1080,14 +1052,14 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             if url.path == "/api/tags":
                 source_ids = selected_sources(lib, query)
                 if source_ids is None:
-                    return self._json(400, {"error": "unknown source"})
+                    return self._json(400, error_body(msg("err.unknown_source")))
                 return self._json(200, tag_list(store, tags, source_ids))
             if url.path == "/api/cleanup/preview":
                 return self._cleanup_preview(store, query)
             if url.path in ("/api/folders", "/api/messages"):
                 source_ids = selected_sources(lib, query)
                 if source_ids is None:
-                    return self._json(400, {"error": "unknown source"})
+                    return self._json(400, error_body(msg("err.unknown_source")))
                 merge = len(source_ids) > 1  # copies of one mail count once only when several sources are shown
                 archives = {s.id for s in lib.sources if is_archive(s)}
                 if url.path == "/api/folders":
@@ -1096,7 +1068,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     if any(x not in archives for x in source_ids):  # mails of these sources with a copy in an archive
                         count = store.archived_count(source_ids, archives, dedupe=merge)
                         if count > 0:
-                            folders.append({"key": VIRTUAL_ARCHIVED, "name": "Online noch zu löschen", "path": "",
+                            folders.append({"key": VIRTUAL_ARCHIVED, "name": msg("msg.virtual_archived").text, "name_code": "msg.virtual_archived", "path": "",
                                             "color": "", "count": count, "unread": 0, "virtual": True,
                                             "labels": {}, "order": None})
                     return self._json(200, folders)
@@ -1109,7 +1081,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     body = store.messages(source_ids, folder, needle, offset, limit, tag, dedupe=merge,
                                           archive_ids=archives)
                 except ValueError:
-                    return self._json(400, {"error": "invalid tag"})
+                    return self._json(400, error_body(msg("err.invalid_tag")))
                 return self._json(200, body)
             if m := ATT_RE.match(url.path):
                 return self._attachment(store, unquote(m[1]), unquote(m[2]), int(m[3]),
@@ -1118,7 +1090,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 src, mid = unquote(m[1]), unquote(m[2])
                 hit = store.message(src, mid)  # the id must be indexed, so no path escapes a mail dir
                 if hit is None:
-                    return self._json(404, {"error": "unknown message"})
+                    return self._json(404, error_body(msg("err.unknown_message")))
                 ident = store.ident(src, mid) or ""  # "" if the .eml is missing: no marks then
                 mark = tags.marks([ident])[ident]
                 names = {s.id: s.name for s in lib.sources}
@@ -1127,7 +1099,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(200, load_message(hit[0], mid, hit[1]) | {
                     "starred": mark["starred"], "tags": mark["tags"], "markable": ident != "",
                     "copies": copies})
-            self._json(404, {"error": "not found"})
+            self._json(404, error_body(msg("err.not_found")))
 
         def _cleanup_preview(self, store: Store, query: dict[str, list[str]]) -> None:
             """What a cleanup would do, from the index and the files. Changes nothing."""
@@ -1136,18 +1108,19 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 plan = plan_cleanup(store.duplicate_pairs(tgt.id, ref.id),
                                     viewer.mail_dir_for(tgt), viewer.mail_dir_for(ref))
             except Busy as exc:
-                return self._json(409, {"error": str(exc)})
+                return self._json(409, error_body(detail(exc)))
             except KeyError:
-                return self._json(404, {"error": "unknown source"})
+                return self._json(404, error_body(msg("err.unknown_source")))
             except (ValueError, OSError) as exc:
-                return self._json(400, {"error": str(exc)})
-            self._json(200, asdict(plan) | {"target": tgt.id, "reference": ref.id})
+                return self._json(400, error_body(detail(exc)))
+            self._json(200, asdict(plan) | {"target": tgt.id, "reference": ref.id,
+                                             "link_reason": plan.link_reason.to_json() if plan.link_reason else None})
 
         def _attachment(self, store: Store, src: str, mid: str, n: int, inline: bool) -> None:
             hit = store.message(src, mid)
             part = get_attachment(hit[0], mid, n) if hit is not None else None
             if part is None:
-                return self._json(404, {"error": "no such attachment"})
+                return self._json(404, error_body(msg("err.no_attachment")))
             ctype = part.get_content_type()
             if inline:
                 ctype = preview_type(ctype) or ctype
@@ -1172,9 +1145,9 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             if self.headers.get("Origin") not in _origins(port):  # a missing Origin is refused too
                 return self._json(403, {"error": "origin not allowed"})
             if m is None and t is None and mk is None and af is None and path not in POST_ROUTES:
-                return self._json(404, {"error": "not found"})
+                return self._json(404, error_body(msg("err.not_found")))
             if len(raw) > limit:
-                return self._json(400, {"error": "body too large"})
+                return self._json(400, error_body(msg("err.body_too_large")))
             if t is not None:
                 if t[2] == "remove":
                     return self._tags_admin(lambda tags: tags.delete_tag(int(t[1])))
@@ -1190,6 +1163,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._fetch(raw)
                 if path == "/api/library":
                     return self._set_library(raw)
+                if path == "/api/language":
+                    return self._set_language(raw)
                 if path == "/api/sources":
                     return self._add_source(raw)
                 if path == "/api/import":
@@ -1216,13 +1191,13 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 change()
                 body = reply()
             except Busy as exc:
-                return self._json(409, {"error": str(exc)})
+                return self._json(409, error_body(detail(exc)))
             except KeyError:
-                return self._json(404, {"error": "unknown source"})
+                return self._json(404, error_body(msg("err.unknown_source")))
             except sqlite3.Error as exc:
-                return self._json(500, {"error": f"index error: {exc}"})
+                return self._json(500, error_body(msg("err.index", detail=detail(exc))))
             except (ValueError, OSError) as exc:  # LibraryError included
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(200, body)
 
         def _tags_admin(self, change: Callable[[TagStore], Any]) -> None:
@@ -1230,16 +1205,16 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             list of all visible sources. KeyError is 404, ValueError 400, sqlite3 errors 500; no library is 409."""
             lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot for the whole request
             if lib is None or store is None or tags is None:
-                return self._json(409, {"error": "no library chosen"})
+                return self._json(409, error_body(msg("err.no_library")))
             try:
                 change(tags)
                 reply = tag_list(store, tags, selected_sources(lib, {}))
             except KeyError:
-                return self._json(404, {"error": "unknown tag"})
+                return self._json(404, error_body(msg("err.unknown_tag")))
             except sqlite3.Error as exc:
-                return self._json(500, {"error": f"index error: {exc}"})
+                return self._json(500, error_body(msg("err.index", detail=detail(exc))))
             except ValueError as exc:
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(200, reply)
 
         def _tag_create(self, raw: bytes) -> None:
@@ -1263,34 +1238,34 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             """Set a mail's star and tags by its identity. Like the tag routes: no Viewer._lock, no job check."""
             lib, store, tags = viewer.library, viewer.store, viewer.tags  # one snapshot for the whole request
             if lib is None or store is None or tags is None:
-                return self._json(409, {"error": "no library chosen"})
+                return self._json(409, error_body(msg("err.no_library")))
             try:
                 body = load_json_object(raw)
                 only_keys(body, MARK_FIELDS)
                 starred = body.get("starred")
                 if "starred" in body and not isinstance(starred, bool):
-                    raise ValueError("Das Feld starred muss true oder false sein.")
+                    raise UserError("err.starred_bool")
                 tag_ids = body.get("tags")
                 if "tags" in body and not (isinstance(tag_ids, list) and all(type(x) is int for x in tag_ids)):
-                    raise ValueError("Das Feld tags muss eine Liste von Tag-IDs sein.")
+                    raise UserError("err.tags_list")
                 ident = store.ident(src, mid)  # None for unknown messages and unknown sources
                 if ident is None:
-                    return self._json(404, {"error": "unknown message"})
+                    return self._json(404, error_body(msg("err.unknown_message")))
                 if ident == "":
-                    raise ValueError("Diese Mail kann nicht markiert werden, die .eml-Datei fehlt.")
+                    raise UserError("err.mail_no_eml")
                 reply = tags.set_marks(ident, starred, tag_ids)
             except KeyError:
-                return self._json(404, {"error": "unknown tag"})
+                return self._json(404, error_body(msg("err.unknown_tag")))
             except sqlite3.Error as exc:
-                return self._json(500, {"error": f"index error: {exc}"})
+                return self._json(500, error_body(msg("err.index", detail=detail(exc))))
             except ValueError as exc:
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(200, reply)
 
         def _sources_reply(self) -> list[Json]:
             lib, store = viewer.library, viewer.store
             if lib is None or store is None:
-                raise Busy("no library chosen")
+                raise Busy("err.no_library")
             return source_list(viewer, lib, store)
 
         def _add_source(self, raw: bytes) -> None:
@@ -1298,7 +1273,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 body = load_json_object(raw)
                 path = body.get("path")
                 if not isinstance(path, str) or not path.strip():
-                    raise ValueError("path required")
+                    raise UserError("err.path_required")
                 viewer.add_source(path.strip(), check_text(text_field(body, "name"), "name"))
             self._admin(change, self._sources_reply)
 
@@ -1308,10 +1283,10 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, SOURCE_FIELDS)
                 icon = body.get("icon")
                 if isinstance(icon, dict) and icon.get("type") == "image":
-                    raise ValueError("Bild-Icons werden über den Upload gesetzt.")
+                    raise UserError("err.icon_via_upload")
                 position = body.get("position")
                 if "position" in body and type(position) is not int:
-                    raise ValueError("position muss eine ganze Zahl sein.")
+                    raise UserError("err.position_int")
                 viewer.update_source(source_id, name=body.get("name"), icon=icon, hidden=body.get("hidden"),
                                      position=position, archive_target=body.get("archive_target"))
             self._admin(change, self._sources_reply)
@@ -1327,7 +1302,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, ("name",))
                 name = check_text(text_field(body, "name"), "name").strip()
                 if not name:
-                    raise ValueError("Der Name darf nicht leer sein.")
+                    raise UserError("err.name_empty")
                 created.append(viewer.create_archive(name))
 
             self._admin(change, lambda: next(s for s in self._sources_reply() if s["id"] == created[0].id))
@@ -1338,17 +1313,17 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, ARCHIVE_FOLDER_FIELDS)
                 op = body.get("op")
                 if op not in ARCHIVE_FOLDER_OPS:
-                    raise ValueError("Die Aktion muss create, rename, move oder delete sein.")
+                    raise UserError("err.folder_action")
                 name = opt_text(body, "name")
                 parent = opt_text(body, "parent")
                 folder_id = opt_text(body, "id")
                 index = body.get("index")
                 if index is not None and type(index) is not int:
-                    raise ValueError("index muss eine ganze Zahl sein.")
+                    raise UserError("err.index_int")
                 if op in ("create", "rename") and not (name or "").strip():
-                    raise ValueError("Der Ordnername fehlt.")
+                    raise UserError("err.folder_name_missing")
                 if op != "create" and folder_id is None:
-                    raise ValueError("Die Ordner-ID fehlt.")
+                    raise UserError("err.folder_id_missing")
                 viewer.start_archive_folders(source_id, op, name, parent, folder_id, index)
             self._admin(change, dict)
 
@@ -1358,17 +1333,17 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, TRANSFER_FIELDS)
                 items = body.get("items")
                 if not isinstance(items, list) or not 1 <= len(items) <= MAX_TRANSFER_ITEMS:
-                    raise ValueError(f"Es müssen 1 bis {MAX_TRANSFER_ITEMS} Mails angegeben werden.")
+                    raise UserError("err.transfer_count", max=MAX_TRANSFER_ITEMS)
                 pairs = []
                 for item in items:
                     if not isinstance(item, dict):
-                        raise ValueError("Jede Mail braucht source und id.")
+                        raise UserError("err.transfer_item")
                     only_keys(item, TRANSFER_ITEM_FIELDS)
                     pairs.append((check_id(text_field(item, "source"), "source"), check_id(text_field(item, "id"), "id")))
                 new_folder = body.get("new_folder")
                 if new_folder is not None:
                     if not isinstance(new_folder, dict):
-                        raise ValueError("new_folder muss ein Objekt sein.")
+                        raise UserError("err.new_folder_object")
                     only_keys(new_folder, NEW_FOLDER_FIELDS)
                     new_folder = (text_field(new_folder, "name"), opt_text(new_folder, "parent"))
                 viewer.start_transfer(pairs, check_id(text_field(body, "archive"), "archive"),
@@ -1381,16 +1356,16 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, AUTO_FIELDS)
                 action = body.get("action")
                 if action not in AUTO_ACTIONS:
-                    raise ValueError("Die Aktion muss force oder discard sein.")
+                    raise UserError("err.auto_action")
                 viewer.start_auto(source_id, action)
             self._admin(change, dict)
 
         def _set_icon(self, source_id: str, raw: bytes) -> None:
             ext = ICON_TYPES.get(self.headers.get("Content-Type") or "")
             if ext is None:
-                return self._json(400, {"error": "Das Icon muss PNG oder SVG sein."})
+                return self._json(400, error_body(msg("err.icon_type")))
             if not valid_icon(ext, raw):
-                return self._json(400, {"error": "invalid image"})
+                return self._json(400, error_body(msg("err.invalid_image")))
             self._admin(lambda: viewer.set_icon(source_id, ext, raw), self._sources_reply)
 
         def _settings(self, raw: bytes) -> None:
@@ -1405,35 +1380,35 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             try:
                 src = lib.get(source_id)
             except KeyError:
-                return self._json(404, {"error": "unknown source"})
+                return self._json(404, error_body(msg("err.unknown_source")))
             if src.icon.get("type") != "image":
-                return self._json(404, {"error": "no image icon"})
+                return self._json(404, error_body(msg("err.no_icon")))
             ctype = {f"{src.id}.{ext}": ct for ext, ct in ICON_CTYPES.items()}.get(src.icon.get("file"))
             if ctype is None:
-                return self._json(404, {"error": "no image icon"})
+                return self._json(404, error_body(msg("err.no_icon")))
             icons = os.path.realpath(os.path.join(lib.root, ICON_DIR))
             path = os.path.realpath(os.path.join(icons, src.icon["file"]))
             if os.path.dirname(path) != icons or not os.path.isfile(path):  # e.g. a symlink out of icons/
-                return self._json(404, {"error": "no image icon"})
+                return self._json(404, error_body(msg("err.no_icon")))
             try:
                 with open(path, "rb") as f:
                     body = f.read()
             except OSError:
-                return self._json(404, {"error": "no image icon"})
+                return self._json(404, error_body(msg("err.no_icon")))
             self._send(200, body, ctype, (("Content-Security-Policy", ICON_CSP),))
 
         def _fetch(self, raw: bytes) -> None:
             if viewer.library is None:
-                return self._json(409, {"error": "no library chosen"})
+                return self._json(409, error_body(msg("err.no_library")))
             try:
                 source, email, password, mailbox, totp = parse_fetch_body(raw)
                 viewer.start_fetch(source, email, password, mailbox, totp)
             except Busy as exc:
-                return self._json(409, {"error": str(exc)})
+                return self._json(409, error_body(detail(exc)))
             except FetchUnavailable as exc:
-                return self._json(404, {"error": str(exc)})
+                return self._json(404, error_body(detail(exc)))
             except ValueError as exc:  # LibraryError included
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(202, {"state": "running"})
 
         def _import(self, raw: bytes) -> None:
@@ -1442,14 +1417,14 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, IMPORT_FIELDS)
                 path = text_field(body, "path").strip()
                 if not path:
-                    raise ValueError("path required")
+                    raise UserError("err.path_required")
                 viewer.start_import(path, text_field(body, "name"))
             except Busy as exc:
-                return self._json(409, {"error": str(exc)})
+                return self._json(409, error_body(detail(exc)))
             except ImportUnavailable:
-                return self._json(503, {"error": INSTALL_HINT})
+                return self._json(503, error_body(install_hint()))
             except (ValueError, OSError) as exc:  # LibraryError included
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(200, {"started": True})
 
         def _cleanup(self, raw: bytes) -> None:
@@ -1458,27 +1433,48 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 only_keys(body, CLEANUP_FIELDS)
                 target, reference = text_field(body, "target"), text_field(body, "reference")
                 if body.get("action") not in ACTIONS:
-                    raise ValueError("Die Aktion muss link oder delete sein.")
+                    raise UserError("err.cleanup_action")
                 viewer.start_cleanup(target, reference, body["action"])
             except Busy as exc:
-                return self._json(409, {"error": str(exc)})
+                return self._json(409, error_body(detail(exc)))
             except KeyError:
-                return self._json(404, {"error": "unknown source"})
+                return self._json(404, error_body(msg("err.unknown_source")))
             except (ValueError, OSError) as exc:
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(202, {"state": "running"})
+
+        def _boot(self) -> dict:
+            return i18n.boot(load_language(viewer.config_path), self.headers.get("Accept-Language"))
+
+        def _i18n_script(self) -> None:
+            body = "window.I18N_BOOT = " + json.dumps(self._boot(), ensure_ascii=False).replace("</", "<\\/") + ";\n"
+            self._send(200, body.encode("utf-8"), "text/javascript; charset=utf-8", (("Cache-Control", "no-store"),))
+
+        def _set_language(self, raw: bytes) -> None:
+            try:
+                language = json.loads(raw.decode("utf-8")).get("language")
+            except (ValueError, RecursionError, AttributeError):
+                language = None
+            codes = [l["code"] for l in i18n.languages()]
+            if not isinstance(language, str) or (language != "system" and language not in codes):
+                return self._json(400, error_body(i18n.msg("err.invalid_language")))
+            try:
+                update_config(viewer.config_path, {"language": None if language == "system" else language})
+            except OSError as exc:
+                return self._json(500, error_body(i18n.msg("err.config_write", detail=i18n.detail(exc))))
+            self._json(200, self._boot())
 
         def _set_library(self, raw: bytes) -> None:
             try:
                 data = json.loads(raw.decode("utf-8"))
             except (ValueError, RecursionError):  # invalid UTF-8 and nesting too deep included
-                return self._json(400, {"error": "invalid JSON body"})
+                return self._json(400, error_body(msg("err.invalid_json")))
             try:
                 path = data["path"]
                 if not isinstance(path, str) or not path.strip():
                     raise ValueError
             except (ValueError, KeyError, TypeError):
-                return self._json(400, {"error": "path required"})
+                return self._json(400, error_body(msg("err.path_required")))
             try:
                 # an absent "remember" leaves the saved choice alone
                 remember = bool(data["remember"]) if "remember" in data else None
@@ -1486,9 +1482,9 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                                     remember=remember,
                                     add_legacy=bool(data.get("add_legacy")))
             except Busy:
-                return self._json(409, {"error": "index job running"})
+                return self._json(409, error_body(msg("err.busy_index")))
             except (ValueError, OSError) as exc:
-                return self._json(400, {"error": str(exc)})
+                return self._json(400, error_body(detail(exc)))
             self._json(200, self._config())
 
         def _read_body(self, limit: int = MAX_BODY) -> bytes:
@@ -1509,13 +1505,13 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 "configured": lib is not None,
                 "library": lib.root if lib is not None else None,
                 "saved": viewer.saved,
-                "saved_error": viewer.saved_error,
+                "saved_error": viewer.saved_error.to_json() if viewer.saved_error else None,
                 "legacy": load_legacy(viewer.config_path) if viewer.config_path else None,
                 "cli_override": viewer.cli if viewer.explicit_cli else None,  # --cli wins over the setting
                 "home": os.path.expanduser("~"),
                 "settings": asdict(lib.settings) if lib is not None else None,
                 "outlook_import": pypff_available(),
-                "install_hint": INSTALL_HINT,
+                "install_hint": install_hint().to_json(),
             }
 
         def _static(self, rel: str, ctype: str) -> None:
@@ -1562,7 +1558,7 @@ def make_server(library_dir: str | None = None, port: int = 0, static_dir: str =
         try:
             viewer.open_library(viewer.saved)
         except (ValueError, OSError) as exc:
-            viewer.saved_error = f"{viewer.saved}: {exc}"
+            viewer.saved_error = msg("err.saved_library", path=viewer.saved, detail=detail(exc))
     httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(viewer, static_dir))
     httpd.viewer = viewer  # the state, for tests and tooling
     return httpd

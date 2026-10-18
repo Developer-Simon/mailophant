@@ -6,6 +6,7 @@ import json
 import re
 import zlib
 from typing import Any
+from mailviewer.i18n import UserError
 
 Json = dict[str, Any]
 
@@ -62,7 +63,7 @@ def check_id(value: str, what: str) -> str:
     """A source or mail ID from a request: a non-empty string of at most MAX_ID characters."""
     check_text(value, what)
     if not 1 <= len(value) <= MAX_ID:
-        raise ValueError(f"Ungültige {what}-Angabe.")
+        raise UserError("err.invalid_id", what=what)
     return value
 
 
@@ -71,14 +72,14 @@ def check_tag_name(value: str) -> str:
     check_text(value, "Tag-Name")
     name = value.strip()
     if not 1 <= len(name) <= MAX_TAG_NAME:
-        raise ValueError(f"Der Tag-Name muss 1 bis {MAX_TAG_NAME} Zeichen lang sein.")
+        raise UserError("err.tag_name_length", max=MAX_TAG_NAME)
     return name
 
 
 def check_tag_color(value: str | None) -> str:
     """Exactly #rrggbb; stored in lowercase."""
     if not isinstance(value, str) or not COLOR_RE.match(value):
-        raise ValueError("Die Farbe muss im Format #rrggbb angegeben werden.")
+        raise UserError("err.tag_color")
     return value.lower()
 
 
@@ -98,7 +99,7 @@ def parse_fetch_body(raw: bytes) -> tuple[str, str, str, str, str]:
         raise ValueError("missing source")
     password = check_text(text_field(body, "password"), "password")
     if not password:
-        raise ValueError("missing password")
+        raise UserError("err.missing_password")
     email = check_email(text_field(body, "email"))
     mailbox = check_text(text_field(body, "mailbox_password"), "mailbox_password")
     return source, email, password, mailbox, check_text(text_field(body, "totp"), "totp").strip()
@@ -119,7 +120,7 @@ def only_keys(body: Json, allowed: tuple[str, ...]) -> None:
     """Refuse fields the endpoint does not know, instead of silently ignoring them."""
     unknown = sorted(set(body) - set(allowed))
     if unknown:
-        raise ValueError(f"Unbekanntes Feld: {', '.join(unknown)}")
+        raise UserError("err.unknown_field", names=", ".join(unknown))
 
 
 def valid_icon(ext: str, data: bytes) -> bool:

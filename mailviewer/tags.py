@@ -9,6 +9,7 @@ import os
 import sqlite3
 import threading
 from typing import Any
+from mailviewer.i18n import UserError
 
 SCHEMA_VERSION = 1
 
@@ -69,7 +70,7 @@ class TagStore:
         with self._write_lock:
             try:
                 if con.execute("SELECT 1 FROM tags WHERE name_key = ?", (name.casefold(),)).fetchone():
-                    raise ValueError("Tag existiert bereits.")
+                    raise UserError("err.tag_exists")
                 cur = con.execute("INSERT INTO tags (name, name_key, color) VALUES (?, ?, ?)",
                                   (name, name.casefold(), color))
                 con.commit()
@@ -89,7 +90,7 @@ class TagStore:
                 new_color = row[1] if color is None else color
                 if name is not None and con.execute(
                         "SELECT 1 FROM tags WHERE name_key = ? AND id != ?", (name.casefold(), tag_id)).fetchone():
-                    raise ValueError("Tag existiert bereits.")
+                    raise UserError("err.tag_exists")
                 con.execute("UPDATE tags SET name = ?, name_key = ?, color = ? WHERE id = ?",
                             (new_name, new_name.casefold(), new_color, tag_id))
                 con.commit()
@@ -112,7 +113,7 @@ class TagStore:
 
     def set_marks(self, ident: str, starred: bool | None, tag_ids: list[int] | None) -> Json:
         if not ident:
-            raise ValueError("Identität fehlt.")
+            raise UserError("err.identity_missing")
         con = self._conn()
         with self._write_lock:
             try:
@@ -123,7 +124,7 @@ class TagStore:
                         found = {row[0] for row in con.execute(
                             f"SELECT id FROM tags WHERE id IN ({marks})", wanted)}
                         if found != set(wanted):
-                            raise ValueError("Unbekannter Tag.")
+                            raise UserError("err.unknown_tag")
                     con.execute("DELETE FROM message_tags WHERE ident = ?", (ident,))
                     con.executemany("INSERT INTO message_tags (ident, tag_id) VALUES (?, ?)",
                                     [(ident, tag_id) for tag_id in wanted])

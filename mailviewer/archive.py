@@ -12,6 +12,7 @@ import unicodedata
 from typing import Any, Callable
 
 from mailviewer import store
+from mailviewer.i18n import Msg, UserError, detail, msg
 
 Json = dict[str, Any]
 
@@ -20,8 +21,8 @@ MAX_NAME = 100
 SYSTEM_IDS = frozenset([*store.SYSTEM_FOLDER_ORDER, "1", "10"])
 
 
-class ArchiveError(ValueError):
-    pass
+class ArchiveError(UserError):
+    """Constructed with a message code from static/i18n and its parameters."""
 
 
 def atomic_write(path: str, data: bytes) -> None:
@@ -76,8 +77,8 @@ def create_folder(mail_dir: str, name: str, parent_id: str | None = None) -> Jso
     parent_path = ""
     if parent_id is not None:
         if parent_id == ALL_MAIL:
-            raise ArchiveError("Unter „All Mail“ können keine Ordner angelegt werden.")
-        parent_path = _find(labels, parent_id, "Übergeordneter Ordner nicht gefunden.")["Path"]
+            raise ArchiveError("err.no_folders_under_all_mail")
+        parent_path = _find(labels, parent_id, "err.parent_not_found")["Path"]
     level = _level(labels, parent_path)
     _check_unique(level, name)
     path = parent_path + "/" + name if parent_path else name
@@ -114,10 +115,10 @@ def move_folder(mail_dir: str, folder_id: str, parent_id: str | None, index: int
     new_parent = ""
     if parent_id is not None:
         if parent_id == ALL_MAIL:
-            raise ArchiveError("„All Mail“ kann nicht als Ordner-Ziel verwendet werden.")
-        parent = _find(labels, parent_id, "Zielordner nicht gefunden.")
+            raise ArchiveError("err.all_mail_not_target")
+        parent = _find(labels, parent_id, "err.target_folder_not_found")
         if parent["Path"] == old or parent["Path"].startswith(old + "/"):
-            raise ArchiveError("Ein Ordner kann nicht in sich selbst verschoben werden.")
+            raise ArchiveError("err.folder_into_itself")
         new_parent = parent["Path"]
     old_level = [x for x in _level(labels, _parent_of(folder)) if x is not folder]
     new_level = [x for x in _level(labels, new_parent) if x is not folder]
@@ -130,7 +131,7 @@ def move_folder(mail_dir: str, folder_id: str, parent_id: str | None, index: int
     _save(mail_dir, doc)
 
 
-def delete_folder(mail_dir: str, folder_id: str, log: Callable[[str], None]) -> int:
+def delete_folder(mail_dir: str, folder_id: str, log: Callable[[Msg], None]) -> int:
     doc, labels = _load(mail_dir)
     folder = _mutable(labels, folder_id)
     prefix = folder["Path"] + "/"
@@ -163,7 +164,7 @@ def _load(mail_dir: str) -> tuple[Json, list[Json]]:
         if not isinstance(payload, list) or not all(_valid_label(x) for x in payload):
             raise ValueError("bad payload")
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise ArchiveError("Die Ordnerliste (labels.json) ist nicht lesbar.") from exc
+        raise ArchiveError("err.labels_unreadable") from exc
     return doc, payload
 
 
@@ -184,8 +185,7 @@ def check_name(name: str) -> str:
     name = name.strip() if isinstance(name, str) else ""
     if (not name or len(name) > MAX_NAME or "/" in name
             or any(unicodedata.category(c) == "Cc" for c in name)):
-        raise ArchiveError("Der Ordnername ist ungültig: Er darf nicht leer sein, höchstens 100 Zeichen lang sein, "
-                           "kein „/“ und keine Steuerzeichen enthalten.")
+        raise ArchiveError("err.invalid_folder_name", max=MAX_NAME)
     return name
 
 
@@ -198,8 +198,8 @@ def _find(labels: list[Json], folder_id: str, message: str) -> Json:
 
 def _mutable(labels: list[Json], folder_id: str) -> Json:
     if is_system_folder(folder_id):
-        raise ArchiveError("Systemordner können nicht geändert werden.")
-    return _find(labels, folder_id, "Ordner nicht gefunden.")
+        raise ArchiveError("err.system_folder_readonly")
+    return _find(labels, folder_id, "err.folder_not_found")
 
 
 def _parent_of(folder: Json) -> str:
@@ -212,7 +212,7 @@ def _level(labels: list[Json], parent_path: str) -> list[Json]:
 
 def _check_unique(level: list[Json], name: str) -> None:
     if any(x["Name"].casefold() == name.casefold() for x in level):
-        raise ArchiveError("Am selben Ort gibt es bereits einen Ordner mit diesem Namen.")
+        raise ArchiveError("err.folder_name_exists")
 
 
 def _ordered(level: list[Json]) -> list[Json]:
@@ -240,7 +240,7 @@ def _move_paths(labels: list[Json], old: str, new: str) -> None:
             x["Path"] = new + x["Path"][len(old):]
 
 
-def _strip_labels(mail_dir: str, doomed: set[str], log: Callable[[str], None]) -> int:
+def _strip_labels(mail_dir: str, doomed: set[str], log: Callable[[Msg], None]) -> int:
     rewritten = 0
     for name in sorted(os.listdir(mail_dir)):
         if not name.endswith(store.META_SUFFIX):
@@ -253,7 +253,7 @@ def _strip_labels(mail_dir: str, doomed: set[str], log: Callable[[str], None]) -
             if not isinstance(meta, dict):
                 raise ValueError("Payload is not an object")
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            log(f"{name} übersprungen: {exc}")
+            log(msg("log.skipped_file", name=name, detail=detail(exc)))
             continue
         ids = meta.get("LabelIDs")
         if not isinstance(ids, list) or not any(_doomed(x, doomed) for x in ids):

@@ -217,7 +217,7 @@ class ArchiveAndPruneTests(unittest.TestCase):
         self.assertFalse(os.path.exists(dirs[0]))
         self.assertTrue(os.path.isdir(dirs[1]))
         self.assertTrue(os.path.isdir(dirs[2]))
-        self.assertTrue(any("boom" in line for line in self.logs))
+        self.assertTrue(any("boom" in line.text for line in self.logs))
 
 
 if __name__ == "__main__":

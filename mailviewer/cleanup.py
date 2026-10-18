@@ -12,9 +12,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mailviewer.store import META_SUFFIX
+from mailviewer.i18n import Msg, UserError, detail, msg
 
 ACTIONS = ("link", "delete")
-CROSS_DEVICE_REASON = "Ziel und Referenz liegen auf verschiedenen Dateisystemen, Hardlinks sind nicht möglich."
+CROSS_DEVICE_REASON = msg("err.cross_device")
 
 
 @dataclass
@@ -25,7 +26,7 @@ class CleanupPlan:
     bytes_link: int
     bytes_delete: int
     link_possible: bool
-    link_reason: str | None
+    link_reason: Msg | None
 
 
 @dataclass
@@ -48,10 +49,10 @@ def remove_quiet(path: str) -> None:
         pass
 
 
-def check_dirs(target_dir: str, reference_dir: str) -> tuple[bool, str | None]:
+def check_dirs(target_dir: str, reference_dir: str) -> tuple[bool, Msg | None]:
     """Return (link_possible, reason). Raises ValueError for the same directory."""
     if os.path.realpath(target_dir) == os.path.realpath(reference_dir):
-        raise ValueError("Ziel und Referenz sind derselbe Ordner.")
+        raise UserError("err.same_folder")
     if os.stat(target_dir).st_dev != os.stat(reference_dir).st_dev:
         return False, CROSS_DEVICE_REASON
     return True, None
@@ -107,14 +108,14 @@ def replace_with_link(tgt: str, ref: str) -> int:
     return freed
 
 
-def delete_copy(tgt: str, meta: str, log: Callable[[str], None]) -> int:
+def delete_copy(tgt: str, meta: str, log: Callable[[Msg], None]) -> int:
     """Delete the metadata first, so no metadata file is left without its .eml."""
     freed = freed_if_unlinked(tgt) + freed_if_unlinked(meta)
     if os.path.lexists(meta):
         os.remove(meta)
-        log(f"delete {meta}")
+        log(msg("log.cleanup_delete", path=meta))
     os.remove(tgt)
-    log(f"delete {tgt}")
+    log(msg("log.cleanup_delete", path=tgt))
     return freed
 
 
@@ -123,13 +124,13 @@ def run_cleanup(
     target_dir: str,
     reference_dir: str,
     action: str,
-    log: Callable[[str], None],
+    log: Callable[[Msg], None],
 ) -> CleanupResult:
     if action not in ACTIONS:
         raise ValueError(f"unknown cleanup action: {action}")
     link_possible, link_reason = check_dirs(target_dir, reference_dir)
     if action == "link" and not link_possible:
-        raise ValueError(link_reason)
+        raise UserError("err.cross_device")
 
     result = CleanupResult()
     for mid, rmid in pairs:
@@ -141,21 +142,21 @@ def run_cleanup(
             # and not the target itself.
             if not is_regular(ref):
                 result.skipped += 1
-                log(f"skip {tgt}: reference missing")
+                log(msg("log.cleanup_skip_reference", path=tgt))
             elif not is_regular(tgt):
                 result.skipped += 1
-                log(f"skip {tgt}: copy missing")
+                log(msg("log.cleanup_skip_copy", path=tgt))
             elif os.path.samefile(tgt, ref):
                 result.skipped += 1
-                log(f"skip {tgt}: already the same file as the reference")
+                log(msg("log.cleanup_skip_same", path=tgt))
             elif action == "link":
                 result.freed += replace_with_link(tgt, ref)
                 result.linked += 1
-                log(f"link {tgt} -> {ref}")
+                log(msg("log.cleanup_link", path=tgt, reference=ref))
             else:
                 result.freed += delete_copy(tgt, meta, log)
                 result.deleted += 1
         except OSError as e:
             result.failed += 1
-            log(f"error {tgt}: {e}")
+            log(msg("log.cleanup_error", path=tgt, detail=detail(e)))
     return result

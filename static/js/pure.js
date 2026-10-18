@@ -242,4 +242,35 @@ function moveIndex(siblings, draggedKey, index) {
   const isUser = (n) => !n.synthetic && n.folder?.virtual !== true && !String(n.key).startsWith('sys:');
   return siblings.filter((n) => n.key !== draggedKey).slice(0, index).filter(isUser).length;
 }
+// File size with 1024 units, number formatted for the locale.
+function formatSize(bytes, locale) {
+  let v = Number(bytes) || 0;
+  if (v < 1024) return `${v} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let i = -1;
+  do { v /= 1024; i++; } while (v >= 1024 && i < units.length - 1);
+  return `${v.toLocaleString(locale, { maximumFractionDigits: 1 })} ${units[i]}`;
+}
+
+// Fills "{name}" / "{name:size}" in one pass (inserted values are never expanded again). value is a string or a
+// plural object ({one, other, ...}) chosen by params.count. Unknown placeholders stay as they are.
+function formatMessage(value, params, lang, locale) {
+  let text = value;
+  if (value !== null && typeof value === 'object') {
+    const form = new Intl.PluralRules(lang).select(Number(params?.count));
+    text = value[form] ?? value.other ?? '';
+  }
+  return String(text).replace(/\{(\w+)(?::(\w+))?\}/g, (whole, name, fmt) => {
+    if (!params || !Object.prototype.hasOwnProperty.call(params, name)) return whole;
+    const v = params[name];
+    if (fmt === 'size') return formatSize(v, locale);
+    return typeof v === 'number' ? v.toLocaleString(locale) : String(v);
+  });
+}
+
+// Locale for numbers and dates: the browser's own variant of lang (en-GB), else lang itself.
+function pickLocale(lang, navLanguages) {
+  const own = (navLanguages || []).find((l) => String(l).toLowerCase().split('-')[0] === lang);
+  return own || lang;
+}
 /* ---------- End pure helpers ---------- */

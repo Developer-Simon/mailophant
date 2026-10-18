@@ -83,10 +83,7 @@ class CleanupTests(unittest.TestCase):
         with mock.patch("mailviewer.cleanup.os.stat", side_effect=fake_stat):
             plan = cleanup.plan_cleanup(self.pairs, self.tgt, self.ref)
         self.assertFalse(plan.link_possible)
-        self.assertEqual(
-            plan.link_reason,
-            "Ziel und Referenz liegen auf verschiedenen Dateisystemen, Hardlinks sind nicht möglich.",
-        )
+        self.assertEqual(plan.link_reason.code, "err.cross_device")
 
     def test_link_replaces_with_hardlink(self):
         meta = os.path.join(self.tgt, "a.metadata.json")
@@ -139,7 +136,7 @@ class CleanupTests(unittest.TestCase):
         self.assertFalse(os.path.samefile(
             os.path.join(self.tgt, "b.eml"), os.path.join(self.ref, "a.eml")
         ))
-        self.assertTrue(any(line.startswith("skip") for line in lines))
+        self.assertTrue(any(line.code.startswith("log.cleanup_skip") for line in lines))
 
     def test_missing_reference_keeps_delete_target(self):
         os.remove(os.path.join(self.ref, "rb.eml"))
@@ -185,7 +182,7 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(result.failed, 1)
         self.assertEqual(result.linked, 1)
         self.assertFalse(os.path.lexists(os.path.join(self.tgt, ".a.eml.link-tmp")))
-        self.assertTrue(any(line.startswith("error") for line in lines))
+        self.assertTrue(any(line.code == "log.cleanup_error" for line in lines))
 
     def test_link_refused_cross_device(self):
         real_stat = os.stat

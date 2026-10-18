@@ -16,7 +16,7 @@ from unittest import mock
 from mailviewer import mailparse
 from mailviewer import store
 from mailviewer.outlook import (
-    INSTALL_HINT,
+    install_hint,
     Folder,
     ImportUnavailable,
     OutlookMessage,
@@ -431,7 +431,8 @@ class PypffTest(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"pypff": None}):
             with self.assertRaises(ImportUnavailable) as ctx:
                 open_reader("x.pst")
-            self.assertEqual(str(ctx.exception), INSTALL_HINT)
+            self.assertEqual(ctx.exception.msg, install_hint())
+            self.assertEqual(str(ctx.exception), install_hint().text)
             self.assertFalse(pypff_available())
 
     def test_decode_html_uses_meta_charset(self):
@@ -476,31 +477,22 @@ class TestPypff(unittest.TestCase):
                 self.assertIsNone(mailparse.load_message(dest, mid, {})["error"])
 
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def read_install_hint(env_value: str | None) -> str:
-    """Import INSTALL_HINT in a fresh interpreter with the given env value (None = unset)."""
-    env = dict(os.environ)
-    env.pop("MAILVIEWER_INSTALL_HINT", None)
-    if env_value is not None:
-        env["MAILVIEWER_INSTALL_HINT"] = env_value
-    result = subprocess.run(
-        [sys.executable, "-c", "from mailviewer.outlook import INSTALL_HINT; print(INSTALL_HINT)"],
-        env=env, cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    )
-    return result.stdout.rstrip("\n")
-
-
 class InstallHintTest(unittest.TestCase):
-    def test_install_hint_default_mentions_pip(self):
-        self.assertIn("libpff-python", read_install_hint(None))
+    def hint(self, mode):
+        env = {} if mode is None else {"MAILVIEWER_INSTALL_MODE": mode}
+        with mock.patch.dict(os.environ, env):
+            if mode is None:
+                os.environ.pop("MAILVIEWER_INSTALL_MODE", None)
+            return install_hint()
 
-    def test_install_hint_overridable_by_env(self):
-        self.assertEqual(read_install_hint("Eigener Hinweis"), "Eigener Hinweis")
+    def test_follows_install_mode(self):
+        self.assertEqual(self.hint("system").code, "err.pst_missing_system")
+        self.assertEqual(self.hint("bundled").code, "err.pst_missing_bundled")
+        self.assertEqual(self.hint(None).code, "err.pst_missing_pip")
+        self.assertEqual(self.hint("other").code, "err.pst_missing_pip")
 
-    def test_install_hint_empty_env_falls_back_to_default(self):
-        self.assertIn("libpff-python", read_install_hint(""))
+    def test_default_text_mentions_pip(self):
+        self.assertIn("libpff-python", self.hint(None).text)
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ function el(tag, attrs = {}, children = []) {
 
 async function api(path, init = {}) {
   const res = await fetch(path, { headers: { Accept: 'application/json' }, ...init });
-  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(t('ui.error.http', { status: res.status })), { status: res.status });
   return res.json();
 }
 
@@ -28,33 +28,28 @@ const addrText = (a) => {
   if (a.name && a.name !== a.address) return `${a.name} <${a.address}>`;
   return a.address || a.name || '';
 };
-const senderText = (s) => (s && (s.name || s.address)) || '(unbekannt)';
+const senderText = (s) => (s && (s.name || s.address)) || t('ui.mail.unknown_sender');
 const addrList = (list) => (list || []).map(addrText).filter(Boolean).join(', ');
 
 function listDate(sec) {
   const d = new Date(sec * 1000);
   return d.toDateString() === new Date().toDateString()
-    ? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    ? d.toLocaleTimeString(I18N.locale(), { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString(I18N.locale(), { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
-const longDate = (sec) => new Date(sec * 1000).toLocaleString('de-DE', {
+const longDate = (sec) => new Date(sec * 1000).toLocaleString(I18N.locale(), {
   weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
 });
 
-function fileSize(bytes) {
-  let v = Number(bytes) || 0;
-  if (v < 1024) return `${v} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let i = -1;
-  do { v /= 1024; i++; } while (v >= 1024 && i < units.length - 1);
-  return `${v.toLocaleString('de-DE', { maximumFractionDigits: 1 })} ${units[i]}`;
-}
+// The server sends a code for names it makes up itself (the virtual folder); mail data keeps its own names.
+const folderLabel = (f) => (f.name_code ? t(f.name_code) : f.name || '');
+const fileSize = (bytes) => formatSize(bytes, I18N.locale());
 
 
 // Builds an inline SVG icon from ICONS. Without a label it is decorative (aria-hidden).
 function icon(name, label) {
   const paths = ICONS[name];
-  if (!paths) throw new Error(`unbekanntes Icon: ${name}`);
+  if (!paths) throw new Error(`unknown icon: ${name}`);
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('class', 'icon');
@@ -161,7 +156,7 @@ function startView() {
 }
 
 function railButton(id, name, src) {
-  const title = src && !src.available ? `${name} (nicht erreichbar)` : name;
+  const title = src && !src.available ? t('ui.source.unreachable_named', { name }) : name;
   const btn = el('button', { type: 'button', title, 'aria-label': title });
   btn.setAttribute('aria-current', String(state.view === id));
   if (src && !src.available) btn.classList.add('unavailable');
@@ -172,7 +167,7 @@ function railButton(id, name, src) {
 
 function renderRail() {
   const buttons = [];
-  if (state.settings?.view === 'combined') buttons.push(railButton('all', 'Alle Quellen', null));
+  if (state.settings?.view === 'combined') buttons.push(railButton('all', t('ui.sources.all'), null));
   for (const s of visibleSources()) buttons.push(railButton(s.id, s.name, s));
   $('rail-sources').replaceChildren(...buttons);
 }
@@ -203,11 +198,11 @@ async function loadFolders(keep = false) {
     state.folders = [];
     state.folder = null;
     state.tag = null;
-    $('folder-list').replaceChildren(el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' }));
+    $('folder-list').replaceChildren(el('li', { class: 'muted', text: t('ui.sources.none') }));
     updateFolderAdd();
     state.messages = [];
     state.total = 0;
-    showEmpty('none', 'Keine Nachricht ausgewählt');
+    showEmpty('none', t('ui.mail.none_selected'));
     renderList();
     updateSearchPlaceholder();
     loadTags();
@@ -218,7 +213,7 @@ async function loadFolders(keep = false) {
     folders = await api(`/api/folders?sources=${encodeURIComponent(ids.join(','))}`);
   } catch (e) {
     if (seq !== state.viewSeq) return;
-    $('folder-list').replaceChildren(el('li', { class: 'warn', text: `Ordner konnten nicht geladen werden (${e.message}).` }));
+    $('folder-list').replaceChildren(el('li', { class: 'warn', text: t('ui.error.folders_load', { detail: e.message }) }));
     return;
   }
   if (seq !== state.viewSeq) return; // the view changed meanwhile
@@ -278,7 +273,7 @@ function folderRow(node) {
   if (node.children.length > 0) {
     const twisty = el('button', {
       class: 'folder-twisty', type: 'button', 'aria-expanded': String(expanded), 'data-toggle': node.key,
-      'aria-label': `Unterordner von ${node.name}`,
+      'aria-label': t('ui.folders.subfolders_of', { name: node.name }),
     }, [icon(expanded ? 'chevron-down' : 'chevron-right')]);
     twisty.addEventListener('click', toggle);
     li.append(twisty);
@@ -288,7 +283,7 @@ function folderRow(node) {
   const f = node.folder;
   const btn = el('button', { class: 'folder', type: 'button', 'data-key': node.key });
   btn.setAttribute('aria-current', String(f.key === state.folder));
-  btn.append(icon(f.virtual ? 'trash' : folderIconName(f.name || '')), el('span', { class: 'name', text: f.name || '' }));
+  btn.append(icon(f.virtual ? 'trash' : folderIconName(f.name || '')), el('span', { class: 'name', text: folderLabel(f) }));
   if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
   btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
   btn.addEventListener('click', () => {
@@ -300,8 +295,8 @@ function folderRow(node) {
   attachFolderDrag(li, node, sid);
   if (sid) {
     const menuBtn = el('button', {
-      class: 'folder-menu-btn', type: 'button', title: 'Aktionen', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
-      'aria-label': `Aktionen für ${f.name || ''}`,
+      class: 'folder-menu-btn', type: 'button', title: t('ui.folders.actions'), 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+      'aria-label': t('ui.folders.actions_for', { name: f.name || '' }),
     }, [icon('more')]);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -333,7 +328,7 @@ function selectTag(key) {
 }
 
 function updateSearchPlaceholder() {
-  $('search').placeholder = state.tag ? 'In diesem Tag suchen…' : 'In diesem Ordner suchen…';
+  $('search').placeholder = state.tag ? t('ui.search.placeholder_tag') : t('ui.search.placeholder');
 }
 
 /* ---------- Archive folders: create, rename, delete, move ---------- */
@@ -359,9 +354,9 @@ function updateFolderAdd() {
 function openFolderDialog(op, sid, folder) {
   folderCtx = { op, sid, key: folder ? folder.key : null, name: folder?.name || '' };
   const name = folderCtx.name;
-  $('folder-title').textContent = op === 'create' ? (folder ? `Neuer Unterordner in „${name}“` : 'Neuer Ordner')
-    : op === 'rename' ? `Ordner „${name}“ umbenennen` : `Ordner „${name}“ löschen`;
-  $('folder-submit').textContent = op === 'create' ? 'Anlegen' : op === 'rename' ? 'Umbenennen' : 'Löschen';
+  $('folder-title').textContent = op === 'create' ? (folder ? t('ui.folder.new_sub', { name }) : t('ui.folder.new_title'))
+    : op === 'rename' ? t('ui.folder.rename_title', { name }) : t('ui.folder.delete_title', { name });
+  $('folder-submit').textContent = op === 'create' ? t('ui.folder.create') : op === 'rename' ? t('ui.folder.rename') : t('ui.folder.delete');
   $('folder-name-row').hidden = op === 'delete';
   $('folder-delete-text').hidden = op !== 'delete';
   $('folder-name').value = op === 'rename' ? name : '';
@@ -399,14 +394,14 @@ async function postJob(url, body, failText) {
     res = await fetch(url, { method: 'POST', ...jsonPost(body), signal: timeoutSignal() });
     data = await res.json().catch(() => null);
   } catch (err) {
-    return isTimeout(err) ? TIMEOUT_TEXT : `${failText} (${err.message}).`;
+    return isTimeout(err) ? timeoutText() : t('ui.error.with_detail', { what: failText, detail: err.message });
   }
   if (res.ok) return null;
-  return res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`;
+  return res.status === 409 ? t('ui.error.busy') : I18N.errorText(data, res.status);
 }
 
 function postFolderOp(sid, body) {
-  return postJob(`/api/archives/${encodeURIComponent(sid)}/folders`, body, 'Der Ordner konnte nicht geändert werden');
+  return postJob(`/api/archives/${encodeURIComponent(sid)}/folders`, body, t('ui.error.folder_change'));
 }
 
 // The folder job is quick, and the first poll may find it finished already, which pollJob would not report
@@ -443,17 +438,17 @@ async function submitFolderDialog(e) {
   if (!ctx || folderBusy) return;
   const folder = ctx.key === null ? null : state.folders.find((f) => f.key === ctx.key);
   if (ctx.key !== null && !folder) {
-    showFolderWarn('Der Ordner ist nicht mehr vorhanden.');
+    showFolderWarn(t('ui.folder.gone'));
     return;
   }
   const id = folder ? archiveLabel(folder, ctx.sid) : null;
   if (folder && id === null) {
-    showFolderWarn('Der Ordner gehört nicht zu diesem Archiv.');
+    showFolderWarn(t('ui.folder.wrong_archive'));
     return;
   }
   const name = $('folder-name').value.trim();
   if (ctx.op !== 'delete' && [...name].length > FOLDER_NAME_MAX) {
-    showFolderWarn(`Der Name darf höchstens ${FOLDER_NAME_MAX} Zeichen lang sein.`);
+    showFolderWarn(t('ui.folder.name_max', { max: FOLDER_NAME_MAX }));
     return;
   }
   const body = ctx.op === 'create' ? { op: 'create', name, parent: id }
@@ -487,9 +482,9 @@ function toggleFolderMenu(node, sid, button, li) {
   }
   closeFolderMenu(false);
   const actions = [
-    ['Neuer Unterordner…', () => openFolderDialog('create', sid, node.folder)],
-    ['Umbenennen…', () => openFolderDialog('rename', sid, node.folder)],
-    ['Löschen…', () => openFolderDialog('delete', sid, node.folder)],
+    [t('ui.folder.menu_new_sub'), () => openFolderDialog('create', sid, node.folder)],
+    [t('ui.folder.menu_rename'), () => openFolderDialog('rename', sid, node.folder)],
+    [t('ui.folder.menu_delete'), () => openFolderDialog('delete', sid, node.folder)],
   ];
   const items = actions.map(([label, run]) => {
     const item = el('button', { type: 'button', role: 'menuitem', text: label });
@@ -500,7 +495,7 @@ function toggleFolderMenu(node, sid, button, li) {
     });
     return item;
   });
-  const list = el('ul', { class: 'folder-menu', role: 'menu', 'aria-label': `Aktionen für ${node.name}` },
+  const list = el('ul', { class: 'folder-menu', role: 'menu', 'aria-label': t('ui.folders.actions_for', { name: node.name }) },
     items.map((item) => el('li', { role: 'none' }, [item])));
   list.addEventListener('keydown', (e) => {
     const i = items.indexOf(document.activeElement);
@@ -655,10 +650,10 @@ function updateTransferSubmit() {
 
 // Copied from Proton or Maildir sources, moved out of other archives, only refiled within the target archive.
 function transferNoteParts(r) {
-  const parts = [`${r.copied} kopiert`, `${r.reused} schon vorhanden`, `${r.skipped} übersprungen`];
-  if (r.refiled) parts.push(`${r.refiled} umsortiert`);
-  if (r.deleted_origin) parts.push(`${r.deleted_origin} aus dem Quellarchiv entfernt`);
-  if (r.failed) parts.push(`${r.failed} fehlgeschlagen`);
+  const parts = [t('ui.transfer.copied', { count: r.copied }), t('ui.transfer.reused', { count: r.reused }), t('ui.transfer.skipped', { count: r.skipped })];
+  if (r.refiled) parts.push(t('ui.transfer.refiled', { count: r.refiled }));
+  if (r.deleted_origin) parts.push(t('ui.transfer.deleted_origin', { count: r.deleted_origin }));
+  if (r.failed) parts.push(t('ui.transfer.failed', { count: r.failed }));
   return parts;
 }
 
@@ -674,9 +669,9 @@ function updateTransferHint() {
     else copy += 1;
   }
   const parts = [];
-  if (copy) parts.push(`${copy} ${copy === 1 ? 'Mail wird' : 'Mails werden'} kopiert, die Originale bleiben.`);
-  if (move) parts.push(`${move} ${move === 1 ? 'Mail wird' : 'Mails werden'} aus dem Quellarchiv verschoben.`);
-  if (refile) parts.push(`${refile} ${refile === 1 ? 'Mail ist' : 'Mails sind'} schon im Archiv und ${refile === 1 ? 'wird' : 'werden'} nur umsortiert.`);
+  if (copy) parts.push(t('ui.transfer.will_copy', { count: copy }));
+  if (move) parts.push(t('ui.transfer.will_move', { count: move }));
+  if (refile) parts.push(t('ui.transfer.will_refile', { count: refile }));
   $('transfer-hint').textContent = parts.join(' ');
 }
 
@@ -686,7 +681,7 @@ function openTransferDialog() {
   if (state.selected.length === 0 || state.selected.length > TRANSFER_MAX || archives.length === 0) return;
   const n = state.selected.length;
   transferCtx = { keys: [...state.selected], archive: archives[0].id, nodes: [], target: null };
-  $('transfer-title').textContent = `${n.toLocaleString('de-DE')} ${n === 1 ? 'Mail' : 'Mails'} ins Archiv`;
+  $('transfer-title').textContent = t('ui.transfer.title', { count: n });
   $('transfer-archive').replaceChildren(...archives.map((s) => el('option', { value: s.id, text: s.name })));
   $('transfer-archive').value = archives[0].id;
   $('transfer-new-name').value = '';
@@ -705,7 +700,7 @@ async function loadTransferFolders() {
   ctx.nodes = [];
   ctx.target = null;
   $('transfer-new').hidden = true;
-  $('transfer-tree').replaceChildren(el('li', { class: 'group-row muted', text: 'Ordner werden geladen…' }));
+  $('transfer-tree').replaceChildren(el('li', { class: 'group-row muted', text: t('ui.transfer.loading_folders') }));
   updateTransferSubmit();
   let folders;
   try {
@@ -713,7 +708,7 @@ async function loadTransferFolders() {
   } catch (e) {
     if (seq !== transferSeq) return;
     $('transfer-tree').replaceChildren();
-    showTransferWarn(`Ordner konnten nicht geladen werden (${e.message}).`);
+    showTransferWarn(t('ui.error.folders_load', { detail: e.message }));
     return;
   }
   if (seq !== transferSeq) return;
@@ -736,11 +731,11 @@ function renderTransferFolders() {
   });
   const newRadio = el('input', { type: 'radio', name: 'transfer-folder', value: 'new' });
   newRadio.checked = ctx.target === 'new';
-  rows.push(el('li', {}, [el('label', { class: 'group-row transfer-row' }, [newRadio, el('span', { text: 'Neuer Ordner…' })])]));
+  rows.push(el('li', {}, [el('label', { class: 'group-row transfer-row' }, [newRadio, el('span', { text: t('ui.transfer.new_folder') })])]));
   $('transfer-tree').replaceChildren(...rows);
   $('transfer-new').hidden = ctx.target !== 'new';
 
-  const parents = [el('option', { value: '', text: 'Oberste Ebene' })];
+  const parents = [el('option', { value: '', text: t('ui.transfer.top_level') })];
   for (const node of ctx.nodes) {
     const id = node.folder ? archiveLabel(node.folder, ctx.archive) : null;
     if (id !== null) parents.push(el('option', { value: id, text: `${'\u2003'.repeat(node.depth)}${node.name}` }));
@@ -760,7 +755,7 @@ async function submitTransfer(e) {
     ? { name: $('transfer-new-name').value.trim(), parent: $('transfer-parent').value || null }
     : null;
   setTransferBusy(true);
-  const err = await postJob('/api/transfer', transferPayload(ctx.keys, ctx.archive, folderId, newFolder), 'Die Mails konnten nicht ins Archiv gelegt werden');
+  const err = await postJob('/api/transfer', transferPayload(ctx.keys, ctx.archive, folderId, newFolder), t('ui.error.transfer'));
   setTransferBusy(false);
   if (err) {
     showTransferWarn(err);
@@ -837,7 +832,7 @@ async function loadTags() {
     data = await api(`/api/tags?sources=${encodeURIComponent(ids.join(','))}`);
   } catch (e) {
     if (seq !== state.tagSeq) return;
-    loadWarnings.set('tags', `Tags konnten nicht geladen werden (${e.message}).`);
+    loadWarnings.set('tags', t('ui.error.tags_load', { detail: e.message }));
     renderLoadWarn();
     return;
   }
@@ -859,7 +854,7 @@ function renderTags() {
   const starIcon = icon('star-fill');
   starIcon.classList.add('star');
   const starred = el('button', { class: 'folder', type: 'button' }, [
-    el('span', { class: 'name' }, [starIcon, 'Markiert']),
+    el('span', { class: 'name' }, [starIcon, t('ui.tags.starred')]),
     el('span', { class: 'count', text: String(state.starCount) }),
   ]);
   starred.setAttribute('aria-current', String(state.tag === 'star'));
@@ -882,7 +877,7 @@ function renderTags() {
     items.push(el('li', {}, [btn]));
   }
   const addLi = el('li');
-  const add = el('button', { class: 'folder', type: 'button' }, [el('span', { class: 'name' }, [icon('plus'), 'Tag'])]);
+  const add = el('button', { class: 'folder', type: 'button' }, [el('span', { class: 'name' }, [icon('plus'), t('ui.tags.tag')])]);
   add.addEventListener('click', () => openTagInput(addLi));
   addLi.append(add);
   items.push(addLi);
@@ -892,7 +887,7 @@ function renderTags() {
 
 // Replaces the "＋ Tag" entry with an input. Enter creates the tag, Escape cancels.
 function openTagInput(li) {
-  const input = el('input', { class: 'tag-input', type: 'text', maxlength: '40', autocomplete: 'off', 'aria-label': 'Name des neuen Tags' });
+  const input = el('input', { class: 'tag-input', type: 'text', maxlength: '40', autocomplete: 'off', 'aria-label': t('ui.tags.new_name') });
   const warn = el('div', { class: 'warn', role: 'alert' });
   warn.hidden = true;
   input.addEventListener('keydown', async (e) => {
@@ -927,7 +922,7 @@ async function createTag(name) {
     signal: timeoutSignal(), // a stalled request must not block the settings queue
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(I18N.errorText(data, res.status));
   state.starCount = data.star ?? 0;
   state.tags = data.tags || [];
   renderTags();
@@ -951,7 +946,7 @@ function reloadList() {
   state.messages = [];
   state.total = 0;
   state.selectedKey = null;
-  showEmpty('none', 'Keine Nachricht ausgewählt');
+  showEmpty('none', t('ui.mail.none_selected'));
   renderList();
   loadPage(true);
 }
@@ -983,7 +978,7 @@ async function loadPage(reset) {
     renderList();
   } catch (e) {
     if (seq !== state.listSeq) return;
-    $('messages').replaceChildren(el('li', { class: 'warn', text: `Liste konnte nicht geladen werden (${e.message}).` }));
+    $('messages').replaceChildren(el('li', { class: 'warn', text: t('ui.error.list_load', { detail: e.message }) }));
   } finally {
     if (seq === state.listSeq) {
       state.loading = false;
@@ -993,7 +988,7 @@ async function loadPage(reset) {
 }
 
 function renderList() {
-  $('count').textContent = `${state.total.toLocaleString('de-DE')} Mails`;
+  $('count').textContent = t('ui.count.mails', { count: state.total });
   const combined = state.view === 'all';
   const tagById = new Map(state.tags.map((t) => [String(t.id), t]));
   $('messages').replaceChildren(...state.messages.map((m) => {
@@ -1005,7 +1000,7 @@ function renderList() {
     li.setAttribute('aria-selected', String(selected));
     const pick = el('span', { class: 'pick', 'aria-hidden': 'true' }, [icon('check')]);
     const unreadCol = el('span', { class: 'unread-col' });
-    if (m.unread) unreadCol.append(el('span', { class: 'unread-dot', role: 'img', 'aria-label': 'Ungelesen' }));
+    if (m.unread) unreadCol.append(el('span', { class: 'unread-dot', role: 'img', 'aria-label': t('ui.list.unread') }));
     const row = el('div', { class: 'row' });
     const src = combined ? sourceById(m.source) : null;
     if (src) row.append(sourceIcon(src, 'list'));
@@ -1013,12 +1008,12 @@ function renderList() {
       el('span', { class: 'sender', text: senderText(m.sender) }),
       el('span', { class: 'time', text: listDate(m.time) }),
     );
-    if (m.copies >= 2) row.append(el('span', { class: 'badge', text: `${m.copies} Quellen`, title: `In ${m.copies} Quellen vorhanden` }));
+    if (m.copies >= 2) row.append(el('span', { class: 'badge', text: t('ui.list.copies_badge', { count: m.copies }), title: t('ui.list.copies_title', { count: m.copies }) }));
     // Subject first, then star, tag dots and paperclip right-aligned at the end of the line.
     const subject = el('div', { class: 'subject' });
-    subject.append(el('span', { class: 'subject-text', text: m.subject || '(ohne Betreff)' }));
+    subject.append(el('span', { class: 'subject-text', text: m.subject || t('ui.mail.no_subject') }));
     if (m.starred) {
-      const star = icon('star-fill', 'Markiert');
+      const star = icon('star-fill', t('ui.tags.starred'));
       star.classList.add('star');
       subject.append(star);
     }
@@ -1028,11 +1023,11 @@ function renderList() {
     }
     const archivedIn = (m.archived || []).map((id) => sourceById(id)?.name || id);
     if (archivedIn.length) {
-      const text = `Im Archiv: ${archivedIn.join(', ')}`;
+      const text = t('ui.list.in_archive', { names: archivedIn.join(', ') });
       subject.append(el('span', { class: 'archived', title: text, role: 'img', 'aria-label': text }, [icon('archivebox')]));
     }
     if (m.attachments > 0) {
-      const clip = icon('paperclip', 'Anhänge');
+      const clip = icon('paperclip', t('ui.list.attachments'));
       clip.classList.add('clip');
       subject.append(clip);
     }
@@ -1098,18 +1093,18 @@ function clearSelection() {
 // Toggle button, bar with count and the button into the archive, check marks of the rows.
 function updateSelectUI() {
   const btn = $('select-btn');
-  btn.textContent = state.selecting ? 'Auswahl beenden' : 'Auswählen';
+  btn.textContent = state.selecting ? t('ui.select.stop') : t('ui.select.start');
   btn.setAttribute('aria-pressed', String(state.selecting));
   $('messages').classList.toggle('selecting', state.selecting);
   $('messages').setAttribute('aria-multiselectable', String(state.selecting));
   $('select-bar').hidden = !state.selecting;
   const n = state.selected.length;
-  $('select-count').textContent = `${n.toLocaleString('de-DE')} ausgewählt`;
+  $('select-count').textContent = t('ui.select.count', { count: n });
   const archives = state.sources.filter((s) => s.archive);
   const usable = usableArchives().length > 0;
   const over = n > TRANSFER_MAX;
-  let note = archives.length === 0 ? 'Zuerst ein Archiv anlegen.' : usable ? '' : 'Kein Archiv ist erreichbar.';
-  if (over) note = `Höchstens ${TRANSFER_MAX} Mails auf einmal.`;
+  let note = archives.length === 0 ? t('ui.transfer.need_archive') : usable ? '' : t('ui.transfer.no_archive_reachable');
+  if (over) note = t('ui.transfer.max', { max: TRANSFER_MAX });
   $('select-note').textContent = note;
   $('select-note').hidden = note === '';
   $('select-move').disabled = n === 0 || !usable || over;
@@ -1144,7 +1139,7 @@ function pruneSelection(rows) {
 // Shown in the list when a load returns nothing: no mail in the folder, or no search hit.
 // The search text goes in via textContent.
 function emptyListItem() {
-  const text = state.q ? `Keine Treffer für „${state.q}“` : 'Keine Mails in diesem Ordner';
+  const text = state.q ? t('ui.list.no_results', { query: state.q }) : t('ui.list.empty_folder');
   return el('li', { class: 'empty', role: 'presentation' }, [icon('tray'), el('div', { text })]);
 }
 
@@ -1189,7 +1184,7 @@ async function loadDetail(source, id) {
     renderMail(source, m);
   } catch (e) {
     if (seq !== state.detailSeq) return;
-    showEmpty('error', `Nachricht konnte nicht geladen werden (${e.message}).`);
+    showEmpty('error', t('ui.error.mail_load', { detail: e.message }));
   }
 }
 
@@ -1203,7 +1198,7 @@ function startLoad(seq) {
   updateBar();
   staleTimer = setTimeout(() => {
     if (seq !== state.detailSeq) return;
-    if (mail.hidden) showEmpty('loading', 'Lädt…');
+    if (mail.hidden) showEmpty('loading', t('ui.mail.loading'));
     else mail.classList.add('stale');
   }, STALE_DELAY);
 }
@@ -1219,7 +1214,9 @@ function endLoad() {
 }
 
 // Shows a text in place of the mail. 'none': nothing selected; 'loading': slow load; 'error': load failed.
+let emptyKind = null; // what the empty reader shows, so a language switch can redo the text of 'none'
 function showEmpty(kind, text = '') {
+  emptyKind = kind;
   if (kind !== 'loading') endLoad();
   $('placeholder').replaceChildren(icon('envelope'), el('div', { text }));
   $('placeholder').hidden = false;
@@ -1248,7 +1245,7 @@ function renderMail(source, m) {
   state.mailSource = source;
   showMarkWarn('');
   renderMarks();
-  const subject = m.subject || '(ohne Betreff)';
+  const subject = m.subject || t('ui.mail.no_subject');
   $('m-subject').textContent = subject;
   $('m-bar-subject').textContent = subject;
   renderSender(m);
@@ -1259,7 +1256,7 @@ function renderMail(source, m) {
 
   const err = $('m-error');
   err.hidden = !m.error;
-  err.textContent = m.error ? `Hinweis vom Server: ${m.error}` : '';
+  err.textContent = m.error ? t('ui.mail.server_hint', { text: m.error }) : '';
 
   state.mode = m.html ? 'html' : 'text';
   $('m-toggle').hidden = !(m.html && m.text);
@@ -1280,7 +1277,7 @@ function renderSender(m) {
   const avatar = $('m-avatar');
   avatar.textContent = personInitials(from);
   avatar.style.background = colorFor(addr);
-  $('m-from').textContent = name || addr || '(unbekannt)';
+  $('m-from').textContent = name || addr || t('ui.mail.unknown_sender');
   const twoLines = Boolean(name && addr && name !== addr);
   $('m-from-addr').textContent = twoLines ? addr : '';
   $('m-from-addr').hidden = !twoLines;
@@ -1291,13 +1288,13 @@ function renderSender(m) {
 function renderRecipients(m) {
   const to = m.to || [];
   const cc = m.cc || [];
-  const lines = [el('p', { class: 'recips-line' }, ['An: ', el('span', { id: 'm-to', text: addrList(to) || '(keine)' })])];
+  const lines = [el('p', { class: 'recips-line' }, [t('ui.mail.to'), el('span', { id: 'm-to', text: addrList(to) || t('ui.mail.none') })])];
   const ccText = addrList(cc);
-  if (ccText) lines.push(el('p', { class: 'recips-line', id: 'row-cc' }, ['Cc: ', el('span', { id: 'm-cc', text: ccText })]));
+  if (ccText) lines.push(el('p', { class: 'recips-line', id: 'row-cc' }, [t('ui.mail.cc'), el('span', { id: 'm-cc', text: ccText })]));
   const all = [...to, ...cc];
   if (all.length > 3) {
     const names = all.map((a) => a.name || a.address || '?');
-    const summary = `An: ${names[0]}, ${names[1]} und ${all.length - 2} weitere`;
+    const summary = t('ui.mail.to_summary', { first: names[0], second: names[1], count: all.length - 2 });
     $('m-recips').replaceChildren(el('details', { class: 'recips-more' }, [el('summary', { text: summary }), ...lines]));
   } else {
     $('m-recips').replaceChildren(...lines);
@@ -1308,12 +1305,12 @@ function renderAttachments(source, m) {
   const list = m.attachments || [];
   $('m-attachments').replaceChildren(...list.map((a) => {
     const href = `/api/message/${encodeURIComponent(source)}/${encodeURIComponent(m.id)}/attachment/${encodeURIComponent(a.index)}`;
-    const name = a.name || `Anhang ${a.index}`;
+    const name = a.name || t('ui.mail.attachment', { index: a.index });
     const chip = [icon('paperclip'), el('span', { class: 'attach-name', text: name }), el('small', { text: fileSize(a.size) })];
     if (!canPreview(a.mime)) return el('a', { href }, chip);
     return el('span', { class: 'attach-pair' }, [
-      el('a', { href: `${href}?inline=1`, target: '_blank', rel: 'noopener', title: `${name} ansehen`, 'data-preview': name, 'data-kind': previewKind(a.mime) }, chip),
-      el('a', { href, class: 'attach-download', title: `${name} herunterladen`, 'aria-label': `${name} herunterladen` }, [icon('arrow-down')]),
+      el('a', { href: `${href}?inline=1`, target: '_blank', rel: 'noopener', title: t('ui.mail.attachment_open', { name }), 'data-preview': name, 'data-kind': previewKind(a.mime) }, chip),
+      el('a', { href, class: 'attach-download', title: t('ui.mail.attachment_download', { name }), 'aria-label': t('ui.mail.attachment_download', { name }) }, [icon('arrow-down')]),
     ]);
   }));
   $('m-attachments').hidden = list.length === 0;
@@ -1326,8 +1323,8 @@ function renderArchived(source, m) {
   const names = (row?.archived || []).map((id) => sourceById(id)?.name || id);
   const badge = $('m-archived');
   badge.hidden = names.length === 0;
-  badge.title = names.length ? `Im Archiv: ${names.join(', ')}` : '';
-  badge.replaceChildren(...(names.length ? [icon('archivebox'), el('span', { text: 'Im Archiv' })] : []));
+  badge.title = names.length ? t('ui.list.in_archive', { names: names.join(', ') }) : '';
+  badge.replaceChildren(...(names.length ? [icon('archivebox'), el('span', { text: t('ui.mail.in_archive') })] : []));
 }
 
 // Lists every copy of the open mail. The shown copy is marked; the others open on click, and the list selection stays.
@@ -1349,7 +1346,7 @@ function renderCopies(source, m) {
     btn.addEventListener('click', () => loadDetail(c.source, c.id));
     return btn;
   });
-  $('m-copies').replaceChildren(el('span', { class: 'muted', text: `In ${copies.length} Quellen:` }), ...items);
+  $('m-copies').replaceChildren(el('span', { class: 'muted', text: t('ui.mail.in_sources', { count: copies.length }) }), ...items);
 }
 
 function renderBody() {
@@ -1359,7 +1356,7 @@ function renderBody() {
   }
   const box = $('m-body');
   if (state.mode === 'html' && m.html) {
-    const frame = el('iframe', { sandbox: 'allow-same-origin', title: 'Nachricht' });
+    const frame = el('iframe', { sandbox: 'allow-same-origin', title: t('ui.mail.frame_title') });
     frame.addEventListener('load', () => {
       fitFrame(frame);
       try {
@@ -1370,7 +1367,7 @@ function renderBody() {
     frame.srcdoc = FRAME_HEAD + m.html;
     box.replaceChildren(frame);
   } else {
-    box.replaceChildren(el('pre', { text: m.text || '(kein Inhalt)' }));
+    box.replaceChildren(el('pre', { text: m.text || t('ui.mail.no_content') }));
   }
 }
 
@@ -1402,7 +1399,7 @@ function renderMarks() {
     starBtn.hidden = !markable;
     starBtn.replaceChildren(icon(m.starred ? 'star-fill' : 'star'));
     starBtn.setAttribute('aria-pressed', String(!!m.starred));
-    starBtn.title = m.starred ? 'Markierung entfernen' : 'Markieren';
+    starBtn.title = m.starred ? t('ui.mark.remove') : t('ui.mark.star');
     starBtn.disabled = busy;
   }
   $('m-tags').hidden = !markable;
@@ -1414,7 +1411,7 @@ function renderMarks() {
   for (const id of current) {
     const tag = tagById.get(id);
     if (!tag) continue; // IDs unknown to the sidebar are skipped
-    const remove = el('button', { type: 'button', 'aria-label': `Tag ${tag.name || ''} entfernen` }, [icon('xmark')]);
+    const remove = el('button', { type: 'button', 'aria-label': t('ui.mark.remove_tag', { name: tag.name || '' }) }, [icon('xmark')]);
     remove.disabled = busy;
     remove.addEventListener('click', () => {
       saveMarks(state.mailSource, m.id, { tags: (m.tags || []).filter((x) => String(x) !== id) });
@@ -1474,11 +1471,11 @@ async function addTagFromInput() {
       try {
         tag = await createTag(name);
       } catch (e) {
-        if (shownKey() === key) showMarkWarn(`Tag konnte nicht angelegt werden (${e.message}).`);
+        if (shownKey() === key) showMarkWarn(t('ui.error.tag_create', { detail: e.message }));
         return;
       }
       if (!tag) {
-        if (shownKey() === key) showMarkWarn('Tag konnte nicht angelegt werden.');
+        if (shownKey() === key) showMarkWarn(t('ui.error.tag_create_plain'));
         return;
       }
       if (shownKey() !== key) return; // the reader moved on: the tag exists, this mail is unchanged
@@ -1513,12 +1510,12 @@ async function saveMarks(source, id, change) {
       body: JSON.stringify(change),
     });
     const data = await res.json().catch(() => null);
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(I18N.errorText(data, res.status));
     marks = data;
   } catch (e) {
     marksPending.delete(key);
     if (shownKey() === key) {
-      showMarkWarn(`Markierung konnte nicht gespeichert werden (${e.message}).`);
+      showMarkWarn(t('ui.error.mark_save', { detail: e.message }));
       renderMarks();
     }
     return false;
@@ -1549,14 +1546,14 @@ function standText(name) {
   const m = /^mail_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(name || '');
   if (!m) return name || '';
   const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  return Number.isNaN(d.getTime()) ? name : d.toLocaleString('de-DE', {
+  return Number.isNaN(d.getTime()) ? name : d.toLocaleString(I18N.locale(), {
     day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 }
 
 function setFetchBusy(busy) {
   const btn = $('fetch-btn');
-  $('fetch-label').textContent = busy ? 'Abruf läuft…' : 'Abrufen';
+  $('fetch-label').textContent = busy ? t('ui.fetch.running') : t('ui.fetch.label');
   btn.classList.toggle('busy', busy);
 }
 
@@ -1571,7 +1568,7 @@ function showProgress() {
   $('fetch-form').hidden = true;
   $('fetch-progress').hidden = false;
   $('fetch-retry').hidden = true;
-  $('fetch-status').textContent = 'Abruf läuft…';
+  $('fetch-status').textContent = t('ui.fetch.running');
 }
 
 function showWarn(msg) {
@@ -1581,7 +1578,7 @@ function showWarn(msg) {
 
 function renderLog(st) {
   const pre = $('fetch-log');
-  pre.textContent = (st.log || []).join('\n');
+  pre.textContent = (st.log || []).map((entry) => I18N.msgText(entry)).join('\n');
   pre.scrollTop = pre.scrollHeight;
 }
 
@@ -1605,19 +1602,19 @@ function renderJob(st) {
   $('job-status').hidden = !running;
   if (running) {
     const prog = st.progress ? ` ${st.progress.done}/${st.progress.total}` : '';
-    $('job-text').textContent = fetching ? 'Abruf läuft…'
-      : st.kind === 'import' ? `Import läuft…${prog}`
-      : st.kind === 'cleanup' ? 'Aufräumen läuft…'
-      : st.kind === 'archive' ? `Archiv läuft…${prog}`
-      : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
-    $('job-last').textContent = (st.log || []).at(-1) || '';
+    $('job-text').textContent = fetching ? t('ui.fetch.running')
+      : st.kind === 'import' ? t('ui.job.importing', { progress: prog })
+      : st.kind === 'cleanup' ? t('ui.job.cleaning')
+      : st.kind === 'archive' ? t('ui.job.archiving', { progress: prog })
+      : st.progress ? t('ui.job.indexing_progress', { done: st.progress.done, total: st.progress.total }) : t('ui.job.indexing');
+    $('job-last').textContent = I18N.msgText((st.log || []).at(-1));
     // Bar: scaled to done/total when the total is known, otherwise an indeterminate sweep.
     const total = st.progress?.total || 0;
     $('job-progress').classList.toggle('indeterminate', total === 0);
     $('job-bar').style.transform = total === 0 ? '' : `scaleX(${Math.min(1, (st.progress.done || 0) / total)})`;
   }
   $('job-error').hidden = st.state !== 'error';
-  $('job-error-text').textContent = st.state === 'error' ? (st.message || 'Der Auftrag ist fehlgeschlagen.') : '';
+  $('job-error-text').textContent = st.state === 'error' ? (I18N.msgText(st.message) || t('ui.job.failed')) : '';
   renderJobWarnings(st);
   renderImportNote(st);
 }
@@ -1626,35 +1623,36 @@ function renderJob(st) {
 function renderImportNote(st) {
   const done = st.state === 'done';
   // A finished transfer reports its counts; folder jobs of an archive have no counts and show no note.
-  const t = done && st.kind === 'archive' && typeof st.result?.copied === 'number' ? st.result : null;
+  const transfer = done && st.kind === 'archive' && typeof st.result?.copied === 'number' ? st.result : null;
   const r = done && st.kind === 'import' ? st.result : null;
-  $('job-note').hidden = !(t || r) || dismissedJob === st.started;
-  if (t) {
-    $('job-note-text').textContent = transferNoteParts(t).join(', ');
+  $('job-note').hidden = !(transfer || r) || dismissedJob === st.started;
+  if (transfer) {
+    $('job-note-text').textContent = transferNoteParts(transfer).join(', ');
     $('job-note-list').replaceChildren();
-    $('job-note-sum').textContent = 'Details (0)';
+    $('job-note-sum').textContent = t('ui.job.details', { count: 0 });
     $('job-note-details').hidden = true;
     return;
   }
   if (!r) return;
   const skipped = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
-  const parts = [`${r.imported} Mails importiert`];
-  if (r.merged) parts.push(`${r.merged} zusammengeführt`);
-  if (skipped) parts.push(`${skipped} übersprungen`);
-  if (r.unreadable) parts.push(`${r.unreadable} nicht lesbar`);
+  const parts = [t('ui.import.imported', { count: r.imported })];
+  if (r.merged) parts.push(t('ui.import.merged', { count: r.merged }));
+  if (skipped) parts.push(t('ui.import.skipped', { count: skipped }));
+  if (r.unreadable) parts.push(t('ui.import.unreadable', { count: r.unreadable }));
   $('job-note-text').textContent = parts.join(', ');
   const folders = r.failed_folders || [];
-  $('job-note-list').replaceChildren(...folders.map((f) => el('li', { text: `Ordner nicht lesbar: ${f}` })));
-  $('job-note-sum').textContent = `Details (${folders.length})`;
+  $('job-note-list').replaceChildren(...folders.map((f) => el('li', { text: t('ui.import.folder_unreadable', { name: f }) })));
+  $('job-note-sum').textContent = t('ui.job.details', { count: folders.length });
   $('job-note-details').hidden = folders.length === 0;
 }
 
-// Lines containing "Fehler" are sources that failed although the job itself finished.
+// Log entries with these codes are sources that failed although the job itself finished.
+const FAILED_SOURCE_CODES = new Set(['log.source_failed']);
 function renderJobWarnings(st) {
-  const failed = (st.log || []).filter((line) => line.includes('Fehler'));
+  const failed = (st.log || []).filter((entry) => FAILED_SOURCE_CODES.has(entry.code));
   $('job-warn').hidden = failed.length === 0 || dismissedJob === st.started;
-  $('job-warn-list').replaceChildren(...failed.map((line) => el('li', { text: line })));
-  $('job-warn-sum').textContent = `Details (${failed.length})`;
+  $('job-warn-list').replaceChildren(...failed.map((entry) => el('li', { text: I18N.msgText(entry) })));
+  $('job-warn-sum').textContent = t('ui.job.details', { count: failed.length });
   $('job-warn-details').hidden = failed.length === 0;
 }
 
@@ -1666,7 +1664,7 @@ function updateFetchDialog(st) {
     if (st.kind !== 'fetch') {
       if (!fetchWaiting) {
         showForm();
-        showWarn('Es läuft gerade ein Auftrag.');
+        showWarn(t('ui.error.busy'));
         fetchWaiting = true;
       }
       return;
@@ -1686,13 +1684,13 @@ function updateFetchDialog(st) {
   if (!progressVisible()) return;
   renderLog(st);
   if (st.state === 'done') {
-    $('fetch-status').textContent = 'Fertig – neue Mails geladen';
+    $('fetch-status').textContent = t('ui.fetch.done');
     showWarn('');
     clearTimeout(closeTimer);
     closeTimer = setTimeout(closeFetchDialog, 1500);
   } else if (st.state === 'error') {
-    $('fetch-status').textContent = 'Abruf fehlgeschlagen.';
-    showWarn(st.message || 'Der Abruf ist fehlgeschlagen.');
+    $('fetch-status').textContent = t('ui.fetch.failed_status');
+    showWarn(I18N.msgText(st.message) || t('ui.fetch.failed'));
     $('fetch-retry').hidden = false;
   } else {
     showForm(); // idle: nothing is running any more
@@ -1732,7 +1730,7 @@ async function jobFinished(st) {
     state.view = fetched.source;
     storeView(fetched.source);
   }
-  if (fetched?.export) $('stand').textContent = `Stand: ${standText(fetched.export)}`;
+  if (fetched?.export) $('stand').textContent = t('ui.status.as_of', { text: standText(fetched.export) });
   if (st.kind === 'cleanup') renderCleanupReport(st);
   renderRail();
   updateFetchArea();
@@ -1784,7 +1782,7 @@ $('fetch-form').addEventListener('submit', async (e) => {
   const submit = f.querySelector('button[type="submit"]');
   const source = state.view;
   if (!sourceById(source)) {
-    showWarn('Keine Quelle gewählt.');
+    showWarn(t('ui.fetch.no_source'));
     return;
   }
   const body = { source, email: f.elements.email.value.trim(), password: f.elements.password.value };
@@ -1809,7 +1807,7 @@ $('fetch-form').addEventListener('submit', async (e) => {
     data = await res.json().catch(() => null);
   } catch (err) {
     submit.disabled = false;
-    showWarn(`Abruf konnte nicht gestartet werden (${err.message}).`);
+    showWarn(t('ui.error.fetch_start', { detail: err.message }));
     return;
   }
   submit.disabled = false;
@@ -1819,10 +1817,10 @@ $('fetch-form').addEventListener('submit', async (e) => {
     pollJob();
   } else if (res.status === 409) {
     // Another job holds the slot: the poll shows the fetch if it is one, else the notice.
-    showWarn('Es läuft gerade ein Auftrag.');
+    showWarn(t('ui.error.busy'));
     pollJob();
   } else {
-    showWarn((data && data.error) || `Fehler ${res.status}`);
+    showWarn(I18N.errorText(data, res.status));
   }
 });
 
@@ -1874,7 +1872,7 @@ async function browseTo(path) {
     data = await api(`/api/browse?path=${encodeURIComponent(path)}${files}`);
   } catch (e) {
     if (seq !== dirState.seq) return;
-    showLibWarn(e.status === 400 ? 'Dieses Verzeichnis kann nicht gelesen werden.' : `Fehler beim Lesen (${e.message}).`);
+    showLibWarn(e.status === 400 ? t('ui.library.unreadable') : t('ui.library.read_error', { detail: e.message }));
     return;
   }
   if (seq !== dirState.seq) return;
@@ -1886,26 +1884,26 @@ async function browseTo(path) {
   $('dir-path').value = data.path;
   $('dir-up').disabled = data.parent === null;
   $('dir-hint').textContent = libMode() === 'import'
-    ? (importAvailable() ? 'Wähle eine .pst- oder .ost-Datei. Die Datei wird nur gelesen.' : state.config?.install_hint || '')
+    ? (importAvailable() ? t('ui.library.hint_import') : I18N.msgText(state.config?.install_hint))
     : libMode() === 'library'
     ? (data.library
-      ? 'Hier liegt eine Bibliothek – „Öffnen“ übernimmt sie.'
-      : 'Wähle eine Bibliothek (enthält library.json) oder ein Verzeichnis, in dem eine neue angelegt wird.')
+      ? t('ui.library.hint_lib_here')
+      : t('ui.library.hint_lib'))
     : (data.openable
-      ? 'Hier liegt ein Mail-Export – „Hinzufügen“ nimmt ihn als Quelle auf.'
-      : 'Wähle ein Mail-Verzeichnis (enthält labels.json) oder ein Konto-Verzeichnis mit mail_*-Exporten.');
+      ? t('ui.library.hint_export_here')
+      : t('ui.library.hint_export'));
   updateLibSubmit();
   const dirItems = data.dirs.length || (data.files || []).length ? data.dirs.map((d) => {
     const btn = el('button', { type: 'button' }, [icon(d.library ? 'archivebox' : 'folder'), el('span', { text: d.name })]);
     if (d.library) {
       btn.classList.add('library');
-      btn.append(el('span', { class: 'tag', text: 'Bibliothek' }));
+      btn.append(el('span', { class: 'tag', text: t('ui.library.tag_library') }));
     } else if (d.openable) {
-      btn.append(el('span', { class: 'tag', text: 'Mail-Export' }));
+      btn.append(el('span', { class: 'tag', text: t('ui.library.tag_export') }));
     }
     btn.addEventListener('click', () => browseTo(`${data.path.replace(/\/$/, '')}/${d.name}`));
     return el('li', { class: 'group-row' }, [btn]);
-  }) : [el('li', { class: 'muted empty', text: 'Keine Unterverzeichnisse.' })];
+  }) : [el('li', { class: 'muted empty', text: t('ui.library.no_subdirs') })];
   const fileItems = (data.files || []).map((f) => {
     const btn = el('button', { type: 'button' }, [
       icon('envelope'), el('span', { text: f.name }), el('span', { class: 'size', text: humanSize(f.size) }),
@@ -1932,9 +1930,9 @@ function openPicker(mode, required) {
   dlg.dataset.mode = mode;
   dlg.dataset.required = required ? '1' : '';
   const isImport = mode === 'import';
-  $('library-title').textContent = isLib ? 'Bibliothek wählen'
-    : isImport ? 'Outlook-Datei importieren' : 'Verzeichnis als Quelle hinzufügen';
-  $('library-submit').textContent = isLib ? 'Öffnen' : isImport ? 'Importieren' : 'Hinzufügen';
+  $('library-title').textContent = isLib ? t('ui.library.title')
+    : isImport ? t('ui.library.import_title') : t('ui.library.add_title');
+  $('library-submit').textContent = isLib ? t('ui.library.open') : isImport ? t('ui.library.import_submit') : t('ui.library.add_submit');
   $('library-import').hidden = mode !== 'source';
   $('import-name-row').hidden = !isImport;
   $('import-name').value = '';
@@ -1951,7 +1949,7 @@ function openPicker(mode, required) {
   if (!dlg.open) dlg.showModal();
   const savedError = isLib ? cfg.saved_error : null;
   browseTo((mode === 'import' && dirState.path) || cfg.library || cfg.saved || cfg.home || '~').then(() => {
-    if (savedError) showLibWarn(`Gespeichertes Verzeichnis nicht verfügbar: ${savedError}`);
+    if (savedError) showLibWarn(t('ui.library.saved_unavailable', { detail: I18N.msgText(savedError) }));
   });
 }
 
@@ -1975,12 +1973,12 @@ async function postPicker(url, body) {
     data = await res.json().catch(() => null);
   } catch (err) {
     setLibBusy(false);
-    showLibWarn(`Verzeichnis konnte nicht übernommen werden (${err.message}).`);
+    showLibWarn(t('ui.error.library_open', { detail: err.message }));
     return null;
   }
   if (res.ok) return data;
   setLibBusy(false);
-  showLibWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+  showLibWarn(res.status === 409 ? t('ui.error.busy') : I18N.errorText(data, res.status));
   return null;
 }
 
@@ -2044,7 +2042,7 @@ $('dir-up').replaceChildren(icon('chevron-up'));
 $('dir-home').replaceChildren(icon('house'));
 $('m-star').replaceChildren(icon('star'));
 $('m-bar-star').replaceChildren(icon('star'));
-showEmpty('none', 'Keine Nachricht ausgewählt'); // start: nothing selected yet
+showEmpty('none', t('ui.mail.none_selected')); // start: nothing selected yet
 $('search-icon').replaceChildren(icon('search'));
 // Notice and button icons are named in data-icon attributes (the close buttons carry aria-label).
 for (const slot of document.querySelectorAll('[data-icon]')) slot.replaceChildren(icon(slot.dataset.icon));
@@ -2060,7 +2058,7 @@ $('rail-add').addEventListener('click', () => openPicker('source', false));
 const ICON_MAX_BYTES = 512 * 1024;
 const ICON_FILE_TYPES = ['image/png', 'image/svg+xml'];
 const REQUEST_TIMEOUT_MS = 30000;
-const TIMEOUT_TEXT = 'Zeitüberschreitung. Bitte erneut versuchen.';
+const timeoutText = () => t('ui.error.timeout');
 const jsonPost = (obj) => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
 const timeoutSignal = () => AbortSignal.timeout(REQUEST_TIMEOUT_MS);
 const isTimeout = (err) => err?.name === 'TimeoutError';
@@ -2101,16 +2099,16 @@ async function runChange(build) {
   } catch (err) {
     if (isTimeout(err)) {
       // The server may have applied the change anyway: show what it holds now.
-      showSettingsWarn(TIMEOUT_TEXT);
+      showSettingsWarn(timeoutText());
       await reloadAdmin();
     } else {
-      showSettingsWarn(`Änderung konnte nicht gespeichert werden (${err.message}).`);
+      showSettingsWarn(t('ui.error.change_save', { detail: err.message }));
       renderSettingsSources(); // back to the stored values
     }
     return { ok: false };
   }
   if (!res.ok) {
-    showSettingsWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+    showSettingsWarn(res.status === 409 ? t('ui.error.busy') : I18N.errorText(data, res.status));
     renderSettingsSources();
     return { ok: false };
   }
@@ -2149,7 +2147,7 @@ async function reloadAdmin() {
   try {
     await fetchAdminState();
   } catch (err) {
-    showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Liste konnte nicht aktualisiert werden (${err.message}).`);
+    showSettingsWarn(isTimeout(err) ? timeoutText() : t('ui.error.list_update', { detail: err.message }));
     return false;
   }
   const next = validView(state.view);
@@ -2185,12 +2183,12 @@ function renderSettingsProton(settings = state.settings) {
   f.cli.value = settings?.cli || '';
   const override = state.config?.cli_override || '';
   const note = $('settings-cli-override');
-  note.textContent = override ? `Wird ignoriert: Der Viewer wurde mit --cli ${override} gestartet.` : '';
+  note.textContent = override ? t('ui.settings.cli_ignored', { path: override }) : '';
   note.hidden = !override;
 }
 
 function renderSettingsLibrary() {
-  $('settings-library-path').textContent = state.config?.library || '(keine)';
+  $('settings-library-path').textContent = state.config?.library || t('ui.mail.none');
 }
 
 // Focus survives a redraw of the list: the same control of the same source, else the same control of
@@ -2228,18 +2226,18 @@ async function uploadIcon(src, input) {
   input.value = ''; // choosing the same file again must fire change
   if (!file) return;
   if (!ICON_FILE_TYPES.includes(file.type)) {
-    showSettingsWarn('Das Icon muss PNG oder SVG sein.');
+    showSettingsWarn(t('ui.settings.icon_type'));
     return;
   }
   if (file.size > ICON_MAX_BYTES) {
-    showSettingsWarn('Das Icon ist größer als 512 KiB.');
+    showSettingsWarn(t('ui.settings.icon_size'));
     return;
   }
   let bytes;
   try {
     bytes = await file.arrayBuffer();
   } catch (err) {
-    showSettingsWarn(`Datei konnte nicht gelesen werden (${err.message}).`);
+    showSettingsWarn(t('ui.error.file_read', { detail: err.message }));
     return;
   }
   changeSettings(() => ({
@@ -2255,32 +2253,32 @@ function settingsRow(src, i, count) {
   const kind = icon.type === 'emoji' || icon.type === 'image' ? icon.type : 'auto';
   const li = el('li', { class: 'group-row stack', 'data-id': src.id });
 
-  const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', autocomplete: 'off', 'data-action': 'name' });
+  const name = el('input', { type: 'text', class: 'name', 'aria-label': t('ui.folder.name'), autocomplete: 'off', 'data-action': 'name' });
   name.value = src.name;
   name.addEventListener('change', () => {
     const v = name.value.trim();
     if (!v) {
       name.value = src.name;
-      showSettingsWarn('Der Name darf nicht leer sein.');
+      showSettingsWarn(t('ui.error.name_empty'));
       return;
     }
     if (v !== src.name) changeSettings(() => ({ url, init: jsonPost({ name: v }) }));
   });
-  const up = el('button', { class: 'btn small', type: 'button', title: 'Nach oben', 'aria-label': `${src.name} nach oben`, text: '↑', 'data-action': 'up' });
+  const up = el('button', { class: 'btn small', type: 'button', title: t('ui.settings.up'), 'aria-label': t('ui.settings.up_named', { name: src.name }), text: '↑', 'data-action': 'up' });
   up.disabled = i === 0;
   up.addEventListener('click', () => changeSettings(moveReq(src.id, -1)));
-  const down = el('button', { class: 'btn small', type: 'button', title: 'Nach unten', 'aria-label': `${src.name} nach unten`, text: '↓', 'data-action': 'down' });
+  const down = el('button', { class: 'btn small', type: 'button', title: t('ui.settings.down'), 'aria-label': t('ui.settings.down_named', { name: src.name }), text: '↓', 'data-action': 'down' });
   down.disabled = i === count - 1;
   down.addEventListener('click', () => changeSettings(moveReq(src.id, 1)));
   li.append(el('div', { class: 'line' }, [sourceIcon(src, 'rail'), name, up, down]));
 
-  const select = el('select', { 'aria-label': `Icon von ${src.name}`, 'data-action': 'select' }, [
-    el('option', { value: 'auto', text: 'Kürzel und Farbe' }),
-    el('option', { value: 'emoji', text: 'Emoji' }),
-    el('option', { value: 'image', text: 'Bild-Datei' }),
+  const select = el('select', { 'aria-label': t('ui.settings.icon_of', { name: src.name }), 'data-action': 'select' }, [
+    el('option', { value: 'auto', text: t('ui.settings.icon_auto') }),
+    el('option', { value: 'emoji', text: t('ui.settings.icon_emoji') }),
+    el('option', { value: 'image', text: t('ui.settings.icon_image') }),
   ]);
   select.value = kind;
-  const emoji = el('input', { type: 'text', class: 'emoji', 'aria-label': 'Emoji', autocomplete: 'off', 'data-action': 'emoji' });
+  const emoji = el('input', { type: 'text', class: 'emoji', 'aria-label': t('ui.settings.icon_emoji'), autocomplete: 'off', 'data-action': 'emoji' });
   emoji.value = icon.type === 'emoji' ? icon.value : '';
   emoji.hidden = kind !== 'emoji';
   // An empty value is sent too: the server refuses it and the list is redrawn with the stored emoji.
@@ -2288,7 +2286,7 @@ function settingsRow(src, i, count) {
     const v = emoji.value.trim();
     changeSettings(() => ({ url, init: jsonPost({ icon: { type: 'emoji', value: v } }) }));
   });
-  const file = el('input', { type: 'file', accept: 'image/png,image/svg+xml', 'aria-label': `Bild-Datei für ${src.name}`, 'data-action': 'file' });
+  const file = el('input', { type: 'file', accept: 'image/png,image/svg+xml', 'aria-label': t('ui.settings.image_for', { name: src.name }), 'data-action': 'file' });
   file.hidden = kind !== 'image';
   file.addEventListener('change', () => uploadIcon(src, file));
   select.addEventListener('change', () => {
@@ -2298,11 +2296,11 @@ function settingsRow(src, i, count) {
     else if (select.value === 'emoji') emoji.focus();
   });
 
-  const hide = el('button', { class: 'btn small', type: 'button', text: src.hidden ? 'Einblenden' : 'Ausblenden', 'data-action': 'hide' });
+  const hide = el('button', { class: 'btn small', type: 'button', text: src.hidden ? t('ui.settings.show') : t('ui.settings.hide'), 'data-action': 'hide' });
   hide.addEventListener('click', () => changeSettings(() => ({ url, init: jsonPost({ hidden: !src.hidden }) })));
-  const removeBtn = el('button', { class: 'btn small', type: 'button', text: 'Entfernen', 'data-action': 'remove' });
+  const removeBtn = el('button', { class: 'btn small', type: 'button', text: t('ui.settings.remove'), 'data-action': 'remove' });
   removeBtn.addEventListener('click', () => {
-    if (confirm('Quelle aus der Bibliothek entfernen? Die Mail-Dateien bleiben erhalten.')) {
+    if (confirm(t('ui.settings.remove_confirm'))) {
       changeSettings(() => ({ url: `${url}/remove`, init: jsonPost({}) }));
     }
   });
@@ -2310,9 +2308,9 @@ function settingsRow(src, i, count) {
   if (src.kind === 'proton') li.append(targetField(src));
 
   const info = [
-    `${src.count ?? 0} Mails`,
-    src.hidden ? 'ausgeblendet' : '',
-    src.available ? '' : 'nicht erreichbar',
+    t('ui.count.mails', { count: src.count ?? 0 }),
+    src.hidden ? t('ui.source.hidden') : '',
+    src.available ? '' : t('ui.source.unreachable'),
   ].filter(Boolean).join(' · ');
   li.append(el('div', { class: 'hint', text: info }));
   return li;
@@ -2324,34 +2322,34 @@ function renderSettingsSources() {
   const list = state.sources;
   $('settings-sources').replaceChildren(...(list.length
     ? list.map((src, i) => settingsRow(src, i, list.length))
-    : [el('li', { class: 'group-row muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' })]));
+    : [el('li', { class: 'group-row muted', text: t('ui.sources.none') })]));
   restoreFocus(key);
 }
 
 /* ---------- Archive creation and automatic archiving ---------- */
 const ARCHIVE_NAME_MAX = 100;
-const TARGET_HELP = 'Mails, die online gelöscht wurden, landen beim nächsten Abruf im Ordner „Unsortiert“ dieses Archivs. Danach werden die älteren Exporte gelöscht.';
+const targetHelp = () => t('ui.settings.target_help');
 
 // Ziel-Archiv of a proton source: the archive that takes the mails deleted online. "" turns the automation off.
 function targetField(src) {
   const archives = state.sources.filter((s) => s.archive && s.available);
   const current = src.archive_target || '';
-  const select = el('select', { 'aria-label': `Ziel-Archiv von ${src.name}`, 'aria-describedby': `target-help-${src.id}`, 'data-action': 'target' }, [
-    el('option', { value: '', text: 'Keins (Automatik aus)' }),
+  const select = el('select', { 'aria-label': t('ui.settings.target_of', { name: src.name }), 'aria-describedby': `target-help-${src.id}`, 'data-action': 'target' }, [
+    el('option', { value: '', text: t('ui.settings.target_none') }),
     ...archives.map((a) => el('option', { value: a.id, text: a.name })),
   ]);
   // A target that is no longer reachable stays selected, so the select does not claim "Keins".
   const kept = state.sources.find((s) => s.id === current && s.archive && !s.available);
-  if (kept) select.append(el('option', { value: kept.id, text: `${kept.name} (nicht erreichbar)` }));
+  if (kept) select.append(el('option', { value: kept.id, text: t('ui.source.unreachable_named', { name: kept.name }) }));
   select.value = current;
   select.disabled = !state.sources.some((s) => s.archive);
   select.addEventListener('change', () => {
     const url = `/api/sources/${encodeURIComponent(src.id)}`;
     changeSettings(() => ({ url, init: jsonPost({ archive_target: select.value }) }));
   });
-  const field = el('label', { class: 'field' }, [el('span', { text: 'Ziel-Archiv' }), select]);
-  const parts = [el('div', { class: 'hint', id: `target-help-${src.id}`, text: TARGET_HELP })];
-  if (select.disabled) parts.push(el('div', { class: 'hint', text: 'Zuerst ein Archiv anlegen.' }));
+  const field = el('label', { class: 'field' }, [el('span', { text: t('ui.settings.target') }), select]);
+  const parts = [el('div', { class: 'hint', id: `target-help-${src.id}`, text: targetHelp() })];
+  if (select.disabled) parts.push(el('div', { class: 'hint', text: t('ui.transfer.need_archive') }));
   return el('div', {}, [field, ...parts]);
 }
 
@@ -2373,11 +2371,11 @@ $('settings-archive-new').addEventListener('submit', async (e) => {
   const input = e.currentTarget.elements.name;
   const name = input.value.trim();
   if (!name) {
-    showSettingsWarn('Der Name darf nicht leer sein.');
+    showSettingsWarn(t('ui.error.name_empty'));
     return;
   }
   if ([...name].length > ARCHIVE_NAME_MAX) {
-    showSettingsWarn(`Der Name darf höchstens ${ARCHIVE_NAME_MAX} Zeichen lang sein.`);
+    showSettingsWarn(t('ui.folder.name_max', { max: ARCHIVE_NAME_MAX }));
     return;
   }
   const res = await changeSettings(() => ({ url: '/api/archives', init: jsonPost({ name }) }));
@@ -2425,14 +2423,14 @@ function showAutoError(msg) {
 
 function autoPausedNotice(src, named) {
   const n = src.auto_paused.missing;
-  const text = `${named ? `${src.name}: ` : ''}Automatik angehalten: ${n} ${n === 1 ? 'Mail fehlt' : 'Mails fehlen'} im neuen Export`;
+  const text = `${named ? `${src.name}: ` : ''}${t('ui.settings.auto_paused', { count: n })}`;
   const url = `/api/sources/${encodeURIComponent(src.id)}/auto`;
-  const keep = el('button', { class: 'btn small primary', type: 'button', text: 'Trotzdem archivieren und alte Exporte löschen' });
-  const drop = el('button', { class: 'btn small', type: 'button', text: 'Verwerfen' });
+  const keep = el('button', { class: 'btn small primary', type: 'button', text: t('ui.settings.auto_force') });
+  const drop = el('button', { class: 'btn small', type: 'button', text: t('ui.settings.auto_drop') });
   // The forced job copies from the source's mails, so it needs the source reachable.
   if (!src.available) {
     keep.disabled = true;
-    keep.title = 'Quelle nicht erreichbar';
+    keep.title = t('ui.settings.source_unreachable');
   }
   // Busy ends with a redraw, so a notice rebuilt during the job is drawn with the state then.
   const setBusy = (busy) => {
@@ -2442,11 +2440,11 @@ function autoPausedNotice(src, named) {
   setBusy(autoBusy.has(src.id));
   keep.addEventListener('click', async () => {
     if (autoBusy.has(src.id)) return;
-    if (!confirm('Die fehlenden Mails werden ins Ziel-Archiv kopiert und die alten Exporte danach gelöscht. Fortfahren?')) return;
+    if (!confirm(t('ui.settings.auto_force_confirm'))) return;
     autoBusy.add(src.id);
     setBusy(true);
     try {
-      const err = await postJob(url, { action: 'force' }, 'Die Automatik konnte nicht gestartet werden');
+      const err = await postJob(url, { action: 'force' }, t('ui.error.auto_start'));
       if (err) {
         showAutoError(err);
         return;
@@ -2462,7 +2460,7 @@ function autoPausedNotice(src, named) {
     autoBusy.add(src.id);
     setBusy(true);
     try {
-      const err = await postJob(url, { action: 'discard' }, 'Die Automatik konnte nicht verworfen werden');
+      const err = await postJob(url, { action: 'discard' }, t('ui.error.auto_discard'));
       if (err) {
         showAutoError(err);
         return;
@@ -2491,7 +2489,7 @@ async function postTag(path, body) {
     signal: timeoutSignal(),
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(I18N.errorText(data, res.status));
   return data;
 }
 
@@ -2511,7 +2509,7 @@ function changeTags(task) {
     try {
       await task();
     } catch (err) {
-      showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Änderung konnte nicht gespeichert werden (${err.message}).`);
+      showSettingsWarn(isTimeout(err) ? timeoutText() : t('ui.error.change_save', { detail: err.message }));
     }
     await loadTags(); // the server may have applied a timed-out change anyway
     renderSettingsTags();
@@ -2520,47 +2518,47 @@ function changeTags(task) {
   });
 }
 
-function settingsTagRow(t) {
-  const url = `/api/tags/${encodeURIComponent(t.id)}`;
+function settingsTagRow(tagItem) {
+  const url = `/api/tags/${encodeURIComponent(tagItem.id)}`;
   const li = el('li', { class: 'group-row stack' });
 
-  const name = el('input', { type: 'text', class: 'name', 'aria-label': 'Name', maxlength: '40', autocomplete: 'off' });
-  name.value = t.name || '';
+  const name = el('input', { type: 'text', class: 'name', 'aria-label': t('ui.folder.name'), maxlength: '40', autocomplete: 'off' });
+  name.value = tagItem.name || '';
   name.addEventListener('change', () => {
     const v = name.value.trim();
     if (!v) {
-      name.value = t.name || '';
-      showSettingsWarn('Der Name darf nicht leer sein.');
+      name.value = tagItem.name || '';
+      showSettingsWarn(t('ui.error.name_empty'));
       return;
     }
-    if (v !== t.name) changeTags(() => postTag(url, { name: v }));
+    if (v !== tagItem.name) changeTags(() => postTag(url, { name: v }));
   });
-  const color = el('input', { type: 'color', 'aria-label': `Farbe von ${t.name || ''}` });
+  const color = el('input', { type: 'color', 'aria-label': t('ui.settings.color_of', { name: tagItem.name || '' }) });
   // Only a colour in the #rrggbb form the server accepts goes into the colour input.
-  color.value = COLOR_RE.test(t.color || '') ? t.color.toLowerCase() : '#808080';
+  color.value = COLOR_RE.test(tagItem.color || '') ? tagItem.color.toLowerCase() : '#808080';
   color.addEventListener('change', () => {
-    if (COLOR_RE.test(color.value) && color.value.toLowerCase() !== (t.color || '').toLowerCase()) {
+    if (COLOR_RE.test(color.value) && color.value.toLowerCase() !== (tagItem.color || '').toLowerCase()) {
       changeTags(() => postTag(url, { color: color.value }));
     }
   });
-  const del = el('button', { class: 'btn small', type: 'button', text: 'Löschen' });
+  const del = el('button', { class: 'btn small', type: 'button', text: t('ui.folder.delete') });
   del.addEventListener('click', () => {
-    const n = t.count ?? 0;
-    if (!confirm(`Tag „${t.name || ''}“ löschen? Er wird von ${n} Mails entfernt.`)) return;
+    const n = tagItem.count ?? 0;
+    if (!confirm(t('ui.settings.tag_delete_confirm', { name: tagItem.name || '', count: n }))) return;
     changeTags(async () => {
       await postTag(`${url}/remove`, {});
-      forgetTag(t.id);
+      forgetTag(tagItem.id);
     });
   });
-  li.append(el('div', { class: 'line' }, [tagDot(t), name, color, del]));
-  li.append(el('div', { class: 'hint', text: `${t.count ?? 0} Mails` }));
+  li.append(el('div', { class: 'line' }, [tagDot(tagItem), name, color, del]));
+  li.append(el('div', { class: 'hint', text: t('ui.count.mails', { count: tagItem.count ?? 0 }) }));
   return li;
 }
 
 function renderSettingsTags() {
   $('settings-tags').replaceChildren(...(state.tags.length
     ? state.tags.map(settingsTagRow)
-    : [el('li', { class: 'group-row muted', text: 'Noch keine Tags.' })]));
+    : [el('li', { class: 'group-row muted', text: t('ui.settings.no_tags') })]));
 }
 
 /* ---------- Duplikate aufräumen (Einstellungen) ---------- */
@@ -2587,7 +2585,7 @@ function renderSettingsCleanup() {
   if (pick) $('cleanup-reference').value = pick;
 
   const usable = targets.length > 0 && refs.length > 0;
-  $('cleanup-none').textContent = targets.length ? 'Keine Referenz-Quelle vorhanden.' : 'Keine importierte Outlook-Quelle vorhanden.';
+  $('cleanup-none').textContent = targets.length ? t('ui.settings.no_reference') : t('ui.settings.no_outlook');
   $('cleanup-none').hidden = usable;
   $('cleanup-fields').disabled = !usable;
   updateCleanupHint();
@@ -2597,8 +2595,7 @@ function renderSettingsCleanup() {
 }
 
 function updateCleanupHint() {
-  $('cleanup-delete-hint').textContent = `Die Kopien verschwinden aus „${nameOf($('cleanup-target').value)}“. `
-    + `Die Mail bleibt in „${nameOf($('cleanup-reference').value)}“.`;
+  $('cleanup-delete-hint').textContent = t('ui.settings.cleanup_delete_hint', { target: nameOf($('cleanup-target').value), reference: nameOf($('cleanup-reference').value) });
 }
 
 // Back to "no preview": a late answer for the old selection is ignored through cleanupSeq.
@@ -2626,10 +2623,10 @@ function renderCleanupPreview() {
   if (!p) return;
   const d = p.data;
   const freed = p.action === 'link' ? d.bytes_link : d.bytes_delete;
-  const lines = [el('p', { text: `${d.count} doppelte Mails, ${fileSize(freed)} werden frei.` })];
-  if (d.already_linked) lines.push(el('p', { text: `${d.already_linked} bereits verlinkt` }));
-  if (d.missing_reference) lines.push(el('p', { text: `${d.missing_reference} ohne Referenz-Datei, werden übersprungen` }));
-  if (d.link_possible === false && d.link_reason) lines.push(el('p', { text: d.link_reason }));
+  const lines = [el('p', { text: t('ui.cleanup.duplicates', { count: d.count, freed }) })];
+  if (d.already_linked) lines.push(el('p', { text: t('ui.cleanup.already_linked', { count: d.already_linked }) }));
+  if (d.missing_reference) lines.push(el('p', { text: t('ui.cleanup.missing_reference', { count: d.missing_reference }) }));
+  if (d.link_possible === false && d.link_reason) lines.push(el('p', { text: I18N.msgText(d.link_reason) }));
   box.replaceChildren(...lines);
 }
 
@@ -2647,12 +2644,12 @@ async function previewCleanup() {
     });
     data = await res.json().catch(() => null);
   } catch (err) {
-    if (seq === cleanupSeq) showSettingsWarn(isTimeout(err) ? TIMEOUT_TEXT : `Vorschau konnte nicht geladen werden (${err.message}).`);
+    if (seq === cleanupSeq) showSettingsWarn(isTimeout(err) ? timeoutText() : t('ui.error.preview_load', { detail: err.message }));
     return;
   }
   if (seq !== cleanupSeq) return; // the selection changed while the preview was loading
   if (!res.ok) {
-    showSettingsWarn(res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`);
+    showSettingsWarn(res.status === 409 ? t('ui.error.busy') : I18N.errorText(data, res.status));
     return;
   }
   // A pair that cannot be linked falls back to deleting, so the preview shows what will happen.
@@ -2670,8 +2667,8 @@ async function runCleanup() {
   const reference = $('cleanup-reference').value;
   const { action, data } = p;
   const question = action === 'link'
-    ? `${data.count} Mails in „${nameOf(target)}“ durch Hardlinks auf „${nameOf(reference)}“ ersetzen?`
-    : `${data.count} Mails endgültig aus „${nameOf(target)}“ löschen? Das lässt sich nicht rückgängig machen.`;
+    ? t('ui.cleanup.confirm_link', { count: data.count, target: nameOf(target), reference: nameOf(reference) })
+    : t('ui.cleanup.confirm_delete', { count: data.count, target: nameOf(target), reference: nameOf(reference) });
   if (!confirm(question)) return;
 
   $('cleanup-run-btn').disabled = true; // a second click would only answer 409
@@ -2690,8 +2687,7 @@ async function runCleanup() {
 function renderCleanupReport(st) {
   const r = st.state === 'done' ? st.result : null;
   if (!r) return;
-  $('cleanup-report').textContent = `${r.linked} ersetzt, ${r.deleted} gelöscht, ${r.skipped} übersprungen, `
-    + `${r.failed} Fehler, ${fileSize(r.freed)} frei. Protokoll: ${r.log_file}`;
+  $('cleanup-report').textContent = t('ui.cleanup.report', { linked: r.linked, deleted: r.deleted, skipped: r.skipped, failed: r.failed, freed: r.freed, log: r.log_file });
   $('cleanup-report').hidden = false;
   resetCleanupPreview();
 }
@@ -2723,7 +2719,7 @@ $('settings-tag-new').addEventListener('submit', (e) => {
   const input = e.currentTarget.elements.name;
   const name = input.value.trim();
   if (!name) {
-    showSettingsWarn('Der Name darf nicht leer sein.');
+    showSettingsWarn(t('ui.error.name_empty'));
     return;
   }
   changeTags(async () => {
@@ -2796,10 +2792,10 @@ let navAnim = null; // running spring: { s: {x, v}, target, id }
 let navFade = null; // running fade-in (reduced motion)
 
 function updateBackList() {
-  let text = 'Ordner';
-  if (state.tag === 'star') text = 'Markiert';
-  else if (state.tag) text = state.tags.find((t) => String(t.id) === state.tag)?.name || 'Tag';
-  else if (state.folder) text = state.folders.find((f) => f.key === state.folder)?.name || 'Ordner';
+  let text = t('ui.nav.folder');
+  if (state.tag === 'star') text = t('ui.tags.starred');
+  else if (state.tag) text = state.tags.find((t) => String(t.id) === state.tag)?.name || t('ui.tags.tag');
+  else if (state.folder) text = folderLabel(state.folders.find((f) => f.key === state.folder) || {}) || t('ui.nav.folder');
   $('back-list-text').textContent = text;
 }
 
@@ -3146,7 +3142,7 @@ async function loadConfig() {
   try {
     config = await api('/api/config');
   } catch (_) {
-    loadWarnings.set('config', 'Konfiguration konnte nicht geladen werden.');
+    loadWarnings.set('config', t('ui.error.config_load'));
     renderLoadWarn();
     return;
   }
@@ -3161,7 +3157,7 @@ async function loadSources() {
   try {
     sources = await api('/api/sources');
   } catch (_) {
-    loadWarnings.set('sources', 'Quellen konnten nicht geladen werden.');
+    loadWarnings.set('sources', t('ui.error.sources_load'));
     renderLoadWarn();
     return;
   }
@@ -3170,6 +3166,28 @@ async function loadSources() {
   renderLoadWarn();
   renderAutoPaused();
 }
+
+// A language switch redraws everything that shows texts. Open dialogs stay open.
+function rerender() {
+  renderRail();
+  renderFolders();
+  updateSearchPlaceholder();
+  updateFolderAdd();
+  updateFetchArea();
+  renderTags();
+  renderList();
+  updateSelectUI();
+  updateMore();
+  if (state.mail && !state.mailStale && !$('mail').hidden) renderMail(state.mailSource, state.mail);
+  else if (!$('placeholder').hidden && emptyKind === 'none') showEmpty('none', t('ui.mail.none_selected'));
+  if (lastJob) {
+    renderJob(lastJob);
+    if ($('fetch-dialog').open) updateFetchDialog(lastJob);
+  }
+  renderAutoPaused();
+  if ($('settings-dialog').open) renderSettingsAll();
+}
+I18N.onChange(rerender);
 
 loadConfig().then(async () => {
   if (state.config && !state.config.configured) {

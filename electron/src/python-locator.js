@@ -1,5 +1,6 @@
 'use strict';
 
+const { t } = require('./i18n');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
@@ -36,35 +37,35 @@ async function probePython(cmd, run = defaultRun) {
     ({ stdout } = await run(file, [...prefix, '-c', PROBE_SCRIPT], { timeout: PROBE_TIMEOUT_MS }));
   } catch (err) {
     if (err && err.killed) {
-      return { ok: false, reason: 'Zeitüberschreitung beim Start von Python' };
+      return { ok: false, reason: t('electron.python.timeout') };
     }
     if (err && err.code === 'ENOENT') {
-      return { ok: false, reason: 'nicht gefunden' };
+      return { ok: false, reason: t('electron.python.not_found') };
     }
-    return { ok: false, reason: `Start fehlgeschlagen: ${err && err.message ? err.message : err}` };
+    return { ok: false, reason: t('electron.python.start_failed', { detail: err && err.message ? err.message : String(err) }) };
   }
 
   let info;
   try {
     info = JSON.parse(String(stdout).trim());
   } catch {
-    return { ok: false, reason: 'Ungültige Ausgabe beim Python-Test' };
+    return { ok: false, reason: t('electron.python.bad_output') };
   }
 
   const version = Array.isArray(info && info.v) ? info.v : null;
   if (!version || version.length < 3) {
-    return { ok: false, reason: 'Ungültige Versionsangabe beim Python-Test' };
+    return { ok: false, reason: t('electron.python.bad_version') };
   }
   if (!isAtLeast(version, MIN_PYTHON)) {
     return {
       ok: false,
-      reason: `Python ${version.join('.')} ist zu alt (mindestens ${MIN_PYTHON.join('.')} erforderlich)`,
+      reason: t('electron.python.too_old', { version: version.join('.'), min: MIN_PYTHON.join('.') }),
     };
   }
   if (!info.venv) {
     return {
       ok: false,
-      reason: 'venv/ensurepip fehlt (unter Debian/Ubuntu: Paket python3-venv installieren)',
+      reason: t('electron.python.no_venv'),
     };
   }
   return { ok: true, probe: { cmd, version } };

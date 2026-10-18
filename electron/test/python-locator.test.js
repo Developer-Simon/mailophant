@@ -58,7 +58,7 @@ test('probePython meldet Timeout (killed) mit Zeitüberschreitung', async () => 
   });
   const result = await probePython(['python3'], run);
   assert.equal(result.ok, false);
-  assert.match(result.reason, /Zeitüberschreitung/);
+  assert.match(result.reason, /timed out/i);
 });
 
 test('probePython meldet fehlendes ensurepip mit Hinweis auf python3-venv', async () => {

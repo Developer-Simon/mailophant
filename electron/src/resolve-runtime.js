@@ -1,5 +1,6 @@
 'use strict';
 
+const { t } = require('./i18n');
 const path = require('node:path');
 const nodeFs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
@@ -8,7 +9,6 @@ const { findSystemPython } = require('./python-locator');
 const { ensureVenv } = require('./venv-manager');
 
 const PYPFF_CHECK_TIMEOUT_MS = 30 * 1000;
-const FULL_HINT = 'Die „full“-Variante der App bringt Python mit.';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,12 +41,8 @@ class RuntimeUnavailableError extends Error {
    */
   constructor(rejected) {
     const lines = rejected.map((r) => `  - ${r.cmd.join(' ')}: ${r.reason}`);
-    const details = lines.length > 0 ? lines.join('\n') : '  (keine Kandidaten gefunden)';
-    super(
-      'Kein nutzbares Python gefunden.\n' +
-        `Geprüft wurde:\n${details}\n` +
-        `Bitte Python 3.10 oder neuer mit venv installieren. ${FULL_HINT}`,
-    );
+    const details = lines.length > 0 ? lines.join('\n') : `  ${t('electron.runtime.none_found')}`;
+    super(t('electron.runtime.unavailable', { details, hint: t('electron.runtime.full_hint') }));
     this.name = 'RuntimeUnavailableError';
     this.rejected = rejected;
   }

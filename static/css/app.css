@@ -487,3 +487,6 @@ html.electron.platform-mac #titlebar { padding-inline: 5.25rem; } /* 80 px traff
   }
   .msg.selected { --ink-2: #fff; --dot: #fff; }
 }
+
+/* No flash of untranslated text: shown once js/i18n.js has applied the language */
+html:not(.i18n-ready) body { visibility: hidden; }

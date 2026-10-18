@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from mailviewer import transfer
+from mailviewer.i18n import Msg, detail, msg
 from mailviewer.store import META_SUFFIX, mail_ident
 
 MAX_VANISHED_RATIO = 0.2
@@ -107,32 +108,32 @@ def should_brake(plan: Plan) -> bool:
 
 
 def archive_candidates(candidates: list[Candidate], dest_dir: str, folder_id: str | None,
-                       log: Callable[[str], None], progress: Callable[[int, int], None] | None = None
+                       log: Callable[[Msg], None], progress: Callable[[int, int], None] | None = None
                        ) -> transfer.TransferResult:
     items = [transfer.Item(c.export_dir, c.mid, c.ident, "copy") for c in candidates]
     return transfer.transfer(items, dest_dir, folder_id, log, progress)
 
 
-def delete_exports(old_dirs: list[str], active_dir: str, log: Callable[[str], None]) -> int:
+def delete_exports(old_dirs: list[str], active_dir: str, log: Callable[[Msg], None]) -> int:
     active = os.path.realpath(active_dir)
     deleted = 0
     for d in old_dirs:
         if os.path.islink(d):
-            log(f"{d}: Symlink, übersprungen")
+            log(msg("log.skip_symlink", dir=d))
             continue
         if not os.path.basename(os.path.normpath(d)).startswith("mail_"):
-            log(f"{d}: kein Exportordner, übersprungen")
+            log(msg("log.skip_not_export", dir=d))
             continue
         if not os.path.isfile(os.path.join(d, "labels.json")):
-            log(f"{d}: ohne labels.json, übersprungen")
+            log(msg("log.skip_no_labels", dir=d))
             continue
         if os.path.realpath(d) == active:
-            log(f"{d}: aktiver Export, übersprungen")
+            log(msg("log.skip_active", dir=d))
             continue
         try:
             shutil.rmtree(d)
         except OSError as exc:
-            log(f"{d}: Löschen fehlgeschlagen: {exc}")
+            log(msg("log.delete_failed", dir=d, detail=detail(exc)))
             break
         deleted += 1
     return deleted

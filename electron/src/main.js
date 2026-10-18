@@ -7,7 +7,8 @@ const { findSystemPython } = require('./python-locator');
 const { ensureVenv } = require('./venv-manager');
 const { startServer, ServerStartError } = require('./server-process');
 const { runSmoke } = require('./smoke');
-const { installHint } = require('./install-hint');
+const i18n = require('./i18n');
+const { t } = i18n;
 const { migrateLegacyConfig } = require('./legacy-config');
 
 const WEB_PREFERENCES = { contextIsolation: true, nodeIntegration: false, sandbox: true };
@@ -96,7 +97,7 @@ function messageOf(err) {
 /** Fehlertext für den Dialog; bei ServerStartError samt Ausgabe des Servers. */
 function describeError(err) {
   if (err instanceof ServerStartError && err.stderrTail) {
-    return `${err.message}\n\nLetzte Ausgabe des Servers:\n${err.stderrTail}`;
+    return `${err.message}\n\n${t('electron.error.server_output')}\n${err.stderrTail}`;
   }
   return messageOf(err);
 }
@@ -116,7 +117,7 @@ function loadingPage(text) {
   const dark = chromeColors(true);
   // Kopfzeile wie im Hauptfenster: ziehbar, Farben spiegeln chromeColors() (Light/Dark per prefers-color-scheme).
   const html =
-    '<!doctype html><html lang="de"><head><meta charset="utf-8"><title>' + TITLE + '</title>' +
+    '<!doctype html><html lang="' + i18n.currentLanguage() + '"><head><meta charset="utf-8"><title>' + TITLE + '</title>' +
     '<style>' +
     ':root{--bar:' + light.color + ';--bar-ink:' + light.symbolColor + ';--content:#ffffff;--ink:#1d1d1f}' +
     '@media (prefers-color-scheme: dark){:root{--bar:' + dark.color + ';--bar-ink:' + dark.symbolColor +
@@ -257,7 +258,7 @@ async function startBackend() {
     python: runtime.python,
     appRoot: getAppRoot(),
     configPath: getConfigPath(),
-    env: { MAILVIEWER_INSTALL_HINT: installHint(runtime.mode) },
+    env: { MAILVIEWER_INSTALL_MODE: runtime.mode },
   });
   server = handle;
   serverUrl = handle.url;
@@ -268,7 +269,7 @@ async function startBackend() {
 /** Server neu starten und das Hauptfenster neu laden. */
 async function restartBackend() {
   await stopServer();
-  showLoading('Starte Viewer …');
+  showLoading(t('electron.loading.start_viewer'));
   await startBackend();
   if (quitting) return;
   if (mainWindow) {
@@ -284,11 +285,9 @@ async function reinstallPst() {
   try {
     const found = await findSystemPython();
     if (!found.python) {
-      throw new Error(
-        'Kein System-Python gefunden. Bitte Python 3.10 oder neuer mit venv installieren.',
-      );
+      throw new Error(t('electron.error.no_python'));
     }
-    showLoading('Installiere PST-Unterstützung …');
+    showLoading(t('electron.loading.install_pst'));
     await ensureVenv({
       probe: found.python,
       venvDir: getVenvDir(),
@@ -298,7 +297,7 @@ async function reinstallPst() {
     await restartBackend();
   } catch (err) {
     closeLoading();
-    dialog.showErrorBox('PST-Unterstützung', describeError(err));
+    dialog.showErrorBox(t('electron.dialog.pst'), describeError(err));
     // Ohne laufenden Server ist der Viewer nicht mehr nutzbar.
     if (!server) app.quit();
   }
@@ -313,10 +312,10 @@ function buildMenu() {
     { role: 'viewMenu' },
     { role: 'windowMenu' },
     {
-      label: 'Werkzeuge',
+      label: t('electron.menu.tools'),
       submenu: [
         {
-          label: 'PST-Unterstützung erneut installieren',
+          label: t('electron.menu.reinstall_pst'),
           enabled: runtime !== null && runtime.mode === 'system',
           click: () => runExclusive(reinstallPst),
         },
@@ -342,16 +341,29 @@ async function importLegacyConfig() {
   }
 }
 
+function initLanguage() {
+  return i18n.init({
+    dir: path.join(getAppRoot(), 'static', 'i18n'),
+    setting: i18n.readSetting(getConfigPath()),
+    preferred: app.getPreferredSystemLanguages(),
+  });
+}
+
 async function startup() {
-  await importLegacyConfig();
-  showLoading('Suche Python-Umgebung …');
+  await importLegacyConfig(); // the saved language may come from the old config
+  initLanguage();
+  i18n.watchSetting(getConfigPath(), () => {
+    initLanguage();
+    Menu.setApplicationMenu(buildMenu());
+  });
+  showLoading(t('electron.loading.find_python'));
   runtime = await resolveRuntime({
     userDataDir: app.getPath('userData'),
     resourcesDir: process.resourcesPath,
     onProgress: showLoading,
   });
   Menu.setApplicationMenu(buildMenu());
-  showLoading('Starte Viewer …');
+  showLoading(t('electron.loading.start_viewer'));
   await startBackend();
   if (quitting) return;
   if (SMOKE) {
@@ -398,7 +410,7 @@ async function run() {
     closeLoading();
     // Während des Beendens kein Fehlerdialog; onBeforeQuit beendet die App ohnehin.
     if (quitting) return;
-    dialog.showErrorBox('Start fehlgeschlagen', describeError(err));
+    dialog.showErrorBox(t('electron.dialog.start_failed'), describeError(err));
     // app.exit umgeht before-quit; server ist hier noch null, daher ist nichts zu stoppen.
     app.exit(1);
   }

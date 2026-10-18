@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from mailviewer import store
+from mailviewer.i18n import Msg, detail, msg
 from mailviewer.archive import atomic_write_json
 
 ALL_MAIL = "5"
@@ -41,7 +42,7 @@ def dest_mid(ident: str) -> str:
 
 
 def transfer(items: list[Item], dest_dir: str, folder_id: str | None,
-             log: Callable[[str], None], progress: Callable[[int, int], None] | None = None) -> TransferResult:
+             log: Callable[[Msg], None], progress: Callable[[int, int], None] | None = None) -> TransferResult:
     result = TransferResult()
     labels = [folder_id, ALL_MAIL] if folder_id and folder_id != ALL_MAIL else [ALL_MAIL]
     for i, item in enumerate(items, 1):
@@ -49,18 +50,18 @@ def transfer(items: list[Item], dest_dir: str, folder_id: str | None,
             _one(item, dest_dir, labels, result, log)
         except (OSError, ValueError) as exc:
             result.failed += 1
-            log(f"{item.src_dir} {item.mid}: fehlgeschlagen: {exc}")
+            log(msg("log.transfer_failed", dir=item.src_dir, id=item.mid, detail=detail(exc)))
         if progress:
             progress(i, len(items))
     return result
 
 
-def _one(item: Item, dest_dir: str, labels: list[str], result: TransferResult, log: Callable[[str], None]) -> None:
+def _one(item: Item, dest_dir: str, labels: list[str], result: TransferResult, log: Callable[[Msg], None]) -> None:
     if item.mode not in ("copy", "move", "refile"):
-        raise ValueError(f"unbekannter Modus {item.mode!r}")
+        raise ValueError(f"unknown mode {item.mode!r}")
     if not item.ident:
         result.skipped += 1
-        log(f"{item.src_dir} {item.mid}: ohne Kennung übersprungen")
+        log(msg("log.transfer_no_ident", dir=item.src_dir, id=item.mid))
         return
     if item.mode == "refile":
         _set_labels(os.path.join(dest_dir, item.mid + store.META_SUFFIX), labels)
@@ -123,9 +124,9 @@ def _read_payload(path: str) -> dict[str, Any]:
     try:
         payload = doc["Payload"]
     except (KeyError, TypeError) as exc:
-        raise ValueError(f"{path}: kein Payload") from exc
+        raise ValueError(f"{path}: no payload") from exc
     if not isinstance(payload, dict):
-        raise ValueError(f"{path}: Payload ist kein Objekt")
+        raise ValueError(f"{path}: payload is not an object")
     return payload
 
 

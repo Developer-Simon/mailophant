@@ -156,7 +156,7 @@ class ArchiveTests(unittest.TestCase):
         logs = []
         self.assertEqual(archive.delete_folder(self.d, f1["ID"], logs.append), 1)
         self.assertEqual(len(logs), 1)
-        self.assertIn("bad", logs[0])
+        self.assertEqual((logs[0].code, logs[0].params["name"]), ("log.skipped_file", "bad" + archive.store.META_SUFFIX))
 
     def test_delete_breaks_hardlink(self):
         other = os.path.join(self.tmp, "other")

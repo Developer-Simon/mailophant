@@ -1,5 +1,6 @@
 'use strict';
 
+const { t } = require('./i18n');
 const { spawn, execFile } = require('node:child_process');
 const readline = require('node:readline');
 
@@ -136,11 +137,11 @@ function launch(opts, port) {
 function startError(result, timeoutMs) {
   let message;
   if (result.timedOut) {
-    message = `Python-Server hat innerhalb von ${timeoutMs} ms keine Adresse gemeldet`;
+    message = t('electron.server.timeout', { ms: timeoutMs });
   } else if (result.error) {
-    message = `Python-Server konnte nicht gestartet werden: ${result.error.message}`;
+    message = t('electron.server.start_failed', { detail: result.error.message });
   } else {
-    message = `Python-Server beendet (Code ${result.code ?? result.signal})`;
+    message = t('electron.server.exited', { code: result.code ?? result.signal });
   }
   return new ServerStartError(message, result.tail);
 }

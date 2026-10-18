@@ -191,12 +191,12 @@ test('venv-Anlage schlägt fehl: ensureVenv wirft', async (t) => {
   await assert.rejects(ensureVenv({ probe: PROBE, venvDir, run }), /venv nicht möglich/);
 });
 
-test('onProgress meldet die Schritte auf Deutsch', async (t) => {
+test('onProgress meldet die Schritte', async (t) => {
   const venvDir = await setup(t);
   const { run } = makeRun();
   const messages = [];
 
   await ensureVenv({ probe: PROBE, venvDir, run, onProgress: (m) => messages.push(m) });
 
-  assert.deepEqual(messages, ['Lege Python-Umgebung an …', 'Installiere PST-Unterstützung …']);
+  assert.deepEqual(messages, ['Creating Python environment …', 'Installing PST support …']);
 });
