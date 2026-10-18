@@ -85,11 +85,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write     # Sigstore certificate for the attestation
+      attestations: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: installers
           merge-multiple: true
+      # Provenance: `gh attestation verify <file> --repo <owner>/mailophant` proves the installer was
+      # built by this workflow from this tag.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: installers/*
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

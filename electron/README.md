@@ -73,4 +73,10 @@ Auf Systemen ohne Display unter `xvfb-run -a` starten (`--ozone-platform=headles
 3. Rauchtest des Linux-Pakets mit `--smoke` unter `xvfb-run`, ohne Python im PATH
 4. GitHub-Release zum Tag mit AppImage, zwei dmg, NSIS-Installer und `SHA256SUMS.txt`. Tags mit Bindestrich (`v0.2.0-rc.1`) werden als Vorabversion markiert.
 
+Jeder Installer im Release trägt eine Build-Provenance-Attestation (Sigstore, über `actions/attest-build-provenance`). Prüfen, dass eine Datei aus diesem Workflow und Tag stammt:
+
+```bash
+gh attestation verify Mailophant-0.2.0-x86_64-full.AppImage --repo <owner>/mailophant
+```
+
 Über „Run workflow“ (`workflow_dispatch`) entstehen die Installer nur als Workflow-Artefakte, ohne Release. Die Pakete sind nicht signiert: macOS verlangt beim ersten Start Rechtsklick → Öffnen, Windows zeigt SmartScreen.
