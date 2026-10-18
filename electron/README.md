@@ -62,15 +62,15 @@ ELECTRON_RUN_AS_NODE= env -i DISPLAY=:0 dist/full/linux-unpacked/mailophant --sm
 ELECTRON_RUN_AS_NODE= env -i DISPLAY=:0 dist/slim/linux-unpacked/mailophant --smoke; echo exit=$?
 ```
 
-Auf Systemen ohne Display: `--ozone-platform=headless` anhängen.
+Auf Systemen ohne Display unter `xvfb-run -a` starten (`--ozone-platform=headless` stürzt ohne X-Display ab) und `DISPLAY` durch `env -i` durchreichen, wie in der CI.
 
-## CI-Matrix (später)
+## Releases (CI)
 
-Das Repo liegt derzeit ohne Remote, daher gibt es noch keinen Workflow. Wenn es auf GitHub liegt, dann je Runner (`ubuntu-latest`, `macos-latest` für arm64, ein Intel-macOS-Runner für x64, `windows-latest`):
+`.github/workflows/release.yml` läuft bei jedem Tag `v*` (z. B. `git tag v0.2.0 && git push origin v0.2.0`):
 
-1. `npm ci` im Ordner `electron/`
-2. `npm test`
-3. `node runtime/build-runtime.js`
-4. `npm run dist:full` und `npm run dist:slim`
-5. Artefakte aus `electron/dist/` hochladen
-6. Rauchtest des full-Pakets mit `--smoke` ohne Python im PATH (siehe oben)
+1. Python- und Electron-Tests auf `ubuntu-latest`
+2. je Runner (`ubuntu-latest`, `macos-latest` für arm64, `macos-15-intel` für x64, `windows-latest`): Version aus dem Tag in `package.json`, `npm ci`, `npm run build:runtime`, full-Paket mit electron-builder
+3. Rauchtest des Linux-Pakets mit `--smoke` unter `xvfb-run`, ohne Python im PATH
+4. GitHub-Release zum Tag mit AppImage, zwei dmg, NSIS-Installer und `SHA256SUMS.txt`. Tags mit Bindestrich (`v0.2.0-rc.1`) werden als Vorabversion markiert.
+
+Über „Run workflow“ (`workflow_dispatch`) entstehen die Installer nur als Workflow-Artefakte, ohne Release. Die Pakete sind nicht signiert: macOS verlangt beim ersten Start Rechtsklick → Öffnen, Windows zeigt SmartScreen.

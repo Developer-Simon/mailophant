@@ -153,6 +153,9 @@ Then open <http://127.0.0.1:8025/>.
 
 ## Packages
 
+Pushing a tag like `v0.2.0` builds the installers for Linux, macOS (arm64 and
+x64) and Windows on GitHub Actions and attaches them to a release of that tag.
+
 The desktop app can be built as an AppImage (Linux), a dmg (macOS) or an NSIS
 installer (Windows). The slim variant uses the system Python. The full variant
 ships its own interpreter with Outlook support included.
