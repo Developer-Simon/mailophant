@@ -1605,6 +1605,7 @@ function renderJob(st) {
     $('job-text').textContent = fetching ? t('ui.fetch.running')
       : st.kind === 'import' ? t('ui.job.importing', { progress: prog })
       : st.kind === 'cleanup' ? t('ui.job.cleaning')
+      : st.kind === 'cli_install' ? t('ui.job.cli_installing')
       : st.kind === 'archive' ? t('ui.job.archiving', { progress: prog })
       : st.progress ? t('ui.job.indexing_progress', { done: st.progress.done, total: st.progress.total }) : t('ui.job.indexing');
     $('job-last').textContent = I18N.msgText((st.log || []).at(-1));
@@ -1732,6 +1733,10 @@ async function jobFinished(st) {
   }
   if (fetched?.export) $('stand').textContent = t('ui.status.as_of', { text: standText(fetched.export) });
   if (st.kind === 'cleanup') renderCleanupReport(st);
+  if (st.kind === 'cli_install') {
+    await loadConfig(); // cli_installed changed
+    renderSettingsCliInstall();
+  }
   renderRail();
   updateFetchArea();
   await loadFolders(true);
@@ -2185,6 +2190,23 @@ function renderSettingsProton(settings = state.settings) {
   const note = $('settings-cli-override');
   note.textContent = override ? t('ui.settings.cli_ignored', { path: override }) : '';
   note.hidden = !override;
+  renderSettingsCliInstall();
+}
+
+// Built-in installer: where the CLI is installed, or that it is missing; unsupported platforms only get the text.
+function renderSettingsCliInstall() {
+  const info = state.config?.cli_installed || null;
+  const installable = !!state.config?.cli_installable;
+  const installing = lastJob?.state === 'running' && lastJob.kind === 'cli_install';
+  $('settings-cli-status').textContent = installing ? t('ui.job.cli_installing')
+    : info ? (info.version ? t('ui.settings.cli_installed_version', { version: info.version, path: info.path })
+      : t('ui.settings.cli_installed', { path: info.path }))
+    : installable ? t('ui.settings.cli_missing') : t('ui.settings.cli_unsupported');
+  const btn = $('settings-cli-install');
+  btn.hidden = !installable;
+  btn.disabled = installing;
+  btn.textContent = info ? t('ui.settings.cli_reinstall') : t('ui.settings.cli_install');
+  $('settings-cli-install-hint').hidden = !installable;
 }
 
 function renderSettingsLibrary() {
@@ -2749,6 +2771,17 @@ $('cleanup-reference').addEventListener('change', () => {
 });
 for (const r of [$('cleanup-link'), $('cleanup-delete')]) r.addEventListener('change', resetCleanupPreview);
 $('cleanup-preview-btn').addEventListener('click', previewCleanup);
+$('settings-cli-install').addEventListener('click', async () => {
+  showSettingsWarn('');
+  const error = await postJob('/api/cli/install', {}, t('ui.settings.cli_install'));
+  if (error) {
+    showSettingsWarn(error);
+    return;
+  }
+  lastJob = { state: 'running', kind: 'cli_install' }; // until the first poll answers
+  renderSettingsCliInstall();
+  pollJob();
+});
 $('cleanup-run-btn').addEventListener('click', runCleanup);
 $('settings-library-change').addEventListener('click', () => {
   $('settings-dialog').close();

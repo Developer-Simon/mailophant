@@ -148,7 +148,7 @@ Then open <http://127.0.0.1:8025/>.
 
 | Feature | Requirement |
 | --- | --- |
-| Fetch from Proton | [Proton Mail Export CLI](https://proton.me/support/proton-mail-export-tool). Set its path in the settings, pass `--cli PATH`, or set `PROTON_EXPORT_CLI`. |
+| Fetch from Proton | [Proton Mail Export CLI](https://proton.me/support/proton-mail-export-tool). **Settings → Proton fetch → Install CLI** downloads it from proton.me into Mailophant's data folder. You can also set its path in the settings, pass `--cli PATH`, or set `PROTON_EXPORT_CLI`. |
 | Import Outlook `.pst`/`.ost` | Python module `pypff` (`pip install libpff-python`). The desktop app installs it for you. |
 
 ## Packages

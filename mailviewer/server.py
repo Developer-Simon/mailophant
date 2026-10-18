@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from mailviewer import autoarchive, i18n
+from mailviewer import autoarchive, i18n, protoncli
 from mailviewer.i18n import Msg, UserError, detail, error_body, msg, raw
 from mailviewer.archive import (
     ALL_MAIL, check_name, create_folder, delete_folder, ensure_folder, is_system_folder, move_folder, rename_folder,
@@ -82,7 +82,7 @@ ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; b
 SOURCE_FIELDS = ("name", "icon", "hidden", "position", "archive_target")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
 POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/language", "/api/tags",
-               "/api/cleanup", "/api/archives", "/api/transfer")
+               "/api/cleanup", "/api/archives", "/api/transfer", "/api/cli/install")
 ARCHIVE_FOLDERS_RE = re.compile(r"^/api/archives/([^/]+)/folders$")
 ARCHIVE_FOLDER_OPS = ("create", "rename", "move", "delete")
 ARCHIVE_FOLDER_FIELDS = ("op", "name", "parent", "id", "index")
@@ -321,9 +321,10 @@ class Viewer:
     and the remembered choice. A new library replaces library and store as a whole."""
 
     def __init__(self, cli: str | None = None, explicit_cli: bool = False,
-                 config_path: str | None = None) -> None:
+                 config_path: str | None = None, cli_dir: str | None = None) -> None:
         self.cli = cli
         self.explicit_cli = explicit_cli
+        self.cli_dir = cli_dir or protoncli.default_install_dir()  # where the built-in installer puts the CLI
         self.config_path = config_path
         self.saved: str | None = load_saved(config_path) if config_path else None
         self.saved_error: i18n.Msg | None = None
@@ -446,15 +447,28 @@ class Viewer:
         return resolve_mail_dir(path) if source.kind == "proton" else path
 
     def cli_for(self, source: Source) -> str | None:
-        """--cli if given, else the library's cli setting if it is an absolute executable path, else a CLI
-        found near the source."""
+        """--cli if given, else the library's cli setting if it is an absolute executable path, else the
+        CLI installed by Mailophant, else a CLI found near the source."""
         if self.explicit_cli and self.cli:
             return self.cli
         lib = self.library
         setting = lib.settings.cli if lib is not None else ""
         if os.path.isabs(setting) and is_executable(setting):
             return setting
-        return find_cli(lib.abspath(source))
+        return protoncli.installed_cli(self.cli_dir) or find_cli(lib.abspath(source))
+
+    def start_cli_install(self) -> None:
+        """Download and install the Proton export CLI as the job. Raises UserError on an unsupported
+        platform, Busy while another job runs (a running fetch may be using the old CLI)."""
+        if protoncli.platform_key() is None:
+            raise UserError("err.cli_unsupported", platform=sys.platform)
+
+        def install(job: Job) -> None:
+            path = protoncli.install(self.cli_dir, job.log, job.progress)
+            job.set_result({"path": path})
+
+        if not self.job.start("cli_install", install):
+            raise Busy("err.busy_job")
 
     def start_index(self, source_ids: list[str] | None = None) -> bool:
         """Index the given sources (all if None) in the background. False if a job is running or
@@ -1175,6 +1189,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._create_archive(raw)
                 if path == "/api/transfer":
                     return self._transfer(raw)
+                if path == "/api/cli/install":
+                    return self._cli_install()
                 return self._settings(raw)
             source_id = unquote(m[1])
             if m[2] == "icon":
@@ -1411,6 +1427,15 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(400, error_body(detail(exc)))
             self._json(202, {"state": "running"})
 
+        def _cli_install(self) -> None:
+            try:
+                viewer.start_cli_install()
+            except Busy as exc:
+                return self._json(409, error_body(detail(exc)))
+            except ValueError as exc:
+                return self._json(400, error_body(detail(exc)))
+            self._json(202, {"state": "running"})
+
         def _import(self, raw: bytes) -> None:
             try:
                 body = load_json_object(raw)
@@ -1508,6 +1533,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 "saved_error": viewer.saved_error.to_json() if viewer.saved_error else None,
                 "legacy": load_legacy(viewer.config_path) if viewer.config_path else None,
                 "cli_override": viewer.cli if viewer.explicit_cli else None,  # --cli wins over the setting
+                "cli_installed": protoncli.installed_info(viewer.cli_dir),
+                "cli_installable": protoncli.platform_key() is not None,
                 "home": os.path.expanduser("~"),
                 "settings": asdict(lib.settings) if lib is not None else None,
                 "outlook_import": pypff_available(),
@@ -1540,7 +1567,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
 
 
 def make_server(library_dir: str | None = None, port: int = 0, static_dir: str = STATIC_DIR,
-                cli: str | None = None, config_path: str | None = None) -> ThreadingHTTPServer:
+                cli: str | None = None, config_path: str | None = None,
+                cli_dir: str | None = None) -> ThreadingHTTPServer:
     """Bind 127.0.0.1:port. cli=None auto-detects the export CLI per source (see Viewer.cli_for).
 
     An explicit library_dir must hold a library (LibraryError otherwise). Without it the library
@@ -1551,7 +1579,7 @@ def make_server(library_dir: str | None = None, port: int = 0, static_dir: str =
     cli_path = os.path.abspath(cli) if cli is not None else None
     if cli_path is not None and not is_executable(cli_path):
         cli_path = None  # fetching is simply unavailable
-    viewer = Viewer(cli_path, explicit_cli, config_path)
+    viewer = Viewer(cli_path, explicit_cli, config_path, cli_dir)
     if library_dir is not None:
         viewer.open_library(library_dir)
     elif viewer.saved:

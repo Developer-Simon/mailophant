@@ -50,10 +50,11 @@ def is_executable(path: str) -> bool:
 
 def find_cli(account_dir: str) -> str | None:
     """Look for the export CLI in the parent, grandparent and great-grandparent of account_dir."""
+    name = CLI_NAME + (".exe" if os.name == "nt" else "")
     d = os.path.abspath(account_dir)
     for _ in range(3):
         d = os.path.dirname(d)
-        candidate = os.path.join(d, CLI_NAME)
+        candidate = os.path.join(d, name)
         if is_executable(candidate):
             return candidate
     return None
