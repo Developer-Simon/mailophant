@@ -1,8 +1,60 @@
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
+# --- Node / Electron ---
+node_modules/
+electron/build/
+electron/dist/
+npm-debug.log*
+
+# --- Secrets und lokale Umgebung ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- Mail-Daten (Sicherheitsnetz, falls eine Bibliothek oder ein Export im Repo landet) ---
+library.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.eml
+*.mbox
+*.pst
+*.ost
+*.metadata.json
+*.tmp
+*.link-tmp
+
+# --- Logs ---
+*.log
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Lokale Arbeitsdateien (Design-Notizen, Agenten) ---
 .superpowers/
 .docs/
 .claude/worktrees/
-electron/build/
-electron/dist/
-.venv/
+.claude/settings.local.json
