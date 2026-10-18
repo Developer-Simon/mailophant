@@ -16,7 +16,7 @@ from email import policy
 from email.parser import BytesParser
 from typing import Any, Callable, Collection
 
-import tags
+from mailviewer import tags
 
 META_SUFFIX = ".metadata.json"
 SCHEMA_VERSION = 3  # 2: FTS columns hold casefolded text; 3: labels.ord

@@ -10,9 +10,9 @@ import threading
 import unittest
 from unittest import mock
 
-import store
-import tags
-import test_server as fx
+from mailviewer import store
+from mailviewer import tags
+from tests import test_server as fx
 
 
 class StoreTests(unittest.TestCase):

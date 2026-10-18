@@ -4,7 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 
-import tags
+from mailviewer import tags
 
 
 class TagStoreTests(unittest.TestCase):

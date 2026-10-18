@@ -1,4 +1,4 @@
-"""Tests for the pure helpers in index.html.
+"""Tests for the pure helpers in static/js/pure.js.
 
 The helpers live in a block between two marker comments. The block must not touch
 the DOM, window or state, so it can be run under Node.
@@ -9,13 +9,13 @@ import subprocess
 import unittest
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+PURE_JS = Path(__file__).resolve().parent.parent / 'static' / 'js' / 'pure.js'
 START = '/* ---------- Pure helpers (tested by test_ui.py) ---------- */'
 END = '/* ---------- End pure helpers ---------- */'
 
 
 def run_js(expr: str):
-    src = (HERE / 'index.html').read_text(encoding='utf-8')
+    src = PURE_JS.read_text(encoding='utf-8')
     block = src[src.index(START):src.index(END) + len(END)]
     code = f"{block}\nprocess.stdout.write(JSON.stringify({expr}))"
     out = subprocess.run(['node', '-e', code], capture_output=True, text=True, check=True)

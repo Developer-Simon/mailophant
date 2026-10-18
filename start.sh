@@ -34,4 +34,4 @@ fi
 # Das venv enthält das optionale pypff (Outlook-Import).
 PY=python3
 [ -x "$HERE/.venv/bin/python" ] && PY="$HERE/.venv/bin/python"
-exec "$PY" "$HERE/server.py" "${args[@]}"
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec "$PY" -m mailviewer "${args[@]}"

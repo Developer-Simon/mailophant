@@ -12,9 +12,9 @@ from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 from unittest import mock
 
-import server
-import store
-from outlook import (
+from mailviewer import mailparse
+from mailviewer import store
+from mailviewer.outlook import (
     INSTALL_HINT,
     Folder,
     ImportUnavailable,
@@ -125,14 +125,14 @@ class BuildEmlTest(unittest.TestCase):
         )
         with open(os.path.join(self.tmp, "x.eml"), "wb") as f:
             f.write(raw.encode("utf-8"))
-        out = server.load_message(self.tmp, "x", {})
+        out = mailparse.load_message(self.tmp, "x", {})
         self.assertIsNone(out["error"])
         self.assertIn("Inhalt", out["text"])
 
     def test_built_eml_loads_in_server(self):
         with open(os.path.join(self.tmp, "x.eml"), "wb") as f:
             f.write(build_eml(message(attachments=[("a.pdf", b"%PDF")])))
-        out = server.load_message(self.tmp, "x", {})
+        out = mailparse.load_message(self.tmp, "x", {})
         self.assertIsNone(out["error"])
         self.assertEqual(out["text"].strip(), "Text")
         self.assertEqual(out["attachments"][0]["name"], "a.pdf")
@@ -364,7 +364,7 @@ class ConvertTest(unittest.TestCase):
         self.assertEqual(attachments_of(parsed), [("weiter.eml", inner)])
         with open(os.path.join(self.tmp, "x.eml"), "wb") as f:
             f.write(build_eml(message(attachments=[("weiter.eml", inner)])))
-        out = server.load_message(self.tmp, "x", {})
+        out = mailparse.load_message(self.tmp, "x", {})
         self.assertIsNone(out["error"])
         self.assertEqual([a["name"] for a in out["attachments"]], ["weiter.eml"])
 
@@ -379,7 +379,7 @@ class ConvertTest(unittest.TestCase):
         data = build_eml(message(headers=headers))
         with open(os.path.join(self.tmp, "x.eml"), "wb") as f:
             f.write(data)
-        out = server.load_message(self.tmp, "x", {})
+        out = mailparse.load_message(self.tmp, "x", {})
         self.assertIsNone(out["error"])
         self.assertIn("Text", out["text"])
         self.assertEqual(len(parse(data).get_all("Content-Type")), 1)
@@ -472,7 +472,7 @@ class TestPypff(unittest.TestCase):
             emls = [n[: -len(".eml")] for n in os.listdir(dest) if n.endswith(".eml")]
             self.assertEqual(len(emls), report.imported)
             for mid in emls:
-                self.assertIsNone(server.load_message(dest, mid, {})["error"])
+                self.assertIsNone(mailparse.load_message(dest, mid, {})["error"])
 
 
 if __name__ == "__main__":

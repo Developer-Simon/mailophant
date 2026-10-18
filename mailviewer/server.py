@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only local web viewer for a library of mail backups (stdlib only).
 
-Usage: python server.py [LIBRARY_DIR] [--port 8025] [--cli PATH] [--config FILE]
+Usage: python -m mailviewer [LIBRARY_DIR] [--port 8025] [--cli PATH] [--config FILE]
 
 LIBRARY_DIR holds library.json, which lists the mail sources (Proton accounts or maildirs) shown
 together. Its messages are indexed in archive.db (a cache next to library.json). Tags and stars
@@ -18,8 +18,6 @@ Optional: .pst/.ost files can be imported as sources when the pypff module is in
 from __future__ import annotations
 
 import argparse
-import base64
-import filecmp
 import json
 import os
 import re
@@ -30,24 +28,31 @@ import sys
 import tempfile
 import threading
 import time
-import zlib
 from collections.abc import Callable
 from dataclasses import asdict
-from email import policy
-from email.message import Message
-from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-import autoarchive
-from archive import (
+from mailviewer import autoarchive
+from mailviewer.archive import (
     ALL_MAIL, check_name, create_folder, delete_folder, ensure_folder, is_system_folder, move_folder, rename_folder,
     write_empty_archive,
 )
-from cleanup import ACTIONS, check_dirs, is_regular, plan_cleanup, remove_quiet, run_cleanup
-from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_archive, is_library
-from outlook import (
+from mailviewer.browse import browse
+from mailviewer.config import default_config_path, load_legacy, load_saved, update_config
+from mailviewer.exports import (
+    account_dir_of, account_email, cli_env, dedupe_with_previous, find_cli, is_executable, mail_dirs, newest_fetched,
+    redact, resolve_mail_dir,
+)
+from mailviewer.mailparse import attachment_headers, attachment_name, attachment_payload, get_attachment, load_message, preview_type
+from mailviewer.validation import (
+    MAX_BODY, MAX_ICON, MAX_TRANSFER, MAX_TRANSFER_ITEMS, check_email, check_id, check_tag_color, check_tag_name,
+    check_text, load_json_object, only_keys, parse_fetch_body, tag_color, valid_icon, opt_text, text_field,
+)
+from mailviewer.cleanup import ACTIONS, check_dirs, plan_cleanup, remove_quiet, run_cleanup
+from mailviewer.library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_archive
+from mailviewer.outlook import (
     INSTALL_HINT,
     NO_MAIL_HINT,
     ImportReport,
@@ -56,11 +61,13 @@ from outlook import (
     open_reader,
     pypff_available,
 )
-from store import META_SUFFIX, VIRTUAL_ARCHIVED, Store, addr, addr_list, read_labels, to_int
-from tags import TagStore, TagStoreError
-from transfer import Item, transfer
+from mailviewer.store import VIRTUAL_ARCHIVED, Store, addr, read_labels
+from mailviewer.tags import TagStore, TagStoreError
+from mailviewer.transfer import Item, transfer
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
+STATIC_RE = re.compile(r"^/static/((?:css|js)/[a-z-]+\.(css|js))$")
+STATIC_TYPES = {"css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8"}
 MAX_LIMIT = 200
 MSG_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)$")
 ATT_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/attachment/(\d+)$")
@@ -68,24 +75,10 @@ SOURCE_RE = re.compile(r"^/api/sources/([^/]+)(?:/(remove|icon|auto))?$")
 TAG_RE = re.compile(r"^/api/tags/(\d+)(?:/(remove))?$")
 MARKS_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/marks$")
 ICON_RE = re.compile(r"^/api/sources/([^/]+)/icon$")
-CID_RE = re.compile(r"cid:([^\s\"'<>()]+)")
-# Images get a sandbox CSP. PDFs and audio get none: the browser's PDF viewer and media player do not work in a
-# sandboxed document, and neither type runs code of its own on our origin
-PREVIEW_TYPES = frozenset({"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp", "audio/mpeg"})
-PREVIEW_ALIASES = {"audio/mp3": "audio/mpeg"}  # non-standard type some mailers write
-IMAGE_PREVIEW_CSP = "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'"
-CLI_NAME = "proton-mail-export-cli"
-MAX_BROWSE_ENTRIES = 2000
-MAX_BODY = 64 * 1024
-MAX_ICON = 512 * 1024
-MAX_TRANSFER = 4 * 1024 * 1024  # up to 5000 items of ids
-MAX_TRANSFER_ITEMS = 5000
-MAX_ID = 512
 ICON_TYPES = {"image/png": "png", "image/svg+xml": "svg"}  # Content-Type -> file extension
 ICON_CTYPES = {ext: ctype for ctype, ext in ICON_TYPES.items()}
 # an SVG is only ever shown as an image document: no scripts, no external loads
 ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; sandbox"
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SOURCE_FIELDS = ("name", "icon", "hidden", "position", "archive_target")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
 POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags",
@@ -100,9 +93,6 @@ TRANSFER_ITEM_FIELDS = ("source", "id")
 NEW_FOLDER_FIELDS = ("name", "parent")
 TAG_FIELDS = ("name", "color")
 MARK_FIELDS = ("starred", "tags")
-MAX_TAG_NAME = 40
-TAG_COLORS = ["#0a66c2", "#2e7d32", "#7b3fb0", "#b03a2e", "#b35c00", "#00796b", "#4a5568", "#8a6d00"]
-COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 IMPORT_FIELDS = ("path", "name")
 CLEANUP_FIELDS = ("target", "reference", "action")
 IMPORT_EXTENSIONS = (".pst", ".ost")
@@ -117,149 +107,32 @@ TAGS_DB = "tags.db"
 Json = dict[str, Any]
 
 
-def mail_dirs(parent: str) -> list[str]:
-    """mail_* subdirectories of parent that contain labels.json, oldest name first."""
-    if not os.path.isdir(parent):
-        return []
-    names = sorted(
-        n for n in os.listdir(parent)
-        if n.startswith("mail_") and os.path.isfile(os.path.join(parent, n, "labels.json"))
-    )
-    return [os.path.join(parent, n) for n in names]
 
 
-def resolve_mail_dir(path: str) -> str:
-    """A mail dir (has labels.json) is used as is; an account dir yields its newest mail_* export."""
-    if os.path.isfile(os.path.join(path, "labels.json")):
-        return path
-    found = mail_dirs(path)
-    if not found:
-        raise ValueError(f"no labels.json in {path} or in any mail_* subdirectory")
-    return found[-1]
 
 
-def account_dir_of(mail_dir: str) -> str:
-    path = os.path.abspath(mail_dir)
-    return os.path.dirname(path) if os.path.basename(path).startswith("mail_") else path
 
 
-def account_email(account_dir: str) -> str:
-    name = os.path.basename(os.path.abspath(account_dir))
-    return name if "@" in name else ""
 
 
-def is_executable(path: str) -> bool:
-    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def find_cli(account_dir: str) -> str | None:
-    """Look for the export CLI in the parent, grandparent and great-grandparent of account_dir."""
-    d = os.path.abspath(account_dir)
-    for _ in range(3):
-        d = os.path.dirname(d)
-        candidate = os.path.join(d, CLI_NAME)
-        if is_executable(candidate):
-            return candidate
-    return None
 
 
-def is_openable(path: str) -> bool:
-    """True if path is a mail dir or an account dir holding at least one mail_* export."""
-    try:
-        return os.path.isfile(os.path.join(path, "labels.json")) or bool(mail_dirs(path))
-    except OSError:  # unreadable directories are simply not openable
-        return False
 
 
-def browse(path: str, files: bool = False) -> Json:
-    """List the visible subdirectories of path for the directory picker. Raises ValueError.
-
-    With files=True also list visible .pst/.ost files (any case) under "files".
-    """
-    p = os.path.abspath(os.path.expanduser(path or "~"))
-    try:
-        names = sorted(os.listdir(p), key=str.casefold)
-    except OSError as exc:
-        raise ValueError(f"cannot read {p}: {exc.strerror or exc}") from exc
-    dirs: list[Json] = []
-    found: list[Json] = []
-    for name in names:
-        if len(dirs) + len(found) >= MAX_BROWSE_ENTRIES:
-            break
-        full = os.path.join(p, name)
-        if name.startswith("."):
-            continue
-        if os.path.isdir(full):
-            dirs.append({"name": name, "openable": is_openable(full), "library": is_library(full)})
-        elif files and name.lower().endswith((".pst", ".ost")) and os.path.isfile(full):
-            try:
-                found.append({"name": name, "size": os.path.getsize(full)})
-            except OSError:  # vanished or unreadable: not listed
-                continue
-    result: Json = {
-        "path": p,
-        "parent": None if p == os.path.dirname(p) else os.path.dirname(p),
-        "home": os.path.expanduser("~"),
-        "openable": is_openable(p),
-        "library": is_library(p),
-        "dirs": dirs,
-    }
-    if files:
-        result["files"] = found
-    return result
 
 
-def default_config_path() -> str:
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "mail-backup-viewer", "config.json")
 
 
-def _config_value(config_path: str, key: str) -> str | None:
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            value = json.load(f).get(key)
-    except (OSError, ValueError, AttributeError):
-        return None
-    return value if isinstance(value, str) and value else None
 
 
-def load_saved(config_path: str) -> str | None:
-    return _config_value(config_path, "library")
 
 
-def load_legacy(config_path: str) -> str | None:
-    """Export dir of the viewer before libraries existed; offered once, then added as a source."""
-    return _config_value(config_path, "export_dir")
 
 
-def _update_config(config_path: str, updates: dict[str, str | None]) -> None:
-    """Set or (value None) remove keys of the config file; unknown keys are kept. The file is
-    replaced atomically, and removed when nothing is left in it."""
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    for key, value in updates.items():
-        if value is None:
-            data.pop(key, None)
-        else:
-            data[key] = value
-    if not data:
-        remove_quiet(config_path)
-        return
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    tmp = f"{config_path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.replace(tmp, config_path)
 
 
-def save_saved(config_path: str, library_dir: str | None) -> None:
-    """Persist the library folder; None forgets it."""
-    _update_config(config_path, {"library": library_dir})
 
 
 def free_name(parent: str, name: str) -> str:
@@ -270,186 +143,38 @@ def free_name(parent: str, name: str) -> str:
     return candidate
 
 
-def load_eml(mail_dir: str, mid: str) -> Message:
-    # mid must already be confirmed by Store.message, so no path escapes mail_dir
-    with open(os.path.join(mail_dir, mid + ".eml"), "rb") as f:
-        return BytesParser(policy=policy.default).parsebytes(f.read())
 
 
-def cid_key(ref: str) -> str:
-    return unquote(ref.strip().strip("<>"))
 
 
-def html_body(msg: Message) -> str | None:
-    part = msg.get_body(preferencelist=("html",))
-    return part.get_content() if part is not None else None
 
 
-def attachment_parts(msg: Message) -> list[Message]:
-    """Leaf parts that are attachments; inline images already referenced by the HTML are excluded."""
-    used = {cid_key(m.group(1)) for m in CID_RE.finditer(html_body(msg) or "")}
-    out = []
-    for part in msg.walk():
-        if part.is_multipart():
-            continue
-        cid = cid_key(str(part.get("Content-ID") or ""))
-        if part.get_content_disposition() == "attachment" or (part.get_filename() and cid not in used):
-            out.append(part)
-    return out
 
 
-def attachment_name(part: Message, n: int) -> str:
-    return part.get_filename() or f"attachment-{n}"
 
 
-def preview_type(ctype: str) -> str | None:
-    """The type an attachment is shown inline with, or None if it is only downloaded."""
-    ctype = PREVIEW_ALIASES.get(ctype, ctype)
-    return ctype if ctype in PREVIEW_TYPES else None
 
 
-def attachment_headers(ctype: str, name: str, inline: bool) -> tuple[str, tuple[tuple[str, str], ...]]:
-    """Content-Disposition and extra headers. Only types the browser shows without running the file's own code
-    are served inline; anything else (SVG, HTML, ...) stays a download, since it would run on our origin."""
-    quoted = quote(name, safe="")
-    if inline and ctype in PREVIEW_TYPES:
-        extra = (("Content-Security-Policy", IMAGE_PREVIEW_CSP),) if ctype.startswith("image/") else ()
-        return f"inline; filename*=UTF-8''{quoted}", extra
-    return f"attachment; filename*=UTF-8''{quoted}", ()
 
 
-def attachment_payload(part: Message) -> bytes:
-    return part.get_payload(decode=True) or b""
 
 
-def rewrite_cids(msg: Message, html: str) -> str:
-    parts = {cid_key(str(p["Content-ID"])): p for p in msg.walk() if p.get("Content-ID")}
-
-    def to_data_uri(m: re.Match[str]) -> str:
-        part = parts.get(cid_key(m.group(1)))
-        if part is None:
-            return m.group(0)
-        b64 = base64.b64encode(attachment_payload(part)).decode("ascii")
-        return f"data:{part.get_content_type()};base64,{b64}"
-
-    return CID_RE.sub(to_data_uri, html)
 
 
-def parse_body(msg: Message) -> Json:
-    text_part = msg.get_body(preferencelist=("plain",))
-    html = html_body(msg)
-    return {
-        "text": text_part.get_content() if text_part is not None else None,
-        "html": rewrite_cids(msg, html) if html is not None else None,
-        "attachments": [
-            {"index": i, "name": attachment_name(p, i), "size": len(attachment_payload(p)),
-             "mime": p.get_content_type()}
-            for i, p in enumerate(attachment_parts(msg))
-        ],
-    }
 
 
-def load_message(mail_dir: str, mid: str, payload: Json) -> Json:
-    out: Json = {
-        "id": mid,
-        "subject": payload.get("Subject") or "",
-        "from": addr(payload.get("Sender")),
-        "to": addr_list(payload.get("ToList")),
-        "cc": addr_list(payload.get("CCList")),
-        "time": to_int(payload.get("Time")),
-        "text": None,
-        "html": None,
-        "attachments": [],
-        "error": None,
-    }
-    try:
-        out.update(parse_body(load_eml(mail_dir, mid)))
-    except FileNotFoundError:
-        out["error"] = "message file (.eml) not found"
-    except Exception as exc:  # untrusted input: any parser failure becomes an error field
-        out["error"] = f"cannot parse .eml: {exc}"
-    return out
 
 
-def get_attachment(mail_dir: str, mid: str, n: int) -> Message | None:
-    try:
-        parts = attachment_parts(load_eml(mail_dir, mid))
-    except Exception:  # missing or unparsable .eml: nothing to serve
-        return None
-    return parts[n] if 0 <= n < len(parts) else None
 
 
-def cli_env(email: str, tmp: str, password: str, mailbox: str, totp: str) -> dict[str, str]:
-    """Environment for the export CLI. Secrets only travel here, never in argv."""
-    env = dict(os.environ)
-    env.pop("ET_USER_MAILBOX_PASSWORD", None)  # set only when non-empty
-    env.pop("ET_TOTP_CODE", None)
-    env.update(ET_OPERATION="backup", ET_DIR=tmp, ET_USER_EMAIL=email,
-               ET_USER_PASSWORD=password, ET_TELEMETRY_OFF="1")
-    if mailbox:
-        env["ET_USER_MAILBOX_PASSWORD"] = mailbox
-    if totp:
-        env["ET_TOTP_CODE"] = totp
-    return env
 
 
-def redact(text: str, secrets: list[str]) -> str:
-    """Hide each secret, also as the CLI may echo it: URL-quoted or JSON-escaped. Longest first, so a
-    secret that contains another one is fully hidden."""
-    forms: set[str] = set()
-    for secret in secrets:
-        if secret:
-            forms.update((secret, quote(secret, safe=""), json.dumps(secret)[1:-1],
-                          json.dumps(secret, ensure_ascii=False)[1:-1]))
-    for form in sorted((f for f in forms if f), key=len, reverse=True):
-        text = text.replace(form, "***")
-    return text
 
 
-def newest_fetched(tmp: str) -> str | None:
-    """Newest mail dir the CLI wrote below tmp (layout: tmp/<email>/mail_*)."""
-    found = [d for name in os.listdir(tmp) for d in mail_dirs(os.path.join(tmp, name))]
-    return max(found, key=os.path.basename, default=None)
 
 
-def link_identical(prev_path: str, new_path: str) -> int:
-    """Replace new_path with a hardlink to prev_path if both are identical regular files.
-    Returns the bytes saved, or 0 when nothing was linked."""
-    tmp = os.path.join(os.path.dirname(new_path), "." + os.path.basename(new_path) + ".link-tmp")
-    try:
-        if not (is_regular(prev_path) and is_regular(new_path)):
-            return 0
-        size = os.path.getsize(new_path)
-        if os.path.samefile(prev_path, new_path) or size != os.path.getsize(prev_path):
-            return 0
-        if not filecmp.cmp(prev_path, new_path, shallow=False):
-            return 0
-        os.link(prev_path, tmp)
-        os.replace(tmp, new_path)  # atomic: new_path is never missing
-        return size
-    except OSError:  # cross-device, permissions, unsupported FS: keep the file as it is
-        return 0
-    finally:
-        if os.path.lexists(tmp):
-            remove_quiet(tmp)
 
 
-def dedupe_with_previous(previous_dir: str, new_dir: str) -> tuple[int, int]:
-    """Hardlink unchanged .eml and .metadata.json files of new_dir to their twins in previous_dir.
-    Returns (files_linked, bytes_saved). The previous dir is only read."""
-    try:
-        names = os.listdir(new_dir)
-    except OSError:
-        return 0, 0
-    linked = saved = 0
-    for name in names:
-        if not name.endswith((".eml", META_SUFFIX)):
-            continue
-        size = link_identical(os.path.join(previous_dir, name), os.path.join(new_dir, name))
-        if size:
-            linked += 1
-            saved += size
-    return linked, saved
 
 
 def human_size(n: int) -> str:
@@ -462,73 +187,22 @@ def human_size(n: int) -> str:
     return f"{size:.1f} GB".replace(".", ",")
 
 
-def _text(body: Json, key: str) -> str:
-    value = body.get(key)
-    if value is None:
-        return ""
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    return value
 
 
-def _opt_text(body: Json, key: str) -> str | None:
-    """None for an absent or null field, else the checked string."""
-    value = body.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    return check_text(value, key)
 
 
-def has_control(value: str) -> bool:
-    return any(ord(c) < 32 or ord(c) == 127 for c in value)
 
 
-def check_text(value: str, what: str) -> str:
-    if has_control(value):
-        raise ValueError(f"invalid {what}")
-    return value
 
 
-def check_email(email: str) -> str:
-    """The email becomes a directory name (the CLI's output dir), so no separators, dot names,
-    control characters or surrounding spaces; RFC 5321 caps an address at 254 characters."""
-    if (len(email) > 254 or has_control(email) or email != email.strip()
-            or "/" in email or "\\" in email or email in (".", "..")):
-        raise ValueError("invalid email")
-    return email
 
 
-def check_id(value: str, what: str) -> str:
-    """A source or mail ID from a request: a non-empty string of at most MAX_ID characters."""
-    check_text(value, what)
-    if not 1 <= len(value) <= MAX_ID:
-        raise ValueError(f"Ungültige {what}-Angabe.")
-    return value
 
 
-def check_tag_name(value: str) -> str:
-    """Trimmed, 1 to MAX_TAG_NAME characters, no control characters. Uniqueness is checked by TagStore."""
-    check_text(value, "Tag-Name")
-    name = value.strip()
-    if not 1 <= len(name) <= MAX_TAG_NAME:
-        raise ValueError(f"Der Tag-Name muss 1 bis {MAX_TAG_NAME} Zeichen lang sein.")
-    return name
 
 
-def check_tag_color(value: str | None) -> str:
-    """Exactly #rrggbb; stored in lowercase."""
-    if not isinstance(value, str) or not COLOR_RE.match(value):
-        raise ValueError("Die Farbe muss im Format #rrggbb angegeben werden.")
-    return value.lower()
 
 
-def tag_color(value: str | None, name: str) -> str:
-    """The given color, or for None a default picked from TAG_COLORS by a stable hash of the folded name."""
-    if value is None:
-        return TAG_COLORS[zlib.crc32(name.casefold().encode("utf-8")) % len(TAG_COLORS)]
-    return check_tag_color(value)
 
 
 def tag_list(store: Store, tags: TagStore, source_ids: list[str]) -> Json:
@@ -538,48 +212,12 @@ def tag_list(store: Store, tags: TagStore, source_ids: list[str]) -> Json:
         {**tag, "count": counts.get(str(tag["id"]), 0)} for tag in tags.list_tags()]}
 
 
-def parse_fetch_body(raw: bytes) -> tuple[str, str, str, str, str]:
-    """Return (source, email, password, mailbox_password, totp). An empty email means the source's
-    default, which only the viewer knows. ValueError messages are shown to the client."""
-    body = load_json_object(raw)
-    source = _text(body, "source").strip()
-    if not source:
-        raise ValueError("missing source")
-    password = check_text(_text(body, "password"), "password")
-    if not password:
-        raise ValueError("missing password")
-    email = check_email(_text(body, "email"))
-    mailbox = check_text(_text(body, "mailbox_password"), "mailbox_password")
-    return source, email, password, mailbox, check_text(_text(body, "totp"), "totp").strip()
 
 
-def load_json_object(raw: bytes) -> Json:
-    """Parse a request body that must be a JSON object. ValueError messages are shown to the client."""
-    try:
-        body = json.loads(raw)
-    except (ValueError, RecursionError) as exc:  # nesting too deep is just as invalid
-        raise ValueError("invalid JSON body") from exc
-    if not isinstance(body, dict):
-        raise ValueError("body must be a JSON object")
-    return body
 
 
-def only_keys(body: Json, allowed: tuple[str, ...]) -> None:
-    """Refuse fields the endpoint does not know, instead of silently ignoring them."""
-    unknown = sorted(set(body) - set(allowed))
-    if unknown:
-        raise ValueError(f"Unbekanntes Feld: {', '.join(unknown)}")
 
 
-def valid_icon(ext: str, data: bytes) -> bool:
-    """Cheap content check before an upload is stored: a PNG signature, or SVG-looking UTF-8 text."""
-    if ext == "png":
-        return data.startswith(PNG_SIGNATURE)
-    try:
-        text = data.decode("utf-8-sig").strip()
-    except UnicodeDecodeError:
-        return False
-    return text.startswith("<") and "<svg" in text
 
 
 def import_path(path: str) -> str:
@@ -754,7 +392,7 @@ class Viewer:
                 updates["export_dir"] = None
             if updates and self.config_path:
                 try:
-                    _update_config(self.config_path, updates)
+                    update_config(self.config_path, updates)
                 except OSError as exc:
                     raise LibraryError(f"Die Auswahl kann nicht gespeichert werden: "
                                        f"{exc.strerror or exc}") from exc
@@ -1411,7 +1049,10 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._json(403, {"error": "host not allowed"})
             url = urlsplit(self.path)
             if url.path == "/":
-                return self._index_page()
+                return self._static("index.html", "text/html; charset=utf-8")
+            static = STATIC_RE.match(url.path)
+            if static:
+                return self._static(static.group(1), STATIC_TYPES[static.group(2)])
             if url.path == "/api/config":
                 return self._json(200, self._config())
             if url.path == "/api/browse":
@@ -1605,7 +1246,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             def change(tags: TagStore) -> None:
                 body = load_json_object(raw)
                 only_keys(body, TAG_FIELDS)
-                name = check_tag_name(_text(body, "name"))
+                name = check_tag_name(text_field(body, "name"))
                 tags.create_tag(name, tag_color(body.get("color"), name))
             self._tags_admin(change)
 
@@ -1613,7 +1254,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             def change(tags: TagStore) -> None:
                 body = load_json_object(raw)
                 only_keys(body, TAG_FIELDS)
-                name = check_tag_name(_text(body, "name")) if "name" in body else None
+                name = check_tag_name(text_field(body, "name")) if "name" in body else None
                 color = check_tag_color(body["color"]) if "color" in body else None
                 tags.update_tag(tag_id, name, color)
             self._tags_admin(change)
@@ -1658,7 +1299,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 path = body.get("path")
                 if not isinstance(path, str) or not path.strip():
                     raise ValueError("path required")
-                viewer.add_source(path.strip(), check_text(_text(body, "name"), "name"))
+                viewer.add_source(path.strip(), check_text(text_field(body, "name"), "name"))
             self._admin(change, self._sources_reply)
 
         def _update_source(self, source_id: str, raw: bytes) -> None:
@@ -1684,7 +1325,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             def change() -> None:
                 body = load_json_object(raw)
                 only_keys(body, ("name",))
-                name = check_text(_text(body, "name"), "name").strip()
+                name = check_text(text_field(body, "name"), "name").strip()
                 if not name:
                     raise ValueError("Der Name darf nicht leer sein.")
                 created.append(viewer.create_archive(name))
@@ -1698,9 +1339,9 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 op = body.get("op")
                 if op not in ARCHIVE_FOLDER_OPS:
                     raise ValueError("Die Aktion muss create, rename, move oder delete sein.")
-                name = _opt_text(body, "name")
-                parent = _opt_text(body, "parent")
-                folder_id = _opt_text(body, "id")
+                name = opt_text(body, "name")
+                parent = opt_text(body, "parent")
+                folder_id = opt_text(body, "id")
                 index = body.get("index")
                 if index is not None and type(index) is not int:
                     raise ValueError("index muss eine ganze Zahl sein.")
@@ -1723,15 +1364,15 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     if not isinstance(item, dict):
                         raise ValueError("Jede Mail braucht source und id.")
                     only_keys(item, TRANSFER_ITEM_FIELDS)
-                    pairs.append((check_id(_text(item, "source"), "source"), check_id(_text(item, "id"), "id")))
+                    pairs.append((check_id(text_field(item, "source"), "source"), check_id(text_field(item, "id"), "id")))
                 new_folder = body.get("new_folder")
                 if new_folder is not None:
                     if not isinstance(new_folder, dict):
                         raise ValueError("new_folder muss ein Objekt sein.")
                     only_keys(new_folder, NEW_FOLDER_FIELDS)
-                    new_folder = (_text(new_folder, "name"), _opt_text(new_folder, "parent"))
-                viewer.start_transfer(pairs, check_id(_text(body, "archive"), "archive"),
-                                      _opt_text(body, "folder"), new_folder)
+                    new_folder = (text_field(new_folder, "name"), opt_text(new_folder, "parent"))
+                viewer.start_transfer(pairs, check_id(text_field(body, "archive"), "archive"),
+                                      opt_text(body, "folder"), new_folder)
             self._admin(change, dict)
 
         def _auto(self, source_id: str, raw: bytes) -> None:
@@ -1799,10 +1440,10 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             try:
                 body = load_json_object(raw)
                 only_keys(body, IMPORT_FIELDS)
-                path = _text(body, "path").strip()
+                path = text_field(body, "path").strip()
                 if not path:
                     raise ValueError("path required")
-                viewer.start_import(path, _text(body, "name"))
+                viewer.start_import(path, text_field(body, "name"))
             except Busy as exc:
                 return self._json(409, {"error": str(exc)})
             except ImportUnavailable:
@@ -1815,7 +1456,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             try:
                 body = load_json_object(raw)
                 only_keys(body, CLEANUP_FIELDS)
-                target, reference = _text(body, "target"), _text(body, "reference")
+                target, reference = text_field(body, "target"), text_field(body, "reference")
                 if body.get("action") not in ACTIONS:
                     raise ValueError("Die Aktion muss link oder delete sein.")
                 viewer.start_cleanup(target, reference, body["action"])
@@ -1877,13 +1518,13 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 "install_hint": INSTALL_HINT,
             }
 
-        def _index_page(self) -> None:
+        def _static(self, rel: str, ctype: str) -> None:
             try:
-                with open(os.path.join(static_dir, "index.html"), "rb") as f:
+                with open(os.path.join(static_dir, rel), "rb") as f:
                     body = f.read()
             except OSError:
-                return self._json(404, {"error": "index.html not found"})
-            self._send(200, body, "text/html; charset=utf-8")
+                return self._json(404, {"error": f"{rel} not found"})
+            self._send(200, body, ctype)
 
         def _json(self, status: int, obj: Any) -> None:
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1902,7 +1543,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
     return Handler
 
 
-def make_server(library_dir: str | None = None, port: int = 0, static_dir: str = HERE,
+def make_server(library_dir: str | None = None, port: int = 0, static_dir: str = STATIC_DIR,
                 cli: str | None = None, config_path: str | None = None) -> ThreadingHTTPServer:
     """Bind 127.0.0.1:port. cli=None auto-detects the export CLI per source (see Viewer.cli_for).
 

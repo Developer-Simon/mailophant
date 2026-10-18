@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-import autoarchive
-import store
-from autoarchive import Candidate, delete_exports, plan_vanished, should_brake, archive_candidates
-from transfer import TransferResult
+from mailviewer import autoarchive
+from mailviewer import store
+from mailviewer.autoarchive import Candidate, delete_exports, plan_vanished, should_brake, archive_candidates
+from mailviewer.transfer import TransferResult
 
 
 def write_export(root, name, mails):
@@ -103,7 +103,7 @@ class PlanVanishedTests(unittest.TestCase):
         os.link(os.path.join(a, "m1.eml"), os.path.join(b, "m1.eml"))
         new = write_export(self.tmp, "mail_c", [])
         real = autoarchive.mail_ident
-        with mock.patch("autoarchive.mail_ident", wraps=real) as ident:
+        with mock.patch("mailviewer.autoarchive.mail_ident", wraps=real) as ident:
             plan = plan_vanished([a, b], new)
         self.assertEqual(ident.call_count, 1)
         self.assertEqual([c.export_dir for c in plan.candidates], [b])
@@ -211,7 +211,7 @@ class ArchiveAndPruneTests(unittest.TestCase):
                 raise OSError("boom")
             return real(path, *args, **kwargs)
 
-        with mock.patch("autoarchive.shutil.rmtree", side_effect=flaky):
+        with mock.patch("mailviewer.autoarchive.shutil.rmtree", side_effect=flaky):
             count = delete_exports(dirs, os.path.join(self.tmp, "active"), self.log)
         self.assertEqual(count, 1)
         self.assertFalse(os.path.exists(dirs[0]))

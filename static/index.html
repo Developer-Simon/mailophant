@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mail-Viewer</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230066d6'/%3E%3Cpath d='M8 10h16a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 24 22H8a1.5 1.5 0 0 1-1.5-1.5v-9A1.5 1.5 0 0 1 8 10z' fill='none' stroke='%23fff' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='m7 11 9 6.5 9-6.5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div class="app">
+  <div id="nav-root">
+  <nav id="rail" aria-label="Quellen">
+    <div id="rail-sources"></div>
+    <button id="rail-add" type="button" title="Quelle hinzufügen" aria-label="Quelle hinzufügen"></button>
+    <button id="rail-settings" type="button" title="Einstellungen" aria-label="Einstellungen"></button>
+  </nav>
+
+  <aside id="folders">
+    <h2>Ordner</h2>
+    <button id="folder-add" class="btn small" type="button" hidden>Neuer Ordner…</button>
+    <ul id="folder-list" tabindex="-1"></ul>
+    <h2>Tags</h2>
+    <ul id="tag-list"></ul>
+    <div id="side-foot">
+      <div id="load-warn" class="notice warn" role="alert" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div id="load-warn-text" class="notice-text"></div>
+        <button id="load-warn-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
+      </div>
+      <div id="job-status" class="notice status" role="status" hidden>
+        <span class="notice-icon" data-icon="info"></span>
+        <div class="notice-body">
+          <div id="job-text"></div>
+          <div id="job-progress" class="progress"><div id="job-bar"></div></div>
+          <div id="job-last"></div>
+        </div>
+      </div>
+      <div id="job-error" class="notice error" role="alert" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div id="job-error-text" class="notice-text"></div>
+      </div>
+      <div id="job-note" class="notice done" hidden>
+        <span class="notice-icon" data-icon="check"></span>
+        <div class="notice-body">
+          <div id="job-note-text"></div>
+          <details id="job-note-details">
+            <summary id="job-note-sum">Details (0)</summary>
+            <ul id="job-note-list"></ul>
+          </details>
+        </div>
+        <button id="job-note-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
+      </div>
+      <div id="job-warn" class="notice warn" hidden>
+        <span class="notice-icon" data-icon="warn"></span>
+        <div class="notice-body">
+          <div>Einzelne Quellen sind fehlgeschlagen:</div>
+          <details id="job-warn-details">
+            <summary id="job-warn-sum">Details (0)</summary>
+            <ul id="job-warn-list"></ul>
+          </details>
+        </div>
+        <button id="job-warn-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
+      </div>
+      <div id="auto-paused"></div>
+      <div id="fetch-area" hidden>
+        <button id="fetch-btn" class="btn fetch-btn" type="button"><span data-icon="arrow-down"></span><span id="fetch-label">Abrufen</span></button>
+        <div id="stand" class="muted stand"></div>
+      </div>
+    </div>
+  </aside>
+  </div>
+
+  <section id="list-pane">
+    <div class="edge-swipe" aria-hidden="true"></div>
+    <div class="head">
+      <button id="back-folders" class="nav-back" type="button"><span data-icon="chevron-left"></span>Ordner</button>
+      <label class="search"><span id="search-icon" class="search-icon"></span><input id="search" type="search" placeholder="In diesem Ordner suchen…" aria-label="Suche"></label>
+      <div class="head-meta">
+        <div id="count" class="muted"></div>
+        <button id="select-btn" class="btn small" type="button" aria-pressed="false">Auswählen</button>
+      </div>
+    </div>
+    <div id="select-bar" class="select-bar" hidden>
+      <div class="select-line">
+        <span id="select-count"></span>
+        <span class="select-sep" aria-hidden="true">·</span>
+        <button id="select-move" class="btn small primary" type="button" disabled>Ins Archiv…</button>
+      </div>
+      <div id="select-note" class="hint" hidden></div>
+    </div>
+    <ul id="messages" role="listbox" aria-label="Nachrichten"></ul>
+    <button id="more" class="more" type="button" hidden>Mehr laden</button>
+  </section>
+
+  <main id="reader">
+    <div class="edge-swipe" aria-hidden="true"></div>
+    <div id="reader-nav">
+      <button id="back-list" class="nav-back" type="button"><span data-icon="chevron-left"></span><span id="back-list-text"></span></button>
+    </div>
+    <div id="m-bar" hidden>
+      <div class="back-slot"></div>
+      <div id="m-bar-subject" class="bar-subject"></div>
+      <button id="m-bar-star" class="icon-btn m-star" type="button" aria-pressed="false" title="Markieren"></button>
+    </div>
+    <div id="placeholder" class="muted"></div>
+    <article id="mail" hidden>
+      <div id="m-head">
+        <h1 id="m-subject"></h1>
+        <button id="m-star" class="icon-btn m-star" type="button" aria-pressed="false" title="Markieren"></button>
+      </div>
+      <div id="m-archived" class="badge" hidden></div>
+      <div id="m-copies" class="copies" hidden></div>
+      <div class="sender">
+        <span id="m-avatar" class="avatar" aria-hidden="true"></span>
+        <div class="sender-text">
+          <div id="m-from" class="sender-name"></div>
+          <div id="m-from-addr" class="sender-addr" hidden></div>
+        </div>
+        <div id="m-date" class="sender-date"></div>
+      </div>
+      <div id="m-recips" class="recips"></div>
+      <div id="m-tags" hidden>
+        <div id="m-chips"></div>
+        <input id="m-tag-input" class="tag-input" type="text" maxlength="40" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="m-tag-suggest" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen">
+        <ul id="m-tag-suggest" role="listbox" hidden></ul>
+      </div>
+      <div id="m-nomark" class="muted" hidden>Markieren nicht möglich, die .eml-Datei fehlt.</div>
+      <div id="m-mark-warn" class="notice warn" role="alert" hidden></div>
+      <div id="m-attachments" class="attachments" hidden></div>
+      <div id="m-error" class="notice warn" role="alert" hidden></div>
+      <div id="m-toggle" class="toggle" hidden>
+        <button type="button" data-mode="html">HTML</button>
+        <button type="button" data-mode="text">Text</button>
+      </div>
+      <div id="m-body"></div>
+    </article>
+  </main>
+</div>
+
+<dialog id="library-dialog" class="sheet" aria-labelledby="library-title">
+  <h2 id="library-title">Bibliothek wählen</h2>
+  <div id="library-warn" class="warn" role="alert" hidden></div>
+  <form id="library-form">
+    <div class="pathbar">
+      <button id="dir-up" class="icon-btn" type="button" title="Übergeordnetes Verzeichnis" aria-label="Übergeordnetes Verzeichnis"></button>
+      <button id="dir-home" class="icon-btn" type="button" title="Home-Verzeichnis" aria-label="Home-Verzeichnis"></button>
+      <input id="dir-path" name="path" type="text" spellcheck="false" autocomplete="off" aria-label="Pfad">
+      <button id="dir-go" class="btn" type="button">Gehe zu</button>
+    </div>
+    <ul id="dir-list" class="group" aria-label="Unterverzeichnisse"></ul>
+    <p class="hint" id="dir-hint"></p>
+    <label id="import-name-row" class="field" hidden><span>Name der Quelle</span>
+      <input id="import-name" type="text" autocomplete="off" maxlength="80"></label>
+    <label id="library-legacy-row" class="check" hidden><input id="library-legacy" type="checkbox" checked> <span>Bisheriges Verzeichnis <span id="library-legacy-path"></span> als erste Quelle übernehmen</span></label>
+    <label id="library-remember-row" class="check"><input id="library-remember" type="checkbox"> <span>Auswahl merken</span></label>
+    <div class="actions">
+      <button id="library-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="library-import" class="btn" type="button" hidden>Outlook-Datei importieren…</button>
+      <button id="library-create" class="btn" type="button">Hier neue Bibliothek anlegen</button>
+      <button id="library-submit" class="btn primary" type="submit" disabled>Öffnen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="folder-dialog" class="sheet" aria-labelledby="folder-title">
+  <h2 id="folder-title"></h2>
+  <div id="folder-warn" class="notice warn" role="alert" hidden></div>
+  <form id="folder-form">
+    <label id="folder-name-row" class="field"><span>Name</span>
+      <input id="folder-name" name="name" type="text" maxlength="100" autocomplete="off"></label>
+    <p id="folder-delete-text" class="hint" hidden>Die Mails bleiben im Archiv und verlieren nur diesen Ordner.</p>
+    <div class="actions">
+      <button id="folder-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="folder-submit" class="btn primary" type="submit" disabled></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="transfer-dialog" class="sheet" aria-labelledby="transfer-title">
+  <h2 id="transfer-title"></h2>
+  <div id="transfer-warn" class="notice warn" role="alert" hidden></div>
+  <form id="transfer-form">
+    <label class="field"><span>Archiv</span>
+      <select id="transfer-archive"></select></label>
+    <div class="field" role="radiogroup" aria-labelledby="transfer-folder-label">
+      <span id="transfer-folder-label">Ordner im Archiv</span>
+      <ul id="transfer-tree" class="group transfer-tree"></ul>
+    </div>
+    <div id="transfer-new" hidden>
+      <label class="field"><span>Name des neuen Ordners</span>
+        <input id="transfer-new-name" name="new_name" type="text" maxlength="100" autocomplete="off"></label>
+      <label class="field"><span>Unter</span>
+        <select id="transfer-parent"></select></label>
+    </div>
+    <p id="transfer-hint" class="hint"></p>
+    <div class="actions">
+      <button id="transfer-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="transfer-submit" class="btn primary" type="submit" disabled>Ins Archiv</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="fetch-dialog" class="sheet" aria-labelledby="fetch-title">
+  <h2 id="fetch-title">Mails abrufen</h2>
+  <div id="fetch-warn" class="warn" role="alert" hidden></div>
+
+  <form id="fetch-form">
+    <label class="field"><span>E-Mail</span>
+      <input name="email" type="email" autocomplete="username"></label>
+    <label class="field"><span>Passwort</span>
+      <input name="password" type="password" required autocomplete="current-password"></label>
+    <label class="field"><span>Mailbox-Passwort</span>
+      <input name="mailbox_password" type="password" autocomplete="off">
+      <span class="hint">nur bei 2-Passwort-Modus</span></label>
+    <label class="field"><span>2FA-Code (optional)</span>
+      <input name="totp" inputmode="numeric" autocomplete="one-time-code"></label>
+    <div class="actions">
+      <button id="fetch-cancel" class="btn" type="button">Abbrechen</button>
+      <button class="btn primary" type="submit">Abrufen starten</button>
+    </div>
+  </form>
+
+  <div id="fetch-progress" hidden>
+    <p id="fetch-status" class="muted">Abruf läuft…</p>
+    <pre id="fetch-log"></pre>
+    <div class="actions">
+      <button id="fetch-retry" class="btn" type="button" hidden>Erneut versuchen</button>
+      <button id="fetch-close" class="btn" type="button">Schließen</button>
+    </div>
+  </div>
+</dialog>
+
+<dialog id="preview-dialog" class="sheet" aria-labelledby="preview-title">
+  <h2 id="preview-title" tabindex="-1"></h2>
+  <iframe id="preview-frame" title="Vorschau des Anhangs"></iframe>
+  <audio id="preview-audio" controls preload="metadata"></audio>
+  <div class="settings-foot">
+    <a id="preview-download" class="btn" href="">Herunterladen</a>
+    <button id="preview-close" class="btn primary" type="button">Schließen</button>
+  </div>
+</dialog>
+
+<dialog id="settings-dialog" class="sheet" aria-labelledby="settings-title">
+  <h2 id="settings-title" tabindex="-1">Einstellungen</h2>
+  <div id="settings-warn" class="notice warn" role="alert" hidden></div>
+
+  <section class="settings-section" aria-labelledby="settings-view-title">
+    <h3 id="settings-view-title">Ansicht</h3>
+    <div id="settings-view" class="group" role="radiogroup" aria-labelledby="settings-view-title">
+      <label class="group-row"><input type="radio" name="view" value="combined"> <span>Kombiniert: „∑“ zeigt alle sichtbaren Quellen</span></label>
+      <label class="group-row"><input type="radio" name="view" value="single"> <span>Einzeln: nur die gewählte Quelle, ohne „∑“</span></label>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-theme-title">
+    <h3 id="settings-theme-title">Erscheinungsbild</h3>
+    <div id="settings-theme" class="group" role="radiogroup" aria-labelledby="settings-theme-title">
+      <label class="group-row"><input type="radio" name="theme" value="system"> <span>System</span></label>
+      <label class="group-row"><input type="radio" name="theme" value="light"> <span>Hell</span></label>
+      <label class="group-row"><input type="radio" name="theme" value="dark"> <span>Dunkel</span></label>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-sources-title">
+    <h3 id="settings-sources-title">Quellen</h3>
+    <p class="hint">Reihenfolge wie in der Leiste. Ausgeblendete Quellen erscheinen weder in der Leiste noch in „∑“.</p>
+    <ul id="settings-sources" class="group" aria-label="Quellen"></ul>
+    <button id="settings-archive-open" class="btn small" type="button" aria-expanded="false" aria-controls="settings-archive-new">Neues Archiv…</button>
+    <form id="settings-archive-new" hidden>
+      <label class="field"><span>Name des Archivs</span>
+        <input name="name" type="text" maxlength="100" autocomplete="off"></label>
+      <div class="actions">
+        <button class="btn primary" type="submit">Anlegen</button>
+        <button id="settings-archive-cancel" class="btn" type="button">Abbrechen</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-tags-title">
+    <h3 id="settings-tags-title">Tags</h3>
+    <ul id="settings-tags" class="group" aria-label="Tags"></ul>
+    <form id="settings-tag-new">
+      <label class="field"><span>Neuer Tag</span>
+        <input name="name" type="text" maxlength="40" autocomplete="off"></label>
+      <div class="actions"><button class="btn" type="submit">Hinzufügen</button></div>
+    </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-cleanup-title">
+    <h3 id="settings-cleanup-title">Duplikate aufräumen</h3>
+    <p id="cleanup-none" class="hint" hidden></p>
+    <fieldset id="cleanup-fields" class="cleanup-fields">
+      <label class="field"><span>Aufräumen in</span>
+        <select id="cleanup-target"></select></label>
+      <label class="field"><span>Referenz</span>
+        <select id="cleanup-reference"></select></label>
+      <div class="field" role="radiogroup" aria-labelledby="cleanup-action-label">
+        <span id="cleanup-action-label">Aktion</span>
+        <label class="radio"><input id="cleanup-link" name="cleanup-action" type="radio" value="link" checked>
+          <span>Durch Hardlink ersetzen (empfohlen)</span></label>
+        <p class="hint">Die Mails bleiben in beiden Quellen sichtbar, die Datei liegt nur noch einmal auf der Platte.</p>
+        <label class="radio"><input id="cleanup-delete" name="cleanup-action" type="radio" value="delete">
+          <span>Kopien löschen</span></label>
+        <p id="cleanup-delete-hint" class="hint"></p>
+      </div>
+      <div id="cleanup-preview" class="hint" aria-live="polite" hidden></div>
+      <div class="actions">
+        <button id="cleanup-preview-btn" class="btn" type="button">Vorschau</button>
+        <button id="cleanup-run-btn" class="btn primary" type="button" disabled>Aufräumen…</button>
+      </div>
+    </fieldset>
+    <p id="cleanup-report" class="hint" hidden></p>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-proton-title">
+    <h3 id="settings-proton-title">Proton-Abruf</h3>
+    <form id="settings-proton">
+      <div class="group">
+        <label class="group-row stack field"><span>E-Mail</span>
+          <input name="proton_email" type="email" autocomplete="off"></label>
+        <label class="group-row stack field"><span>CLI-Pfad</span>
+          <input name="cli" type="text" spellcheck="false" autocomplete="off">
+          <span class="hint">Nur ein absoluter Pfad zu einer ausführbaren Datei wird verwendet.</span></label>
+      </div>
+      <p id="settings-cli-override" class="hint" hidden></p>
+      <p class="hint">Passwörter werden nie gespeichert. Sie werden bei jedem Abruf abgefragt.</p>
+      <div class="actions"><button class="btn primary" type="submit">Speichern</button></div>
+    </form>
+  </section>
+
+  <section class="settings-section" aria-labelledby="settings-library-title">
+    <h3 id="settings-library-title">Bibliothek</h3>
+    <div class="group">
+      <div class="group-row">
+        <span id="settings-library-path" class="libpath"></span>
+        <button id="settings-library-change" class="btn small" type="button">Wechseln…</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="settings-foot"><button id="settings-close" class="btn primary" type="button">Schließen</button></div>
+</dialog>
+
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/pure.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

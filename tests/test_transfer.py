@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-import store
-import transfer
-from transfer import Item, dest_mid
+from mailviewer import store
+from mailviewer import transfer
+from mailviewer.transfer import Item, dest_mid
 
 IDENT = "<msg-1@example.org>"
 FOLDER = "f1234"
@@ -130,7 +130,7 @@ class TransferTests(unittest.TestCase):
         shutil.rmtree(self.dest)
         os.mkdir(self.dest)
         self.write_mail(self.src, "src1")
-        with mock.patch("transfer.atomic_write_json", side_effect=OSError):
+        with mock.patch("mailviewer.transfer.atomic_write_json", side_effect=OSError):
             result = self.run_transfer([Item(self.src, "src1", IDENT, "move")])
 
         self.assertEqual((result.failed, result.deleted_origin), (1, 0))

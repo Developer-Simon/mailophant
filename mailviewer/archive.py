@@ -11,7 +11,7 @@ import os
 import unicodedata
 from typing import Any, Callable
 
-import store
+from mailviewer import store
 
 Json = dict[str, Any]
 

@@ -12,8 +12,8 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Callable
 
-import transfer
-from store import META_SUFFIX, mail_ident
+from mailviewer import transfer
+from mailviewer.store import META_SUFFIX, mail_ident
 
 MAX_VANISHED_RATIO = 0.2
 MAX_VANISHED_COUNT = 200

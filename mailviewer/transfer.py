@@ -12,8 +12,8 @@ import shutil
 from dataclasses import dataclass
 from typing import Any, Callable
 
-import store
-from archive import atomic_write_json
+from mailviewer import store
+from mailviewer.archive import atomic_write_json
 
 ALL_MAIL = "5"
 

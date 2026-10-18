@@ -14,7 +14,7 @@ from email.parser import Parser
 from email.utils import formataddr, formatdate, getaddresses
 from typing import Protocol
 
-from store import META_SUFFIX, mail_ident
+from mailviewer.store import META_SUFFIX, mail_ident
 
 BOUNDARY_PREFIX = "=_mbv_"
 RTF_NAME = "Nachricht.rtf"

@@ -8,8 +8,8 @@ import unittest
 from dataclasses import asdict
 from unittest import mock
 
-import library
-import test_server as fx
+from mailviewer import library
+from tests import test_server as fx
 
 ACCOUNT = "simon.test@example.test"
 

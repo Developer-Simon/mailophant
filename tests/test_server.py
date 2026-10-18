@@ -21,14 +21,14 @@ from email.utils import formataddr
 from unittest import mock
 from urllib.parse import quote, urlencode
 
-import server
-from cleanup import CleanupResult
-from library import LIBRARY_FILE, Library
-from outlook import ImportReport, Unreadable
-from store import Store
-from test_outlook import FakeReader, folder
-from transfer import TransferResult
-from test_outlook import message as outlook_message
+from mailviewer import browse, config, exports, mailparse, server, validation
+from mailviewer.cleanup import CleanupResult
+from mailviewer.library import LIBRARY_FILE, Library
+from mailviewer.outlook import ImportReport, Unreadable
+from mailviewer.store import Store
+from tests.test_outlook import FakeReader, folder
+from mailviewer.transfer import TransferResult
+from tests.test_outlook import message as outlook_message
 
 PDF = b"%PDF-1.4 synthetic fixture\n%%EOF"
 PNG = bytes(range(64))
@@ -148,6 +148,10 @@ class Base(unittest.TestCase):
         cls.static = os.path.join(cls.tmp, "static")
         os.makedirs(cls.static)
         write(os.path.join(cls.static, "index.html"), "<!doctype html><title>synthetic</title>")
+        os.makedirs(os.path.join(cls.static, "css"))
+        os.makedirs(os.path.join(cls.static, "js"))
+        write(os.path.join(cls.static, "css", "app.css"), "body{}")
+        write(os.path.join(cls.static, "js", "app.js"), "void 0")
         library = make_library(cls.tmp, cls.export)
         config = os.path.join(cls.tmp, "config.json")
         with contextlib.redirect_stderr(io.StringIO()):  # the index job logs the broken metadata file
@@ -325,20 +329,20 @@ class AttachmentTests(Base):
 
     def test_preview_headers_only_for_safe_types(self):
         for ctype in ("image/png", "image/jpeg", "image/gif", "image/webp"):
-            disposition, extra = server.attachment_headers(ctype, "x", inline=True)
+            disposition, extra = mailparse.attachment_headers(ctype, "x", inline=True)
             self.assertTrue(disposition.startswith("inline;"), ctype)
             self.assertIn("sandbox", dict(extra)["Content-Security-Policy"], ctype)
-        self.assertTrue(server.attachment_headers("application/pdf", "x", inline=True)[0].startswith("inline;"))
+        self.assertTrue(mailparse.attachment_headers("application/pdf", "x", inline=True)[0].startswith("inline;"))
         for ctype in ("image/svg+xml", "text/html", "application/xhtml+xml", "text/xml", "application/octet-stream"):
-            disposition, _ = server.attachment_headers(ctype, "x", inline=True)
+            disposition, _ = mailparse.attachment_headers(ctype, "x", inline=True)
             self.assertTrue(disposition.startswith("attachment;"), ctype)
-        self.assertTrue(server.attachment_headers("application/pdf", "x", inline=False)[0].startswith("attachment;"))
+        self.assertTrue(mailparse.attachment_headers("application/pdf", "x", inline=False)[0].startswith("attachment;"))
 
     def test_mp3_preview(self):
-        self.assertEqual(server.preview_type("audio/mpeg"), "audio/mpeg")
-        self.assertEqual(server.preview_type("audio/mp3"), "audio/mpeg")
-        self.assertIsNone(server.preview_type("audio/x-ms-wma"))
-        disposition, extra = server.attachment_headers("audio/mpeg", "x", inline=True)
+        self.assertEqual(mailparse.preview_type("audio/mpeg"), "audio/mpeg")
+        self.assertEqual(mailparse.preview_type("audio/mp3"), "audio/mpeg")
+        self.assertIsNone(mailparse.preview_type("audio/x-ms-wma"))
+        disposition, extra = mailparse.attachment_headers("audio/mpeg", "x", inline=True)
         self.assertTrue(disposition.startswith("inline;"))
         self.assertNotIn("Content-Security-Policy", dict(extra))  # the media player does not work sandboxed
 
@@ -398,6 +402,17 @@ class SecurityTests(Base):
         self.assertEqual(status, 200)
         self.assertIn("text/html", headers["Content-Type"])
         self.assertIn(b"synthetic", body)
+
+    def test_static_assets_served_with_type(self):
+        for path, ctype in (("/static/css/app.css", "text/css"), ("/static/js/app.js", "text/javascript")):
+            status, headers, _ = self.get(path)
+            self.assertEqual(status, 200, path)
+            self.assertIn(ctype, headers["Content-Type"])
+
+    def test_static_rejects_other_paths(self):
+        for path in ("/static/../server.py", "/static/js/../../x.js", "/static/js/missing.js", "/static/other/app.js"):
+            status, _, _ = self.get(path)
+            self.assertEqual(status, 404, path)
 
     def test_bound_to_loopback(self):
         self.assertEqual(self.srv.server_address[0], "127.0.0.1")
@@ -501,24 +516,24 @@ class ResolveTests(unittest.TestCase):
         make_export(account, "mail_20260101T000000")
         os.makedirs(os.path.join(account, "mail_20270101T000000"))  # no labels.json: skipped
         os.makedirs(os.path.join(account, ".fetch-abc"))
-        self.assertEqual(server.resolve_mail_dir(account), os.path.join(account, "mail_20260101T000000"))
+        self.assertEqual(exports.resolve_mail_dir(account), os.path.join(account, "mail_20260101T000000"))
 
     def test_mail_dir_used_as_is(self):
         mail = make_export(self.tmp, "mail_20260101T000000")
-        self.assertEqual(server.resolve_mail_dir(mail), mail)
-        self.assertEqual(server.account_dir_of(mail), self.tmp)
+        self.assertEqual(exports.resolve_mail_dir(mail), mail)
+        self.assertEqual(exports.account_dir_of(mail), self.tmp)
         plain = make_export(self.tmp)  # not named mail_*: the dir is its own account dir
-        self.assertEqual(server.account_dir_of(plain), plain)
+        self.assertEqual(exports.account_dir_of(plain), plain)
 
     def test_account_dir_of_account(self):
         account = os.path.join(self.tmp, "acct@x.test")
-        self.assertEqual(server.account_dir_of(account), account)
+        self.assertEqual(exports.account_dir_of(account), account)
 
     def test_no_export_raises(self):
         with self.assertRaises(ValueError):
-            server.resolve_mail_dir(self.tmp)
+            exports.resolve_mail_dir(self.tmp)
         with self.assertRaises(ValueError):
-            server.resolve_mail_dir(os.path.join(self.tmp, "missing"))
+            exports.resolve_mail_dir(os.path.join(self.tmp, "missing"))
 
     def test_find_cli_levels(self):
         root = self.tmp
@@ -529,8 +544,8 @@ class ResolveTests(unittest.TestCase):
         write(cli, "#!/bin/sh\n")
         os.chmod(cli, 0o755)
         write(os.path.join(root, "a", "b", CLI_NAME), "not executable")  # skipped
-        self.assertEqual(server.find_cli(near), cli)
-        self.assertIsNone(server.find_cli(deep))
+        self.assertEqual(exports.find_cli(near), cli)
+        self.assertIsNone(exports.find_cli(deep))
 
     def test_free_name(self):
         os.makedirs(os.path.join(self.tmp, "mail_1"))
@@ -539,16 +554,16 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(server.free_name(self.tmp, "mail_2"), "mail_2")
 
     def test_redact(self):
-        self.assertEqual(server.redact("a pw b pw", ["pw"]), "a *** b ***")
+        self.assertEqual(exports.redact("a pw b pw", ["pw"]), "a *** b ***")
         pw = 'p@ss "w/d'
         text = f"{pw} | {quote(pw, safe='')} | {json.dumps(pw)[1:-1]}"
-        self.assertEqual(server.redact(text, [pw]), "*** | *** | ***")
-        self.assertEqual(server.redact("abc", ["", None]), "abc")
-        self.assertEqual(server.redact("xabcx", ["abc", "xabcx"]), "***")
+        self.assertEqual(exports.redact(text, [pw]), "*** | *** | ***")
+        self.assertEqual(exports.redact("abc", ["", None]), "abc")
+        self.assertEqual(exports.redact("xabcx", ["abc", "xabcx"]), "***")
 
     def test_cli_env_only_sets_nonempty_secrets(self):
         with mock.patch.dict(os.environ, {"ET_TOTP_CODE": "1", "ET_USER_MAILBOX_PASSWORD": "old"}):
-            env = server.cli_env("a@b.test", "/t", PW, "", "")
+            env = exports.cli_env("a@b.test", "/t", PW, "", "")
         self.assertNotIn("ET_TOTP_CODE", env)
         self.assertNotIn("ET_USER_MAILBOX_PASSWORD", env)
         self.assertEqual((env["ET_OPERATION"], env["ET_DIR"], env["ET_TELEMETRY_OFF"]),
@@ -557,13 +572,13 @@ class ResolveTests(unittest.TestCase):
 
     def test_parse_fetch_body(self):
         raw = json.dumps({"source": "s1", "password": PW, "totp": " 123 "}).encode()
-        self.assertEqual(server.parse_fetch_body(raw), ("s1", "", PW, "", "123"))
+        self.assertEqual(validation.parse_fetch_body(raw), ("s1", "", PW, "", "123"))
         for bad, reason in ((b"{x", "invalid JSON body"), (b"[]", "body must be a JSON object"),
                             (b'{"password": "p"}', "missing source"),
                             (b'{"source": "s1", "email": "a@b"}', "missing password"),
                             (b'{"source": "s1", "password": "p", "email": "../x"}', "invalid email")):
             with self.assertRaisesRegex(ValueError, reason):
-                server.parse_fetch_body(bad)
+                validation.parse_fetch_body(bad)
 
 
 def snapshot(d: str) -> dict:
@@ -603,7 +618,7 @@ class DedupeTests(unittest.TestCase):
         eml, meta_js = plain_eml(), b'{"Payload": {"ID": "a"}}'
         self.pair("a.eml", eml)
         self.pair("a.metadata.json", meta_js)
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (2, len(eml) + len(meta_js)))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (2, len(eml) + len(meta_js)))
         for name in ("a.eml", "a.metadata.json"):
             self.assertTrue(self.same_inode(name))
             self.assertEqual(os.stat(os.path.join(self.new, name)).st_nlink, 2)
@@ -613,14 +628,14 @@ class DedupeTests(unittest.TestCase):
     def test_changed_metadata_not_linked(self):
         self.pair("a.metadata.json", b'{"Unread": 1}', b'{"Unread": 0}')  # same size, other bytes
         self.pair("b.metadata.json", b'{"Unread": 1}', b'{"Unread": 1, "LabelIDs": ["0"]}')  # other size
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
         self.assertFalse(self.same_inode("a.metadata.json"))
         self.assertFalse(self.same_inode("b.metadata.json"))
         self.assertEqual(self.read(self.new, "a.metadata.json"), b'{"Unread": 0}')
 
     def test_new_only_file_untouched(self):
         write(os.path.join(self.new, "c.eml"), b"new mail")
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
         self.assertEqual(os.stat(os.path.join(self.new, "c.eml")).st_nlink, 1)
         self.assertEqual(self.read(self.new, "c.eml"), b"new mail")
         self.assertFalse(os.path.exists(os.path.join(self.prev, "c.eml")))
@@ -628,7 +643,7 @@ class DedupeTests(unittest.TestCase):
     def test_labels_and_other_files_untouched(self):
         self.pair("labels.json", b'{"Payload": []}')
         self.pair("notes.txt", b"same bytes")
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
         self.assertFalse(self.same_inode("labels.json"))
         self.assertFalse(self.same_inode("notes.txt"))
 
@@ -637,14 +652,14 @@ class DedupeTests(unittest.TestCase):
         self.pair("a.metadata.json", b"{}")
         write(os.path.join(self.prev, "old_only.eml"), b"gone")
         before = snapshot(self.prev)
-        server.dedupe_with_previous(self.prev, self.new)
+        exports.dedupe_with_previous(self.prev, self.new)
         self.assertEqual(snapshot(self.prev), before)
 
     def test_already_linked_not_counted_twice(self):
         eml = plain_eml()
         self.pair("a.eml", eml)
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (1, len(eml)))
-        self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (1, len(eml)))
+        self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
 
     def test_oserror_on_link_skips_file_and_leaves_no_temp(self):
         eml = plain_eml()
@@ -652,7 +667,7 @@ class DedupeTests(unittest.TestCase):
         self.pair("a.metadata.json", b"{}")
         before = sorted(os.listdir(self.new))
         with mock.patch.object(server.os, "link", side_effect=OSError("cross-device")):
-            self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+            self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
         self.assertEqual(sorted(os.listdir(self.new)), before)
         self.assertEqual(self.read(self.new, "a.eml"), eml)
         self.assertFalse(self.same_inode("a.eml"))
@@ -662,7 +677,7 @@ class DedupeTests(unittest.TestCase):
         self.pair("a.eml", eml)
         before = sorted(os.listdir(self.new))
         with mock.patch.object(server.os, "replace", side_effect=OSError("busy")):
-            self.assertEqual(server.dedupe_with_previous(self.prev, self.new), (0, 0))
+            self.assertEqual(exports.dedupe_with_previous(self.prev, self.new), (0, 0))
         self.assertEqual(sorted(os.listdir(self.new)), before)
         self.assertEqual(self.read(self.new, "a.eml"), eml)
         self.assertEqual(os.stat(os.path.join(self.new, "a.eml")).st_nlink, 1)
@@ -1130,7 +1145,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual((cfg["configured"], cfg["library"], cfg["saved"]), (True, root, root))
         self.assertTrue(os.path.isfile(os.path.join(root, LIBRARY_FILE)))
-        self.assertEqual(server.load_saved(self.config), root)
+        self.assertEqual(config.load_saved(self.config), root)
         self.stop(srv)
         srv = self.serve()  # the saved library is opened at start
         cfg = request(srv.server_port, "GET", "/api/config")[1]
@@ -1232,19 +1247,19 @@ class LibraryTests(unittest.TestCase):
         srv = self.serve()
         self.post(srv, {"path": root, "create": True, "remember": True})
         wait_job(srv.server_port)
-        self.assertEqual(server.load_saved(self.config), root)
+        self.assertEqual(config.load_saved(self.config), root)
         status, cfg = self.post(srv, {"path": root})  # no remember key: saved choice stays
         self.assertEqual(status, 200)
         self.assertEqual(cfg["saved"], root)
-        self.assertEqual(server.load_saved(self.config), root)
+        self.assertEqual(config.load_saved(self.config), root)
         wait_job(srv.server_port)
         status, cfg = self.post(srv, {"path": root, "remember": False})
         self.assertEqual((status, cfg["saved"]), (200, None))
-        self.assertIsNone(server.load_saved(self.config))
+        self.assertIsNone(config.load_saved(self.config))
         wait_job(srv.server_port)
         status, cfg = self.post(srv, {"path": root, "remember": True})
         self.assertEqual((status, cfg["saved"]), (200, root))
-        self.assertEqual(server.load_saved(self.config), root)
+        self.assertEqual(config.load_saved(self.config), root)
 
     def test_switch_library_while_job_running_409(self):
         gate = threading.Event()
@@ -1500,12 +1515,12 @@ class SourceAdminTests(unittest.TestCase):
         srv = self.serve(root)
         self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/gif")[0], 400)
         self.assertEqual(self.post(srv, "/api/sources/s1/icon", raw=ICON_PNG, ctype="image/png; x=1")[0], 400)
-        status, data = self.post(srv, "/api/sources/s1/icon", raw=b"x" * (server.MAX_ICON + 1),
+        status, data = self.post(srv, "/api/sources/s1/icon", raw=b"x" * (validation.MAX_ICON + 1),
                                  ctype="image/png")
         self.assertEqual((status, data["error"]), (400, "body too large"))
         self.assertEqual(self.post(srv, "/api/sources/s9/icon", raw=ICON_PNG, ctype="image/png")[0], 404)
         self.assertFalse(os.path.exists(os.path.join(root, "icons")))
-        at_limit = ICON_PNG + b"0" * (server.MAX_ICON - len(ICON_PNG))
+        at_limit = ICON_PNG + b"0" * (validation.MAX_ICON - len(ICON_PNG))
         status, _ = self.post(srv, "/api/sources/s1/icon", raw=at_limit, ctype="image/png")
         self.assertEqual(status, 200)  # exactly the limit is allowed
 
@@ -1552,7 +1567,7 @@ class SourceAdminTests(unittest.TestCase):
 
     def test_settings_body_limit_400(self):
         srv = self.serve(make_library(self.tmp, self.export))
-        raw = b'{"view": "' + b"x" * server.MAX_BODY + b'"}'
+        raw = b'{"view": "' + b"x" * validation.MAX_BODY + b'"}'
         status, data = self.post(srv, "/api/settings", raw=raw)
         self.assertEqual((status, data["error"]), (400, "body too large"))
 
@@ -1631,11 +1646,11 @@ class SourceAdminTests(unittest.TestCase):
         os.makedirs(os.path.join(d, "sub"))
         for name in ("a.PST", "b.ost", "c.txt", ".hidden.pst"):
             write(os.path.join(d, name), b"x")
-        listed = server.browse(d, files=True)
+        listed = browse.browse(d, files=True)
         self.assertEqual([f["name"] for f in listed["files"]], ["a.PST", "b.ost"])
         self.assertEqual(listed["files"][0]["size"], 1)
         self.assertEqual([x["name"] for x in listed["dirs"]], ["sub"])
-        self.assertNotIn("files", server.browse(d))
+        self.assertNotIn("files", browse.browse(d))
         srv = self.serve(make_library(self.tmp, self.export))
         status, data = request(srv.server_port, "GET", f"/api/browse?path={quote(d, safe='')}&files=outlook")
         self.assertEqual((status, [f["name"] for f in data["files"]]), (200, ["a.PST", "b.ost"]))
@@ -1644,12 +1659,12 @@ class SourceAdminTests(unittest.TestCase):
 
     def test_config_reports_outlook_import(self):
         srv = self.serve(None)
-        with mock.patch("server.pypff_available", return_value=False):
+        with mock.patch("mailviewer.server.pypff_available", return_value=False):
             status, data = request(srv.server_port, "GET", "/api/config")
         self.assertEqual(status, 200)
         self.assertIs(data["outlook_import"], False)
         self.assertEqual(data["install_hint"], server.INSTALL_HINT)
-        with mock.patch("server.pypff_available", return_value=True):
+        with mock.patch("mailviewer.server.pypff_available", return_value=True):
             status, data = request(srv.server_port, "GET", "/api/config")
         self.assertIs(data["outlook_import"], True)
 
@@ -1712,7 +1727,7 @@ class TagRouteTests(unittest.TestCase):
         self.assertEqual(len(data["tags"]), 1)
         tag = data["tags"][0]
         self.assertEqual((tag["name"], tag["count"]), ("Rechnung", 0))
-        self.assertIn(tag["color"], server.TAG_COLORS)  # no color given: one of the defaults
+        self.assertIn(tag["color"], validation.TAG_COLORS)  # no color given: one of the defaults
         tag_id = tag["id"]
         self.assertEqual(request(srv.server_port, "GET", "/api/tags"), (200, data))
 
@@ -1897,7 +1912,7 @@ class ImportTests(unittest.TestCase):
         self.config = os.path.join(self.tmp, "config.json")
         self.pst = os.path.join(self.tmp, "mail.PST")
         write(self.pst, b"x")
-        self.enterContext(mock.patch("server.pypff_available", return_value=True))
+        self.enterContext(mock.patch("mailviewer.server.pypff_available", return_value=True))
 
     def stop_all(self):
         for srv in list(self.servers):
@@ -1919,7 +1934,7 @@ class ImportTests(unittest.TestCase):
     def use_mail(self, *items):
         """Every import reads a fresh FakeReader with one folder holding items."""
         self.enterContext(mock.patch(
-            "server.open_reader",
+            "mailviewer.server.open_reader",
             side_effect=lambda path: FakeReader([folder(("Posteingang",), *items)]),
         ))
 
@@ -1966,7 +1981,7 @@ class ImportTests(unittest.TestCase):
 
     def test_import_failure_leaves_nothing(self):
         self.use_mail(outlook_message())
-        self.enterContext(mock.patch("server.convert", side_effect=RuntimeError("boom")))
+        self.enterContext(mock.patch("mailviewer.server.convert", side_effect=RuntimeError("boom")))
         srv = self.serve()
         st = self.run_import(srv)
         self.assertEqual((st["state"], st["message"]), ("error", "boom"))
@@ -1975,7 +1990,7 @@ class ImportTests(unittest.TestCase):
 
     def test_import_add_source_failure_leaves_nothing(self):
         self.use_mail(outlook_message())
-        self.enterContext(mock.patch("library.Library.add_source", side_effect=ValueError("boom")))
+        self.enterContext(mock.patch("mailviewer.library.Library.add_source", side_effect=ValueError("boom")))
         srv = self.serve()
         st = self.run_import(srv)
         self.assertEqual(st["state"], "error")
@@ -1993,7 +2008,7 @@ class ImportTests(unittest.TestCase):
 
     def test_import_nothing_readable(self):
         self.enterContext(mock.patch(
-            "server.open_reader",
+            "mailviewer.server.open_reader",
             side_effect=lambda path: FakeReader([folder(("Posteingang",), Unreadable(reason="x"))]),
         ))
         srv = self.serve()
@@ -2030,7 +2045,7 @@ class ImportTests(unittest.TestCase):
 
     def test_import_without_pypff_is_503(self):
         srv = self.serve()
-        with mock.patch("server.pypff_available", return_value=False):
+        with mock.patch("mailviewer.server.pypff_available", return_value=False):
             status, data = self.post(srv, {"path": self.pst, "name": "A"})
         self.assertEqual((status, data), (503, {"error": server.INSTALL_HINT}))
         self.assertEqual(self.library_sources(), [])
@@ -2048,7 +2063,7 @@ class ImportTests(unittest.TestCase):
             return ImportReport()
 
         self.use_mail(outlook_message())
-        self.enterContext(mock.patch("server.convert", side_effect=held))
+        self.enterContext(mock.patch("mailviewer.server.convert", side_effect=held))
         srv = self.serve()
         self.assertEqual(self.post(srv, {"path": self.pst, "name": "A"}), (200, {"started": True}))
         self.assertEqual(self.post(srv, {"path": self.pst, "name": "B"})[0], 409)
@@ -2280,7 +2295,7 @@ class CleanupRouteTests(unittest.TestCase):
             return original(store, source_id, *args, **kwargs)
 
         with mock.patch.object(server.Store, "sync_source", spy), \
-                mock.patch("server.run_cleanup", side_effect=RuntimeError("boom")):
+                mock.patch("mailviewer.server.run_cleanup", side_effect=RuntimeError("boom")):
             self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 202)
             job = wait_job(srv.server_port)
         self.assertEqual((job["state"], job["message"]), ("error", "boom"))
@@ -2295,7 +2310,7 @@ class CleanupRouteTests(unittest.TestCase):
             return CleanupResult()
 
         srv = self.serve(self.archive_library())
-        with mock.patch("server.run_cleanup", side_effect=held):
+        with mock.patch("mailviewer.server.run_cleanup", side_effect=held):
             self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body())[0], 202)
             self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body("delete"))[0], 409)
             gate.set()
@@ -2314,7 +2329,7 @@ class CleanupRouteTests(unittest.TestCase):
             return st
 
         srv = self.serve(root)
-        with mock.patch("cleanup.os.stat", side_effect=other_device):
+        with mock.patch("mailviewer.cleanup.os.stat", side_effect=other_device):
             status, data = self.post(srv, "/api/cleanup", self.cleanup_body("link"))
             self.assertEqual(status, 400)
             self.assertIn("verschiedenen Dateisystemen", data["error"])
@@ -2412,7 +2427,7 @@ class ArchiveRouteTests(ArchiveServerTests):
 
     def test_create_archive_removes_directory_on_failure(self):
         srv = self.serve(make_library(self.tmp, self.export))
-        with mock.patch("server.write_empty_archive", side_effect=OSError("disk full")):
+        with mock.patch("mailviewer.server.write_empty_archive", side_effect=OSError("disk full")):
             status, data = self.create(srv, "Kaputt")
         self.assertEqual((status, data), (400, {"error": "disk full"}))
         self.assertEqual(os.listdir(os.path.join(self.tmp, "library", "sources")), [])
@@ -2669,7 +2684,7 @@ class AutoArchiveTests(ArchiveServerTests):
         return job
 
     def exports(self):
-        return sorted(os.path.basename(d) for d in server.mail_dirs(self.account))
+        return sorted(os.path.basename(d) for d in exports.mail_dirs(self.account))
 
     def archived(self):
         """(subject, LabelIDs) of each mail in the archive s2, sorted. The subject is the mail's key."""
@@ -2819,7 +2834,7 @@ class AutoArchiveTests(ArchiveServerTests):
     def test_copy_failure_keeps_exports(self):
         srv = self.start([("X", ["0"]), ("Y", ["0"])])
         self.target(srv)
-        with mock.patch("autoarchive.transfer.transfer", return_value=TransferResult(failed=1)):
+        with mock.patch("mailviewer.autoarchive.transfer.transfer", return_value=TransferResult(failed=1)):
             job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
         self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
         self.assertTrue(any("Archivieren fehlgeschlagen" in line for line in job["log"]), job["log"])
@@ -2850,7 +2865,7 @@ class CliOverrideTests(unittest.TestCase):
         self.enterContext(contextlib.redirect_stderr(io.StringIO()))
         self.root = make_library(self.tmp, make_export(self.tmp, "export"))
         self.config = os.path.join(self.tmp, "config.json")
-        self.cli = os.path.join(self.tmp, server.CLI_NAME)
+        self.cli = os.path.join(self.tmp, exports.CLI_NAME)
         write(self.cli, "#!/bin/sh\n")
         os.chmod(self.cli, 0o755)
 

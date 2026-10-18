@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest import mock
 
-import archive
-import store
+from mailviewer import archive
+from mailviewer import store
 
 
 def raw(path):
@@ -177,7 +177,7 @@ class ArchiveTests(unittest.TestCase):
         path = os.path.join(self.tmp, "x.json")
         with open(path, "wb") as f:
             f.write(b"orig")
-        with mock.patch("archive.os.replace", side_effect=OSError("boom")):
+        with mock.patch("mailviewer.archive.os.replace", side_effect=OSError("boom")):
             with self.assertRaises(OSError):
                 archive.atomic_write(path, b"new")
         self.assertEqual(sorted(os.listdir(self.tmp)), ["archive", "x.json"])

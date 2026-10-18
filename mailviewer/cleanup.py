@@ -11,7 +11,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from store import META_SUFFIX
+from mailviewer.store import META_SUFFIX
 
 ACTIONS = ("link", "delete")
 CROSS_DEVICE_REASON = "Ziel und Referenz liegen auf verschiedenen Dateisystemen, Hardlinks sind nicht möglich."

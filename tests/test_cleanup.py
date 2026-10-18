@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-import cleanup
+from mailviewer import cleanup
 
 
 class CleanupTests(unittest.TestCase):
@@ -80,7 +80,7 @@ class CleanupTests(unittest.TestCase):
                 )
             return st
 
-        with mock.patch("cleanup.os.stat", side_effect=fake_stat):
+        with mock.patch("mailviewer.cleanup.os.stat", side_effect=fake_stat):
             plan = cleanup.plan_cleanup(self.pairs, self.tgt, self.ref)
         self.assertFalse(plan.link_possible)
         self.assertEqual(
@@ -127,7 +127,7 @@ class CleanupTests(unittest.TestCase):
             removed.append(os.path.basename(path))
             real_remove(path)
 
-        with mock.patch("cleanup.os.remove", side_effect=spy):
+        with mock.patch("mailviewer.cleanup.os.remove", side_effect=spy):
             self.run_action("delete", pairs=[("a", "a")])
         self.assertEqual(removed, ["a.metadata.json", "a.eml"])
 
@@ -172,7 +172,7 @@ class CleanupTests(unittest.TestCase):
                 raise OSError(28, "No space left on device")
             return real_link(src, dst, *args, **kwargs)
 
-        with mock.patch("cleanup.os.link", side_effect=flaky_link):
+        with mock.patch("mailviewer.cleanup.os.link", side_effect=flaky_link):
             result, lines = self.run_action("link")
 
         self.assertEqual(self.read(os.path.join(self.tgt, "a.eml")), self.a)
@@ -200,7 +200,7 @@ class CleanupTests(unittest.TestCase):
 
         before = sorted(os.listdir(self.tgt))
         ino = os.stat(os.path.join(self.tgt, "a.eml")).st_ino
-        with mock.patch("cleanup.os.stat", side_effect=fake_stat):
+        with mock.patch("mailviewer.cleanup.os.stat", side_effect=fake_stat):
             with self.assertRaises(ValueError):
                 self.run_action("link")
         self.assertEqual(sorted(os.listdir(self.tgt)), before)
