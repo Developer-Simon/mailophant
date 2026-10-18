@@ -101,6 +101,8 @@ jobs:
         with:
           path: installers
           merge-multiple: true
+      - name: Checksums
+        run: cd installers && sha256sum * > SHA256SUMS.txt
       # Provenance: `gh attestation verify <file> --repo <owner>/mailophant` proves the installer was
       # built by this workflow from this tag.
       - uses: actions/attest-build-provenance@v2
@@ -111,8 +113,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd installers
-          sha256sum * > SHA256SUMS.txt
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Mailophant ${GITHUB_REF_NAME#v}" \
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "${GITHUB_REF_NAME#v}" \
             --generate-notes $prerelease *
