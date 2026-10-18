@@ -3106,6 +3106,16 @@ function updateTyping() {
   const field = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
   document.body.classList.toggle('typing', field || document.querySelector('dialog[open]') !== null);
 }
+// Texts cut off with an ellipsis (see the CSS) get their full text as tooltip, but only while they are cut off.
+const CLIPPED_TEXT = '.folder .name, .msg .sender, .subject-text, .bar-subject, #job-last, #preview-dialog h2, #titlebar-title';
+function clippedTitle(e) {
+  const node = e.target instanceof Element ? e.target.closest(CLIPPED_TEXT) : null;
+  if (!node) return;
+  if (node.scrollWidth > node.clientWidth) node.title = node.textContent.trim();
+  else node.removeAttribute('title');
+}
+document.addEventListener('pointerover', clippedTitle);
+document.addEventListener('focusin', clippedTitle);
 document.addEventListener('focusin', updateTyping);
 document.addEventListener('focusout', updateTyping);
 document.addEventListener('close', updateTyping, true); // dialog close: focus may return to the body
