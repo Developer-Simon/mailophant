@@ -269,6 +269,20 @@ function formatMessage(value, params, lang, locale) {
 }
 
 // Locale for numbers and dates: the browser's own variant of lang (en-GB), else lang itself.
+// Folder the transfer dialog starts on for mails from the folder source: { id } of the same folder in the archive,
+// { name, parent } for a new user folder under an existing parent (null = top level), or null.
+// archive: [{ key, path, id }] with the archive's label ID per folder.
+function transferPreset(source, archive) {
+  if (!source || source.virtual) return null;
+  const same = archive.find((f) => f.key === source.key);
+  if (same) return { id: same.id };
+  if (!String(source.key).startsWith('path:') || !source.name) return null;
+  const parentPath = foldCase(parentPathOf(source.path));
+  if (!parentPath) return { name: source.name, parent: null };
+  const parent = archive.find((f) => foldCase(f.path) === parentPath);
+  return parent ? { name: source.name, parent: parent.id } : null;
+}
+
 function pickLocale(lang, navLanguages) {
   const own = (navLanguages || []).find((l) => String(l).toLowerCase().split('-')[0] === lang);
   return own || lang;

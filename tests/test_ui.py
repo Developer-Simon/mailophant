@@ -406,6 +406,32 @@ class FormatMessageTest(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class TransferPresetTest(unittest.TestCase):
+    ARCHIVE = [{"key": "sys:0", "path": "", "id": "0"},
+               {"key": "path:kunden", "path": "Kunden", "id": "a1"},
+               {"key": "path:kunden/acme", "path": "Kunden/ACME", "id": "a2"}]
+
+    def preset(self, source):
+        return run_js(f"transferPreset({json.dumps(source)}, {json.dumps(self.ARCHIVE)})")
+
+    def test_same_folder_in_archive(self):
+        self.assertEqual(self.preset({"key": "path:kunden/acme", "path": "kunden/acme", "name": "acme"}), {"id": "a2"})
+        self.assertEqual(self.preset({"key": "sys:0", "path": "", "name": "Inbox"}), {"id": "0"})
+
+    def test_missing_folder_becomes_new_folder(self):
+        self.assertEqual(self.preset({"key": "path:rechnungen", "path": "Rechnungen", "name": "Rechnungen"}),
+                         {"name": "Rechnungen", "parent": None})
+        self.assertEqual(self.preset({"key": "path:kunden/beta", "path": "Kunden/Beta", "name": "Beta"}),
+                         {"name": "Beta", "parent": "a1"})
+
+    def test_no_preset(self):
+        self.assertIsNone(self.preset(None))
+        self.assertIsNone(self.preset({"key": "path:a/b", "path": "A/B", "name": "B"}))  # parent missing in the archive
+        self.assertIsNone(self.preset({"key": "sys:3", "path": "", "name": "Trash"}))
+        self.assertIsNone(self.preset({"key": "virtual:archived", "path": "", "name": "x", "virtual": True}))
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
 class PickLocaleTest(unittest.TestCase):
     def test_cases(self):
         self.assertEqual(run_js("pickLocale('en', ['de-DE', 'en-GB'])"), "en-GB")

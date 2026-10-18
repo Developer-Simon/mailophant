@@ -283,6 +283,7 @@ function folderRow(node) {
   const f = node.folder;
   const btn = el('button', { class: 'folder', type: 'button', 'data-key': node.key });
   btn.setAttribute('aria-current', String(f.key === state.folder));
+  if (f.virtual) btn.classList.add('todo'); // mails still to delete in Proton: a to-do, tinted like a pending badge
   btn.append(icon(f.virtual ? 'trash' : folderIconName(f.name || '')), el('span', { class: 'name', text: folderLabel(f) }));
   if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
   btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
@@ -621,7 +622,7 @@ function restoreFolderFocus(ret) {
 /* ---------- Ins Archiv… (selected mails) ---------- */
 const ALL_MAIL_KEY = 'sys:5'; // "All Mail" is never offered as a folder to put mails in
 const TRANSFER_MAX = 5000; // the server takes at most this many items in one transfer (MAX_TRANSFER_ITEMS)
-let transferCtx = null; // { keys, archive, nodes, target } of the open dialog; target: { id } for a folder, 'new', or null
+let transferCtx = null; // { keys, archive, nodes, target, presetName } of the open dialog; target: { id } for a folder, 'new', or null
 let transferBusy = false; // the POST is on its way
 let transferSeq = 0; // a folder answer for an earlier archive is dropped
 
@@ -680,7 +681,7 @@ function openTransferDialog() {
   const archives = usableArchives();
   if (state.selected.length === 0 || state.selected.length > TRANSFER_MAX || archives.length === 0) return;
   const n = state.selected.length;
-  transferCtx = { keys: [...state.selected], archive: archives[0].id, nodes: [], target: null };
+  transferCtx = { keys: [...state.selected], archive: archives[0].id, nodes: [], target: null, presetName: '' };
   $('transfer-title').textContent = t('ui.transfer.title', { count: n });
   $('transfer-archive').replaceChildren(...archives.map((s) => el('option', { value: s.id, text: s.name })));
   $('transfer-archive').value = archives[0].id;
@@ -714,7 +715,19 @@ async function loadTransferFolders() {
   if (seq !== transferSeq) return;
   const visible = folders.filter((f) => !f.virtual && f.key !== ALL_MAIL_KEY);
   ctx.nodes = visibleNodes(buildFolderTree(visible), new Set());
+  // Start on the folder the mails are shown in: the same folder in the archive, else a new one of that name.
+  const archive = visible.map((f) => ({ key: f.key, path: f.path, id: archiveLabel(f, ctx.archive) })).filter((f) => f.id !== null);
+  const preset = transferPreset(state.folders.find((f) => f.key === state.folder) ?? null, archive);
+  const nameField = $('transfer-new-name');
+  if (preset?.id) ctx.target = { id: preset.id };
+  else if (preset) {
+    ctx.target = 'new';
+    // A name the user typed stays when the archive changes; only an empty field or the last preset is replaced.
+    if (nameField.value === '' || nameField.value === ctx.presetName) nameField.value = preset.name;
+    ctx.presetName = preset.name;
+  }
   renderTransferFolders();
+  if (preset && !preset.id) $('transfer-parent').value = preset.parent ?? '';
 }
 
 // Radio list of the archive's folders as a tree, "Neuer Ordner…" last; its parent picker lists the same folders.
