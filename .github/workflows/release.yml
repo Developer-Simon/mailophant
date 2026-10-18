@@ -59,6 +59,14 @@ jobs:
       - name: Bundled Python runtime
         run: npm run build:runtime
 
+      - name: Flatpak tooling
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 org.electronjs.Electron2.BaseApp//26.08
+
       - name: Installer
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false" # no code signing yet
@@ -67,7 +75,7 @@ jobs:
       - name: Smoke test without Python in PATH
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update -q && sudo apt-get install -yq xvfb
+          sudo apt-get install -yq xvfb
           xvfb-run -a bash -c 'env -i HOME="$HOME" DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" dist/full/linux-unpacked/mailophant --smoke --no-sandbox'
 
       - uses: actions/upload-artifact@v4
@@ -76,6 +84,7 @@ jobs:
           if-no-files-found: error
           path: |
             electron/dist/full/*-full.AppImage
+            electron/dist/full/*-full.flatpak
             electron/dist/full/*-full.dmg
             electron/dist/full/*-full.exe
 

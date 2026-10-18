@@ -153,8 +153,11 @@ Then open <http://127.0.0.1:8025/>.
 
 ## Packages
 
-Pushing a tag like `v0.2.0` builds the installers for Linux, macOS (arm64 and
-x64) and Windows on GitHub Actions and attaches them to a release of that tag.
+Pushing a tag like `v0.2.0` builds the installers for Linux (AppImage and
+Flatpak), macOS (arm64 and x64) and Windows on GitHub Actions and attaches them
+to a release of that tag. The Flatpak installs with
+`flatpak install --user Mailophant-<version>-x86_64-full.flatpak` and needs the
+Flathub remote for its runtime.
 
 The desktop app can be built as an AppImage (Linux), a dmg (macOS) or an NSIS
 installer (Windows). The slim variant uses the system Python. The full variant

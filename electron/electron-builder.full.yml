@@ -28,10 +28,25 @@ extraResources:
   - from: build/python
     to: python
 linux:
-  target: AppImage
+  # Flatpak nur hier: in der Sandbox gibt es kein System-Python, die slim-Variante liefe dort nicht.
+  target: [AppImage, flatpak]
   icon: assets/icon.png
   category: Office
   artifactName: "${productName}-${version}-${arch}-full.${ext}"
+flatpak:
+  runtimeVersion: "26.08"
+  baseVersion: "26.08"
+  finishArgs:
+    - --socket=wayland
+    - --socket=x11
+    - --share=ipc
+    - --device=dri
+    - --socket=pulseaudio      # MP3-Vorschau
+    - --share=network          # Proton-Abruf und Download der Export-CLI
+    - --filesystem=home        # Bibliothek und Exporte liegen irgendwo im Home
+    - --filesystem=/run/media  # alte Platten mit .pst-Dateien
+    - --filesystem=/media
+    - --talk-name=org.freedesktop.Notifications
 mac:
   artifactName: "${productName}-${version}-${arch}-full.${ext}"
 win:

@@ -33,7 +33,7 @@ npm run dist:slim   # -> dist/slim/
 npm run dist:full   # -> dist/full/  (vorher npm run build:runtime)
 ```
 
-Ziele: AppImage (Linux), dmg (macOS), nsis (Windows). Die Konfiguration steht in `electron-builder.yml` (slim) und `electron-builder.full.yml` (erbt davon, ergänzt `python`). Die Artefakte tragen die Namen `…-slim.<ext>` bzw. `…-full.<ext>`. `dist/` und `build/` werden nicht eingecheckt.
+Ziele: AppImage (Linux), dmg (macOS), nsis (Windows); die full-Variante baut unter Linux zusätzlich ein Flatpak-Bundle (braucht `flatpak-builder` sowie `org.freedesktop.Platform`, `org.freedesktop.Sdk` und `org.electronjs.Electron2.BaseApp` in Version 26.08 von Flathub). Die Konfiguration steht in `electron-builder.yml` (slim) und `electron-builder.full.yml` (erbt davon, ergänzt `python`). Die Artefakte tragen die Namen `…-slim.<ext>` bzw. `…-full.<ext>`. `dist/` und `build/` werden nicht eingecheckt.
 
 Hinweis: Paketieren für macOS und Windows geht nur auf dem jeweiligen Betriebssystem bzw. in der CI. Code-Signing und Notarisierung fehlen noch.
 
@@ -71,7 +71,7 @@ Auf Systemen ohne Display unter `xvfb-run -a` starten (`--ozone-platform=headles
 1. Python- und Electron-Tests auf `ubuntu-latest`
 2. je Runner (`ubuntu-latest`, `macos-latest` für arm64, `macos-15-intel` für x64, `windows-latest`): Version aus dem Tag in `package.json`, `npm ci`, `npm run build:runtime`, full-Paket mit electron-builder
 3. Rauchtest des Linux-Pakets mit `--smoke` unter `xvfb-run`, ohne Python im PATH
-4. GitHub-Release zum Tag mit AppImage, zwei dmg, NSIS-Installer und `SHA256SUMS.txt`. Tags mit Bindestrich (`v0.2.0-rc.1`) werden als Vorabversion markiert.
+4. GitHub-Release zum Tag mit AppImage, Flatpak-Bundle, zwei dmg, NSIS-Installer und `SHA256SUMS.txt`. Tags mit Bindestrich (`v0.2.0-rc.1`) werden als Vorabversion markiert.
 
 Jeder Installer im Release trägt eine Build-Provenance-Attestation (Sigstore, über `actions/attest-build-provenance`). Prüfen, dass eine Datei aus diesem Workflow und Tag stammt:
 
