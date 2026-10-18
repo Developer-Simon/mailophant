@@ -1,6 +1,6 @@
 # Slim-Variante: ohne Python-Interpreter, der Viewer nutzt ein System-Python mit venv.
 # Die full-Variante steht in electron-builder.full.yml und erweitert diese Datei.
-appId: de.mailophant.app
+appId: io.github.developer-simon.mailophant
 productName: Mailophant
 directories:
   output: dist/slim

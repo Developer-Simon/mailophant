@@ -1,7 +1,7 @@
 # Full-Variante: wie electron-builder.yml, zusätzlich mit gebündeltem Python-Interpreter
 # (electron/build/python, erzeugt von `npm run build:runtime`).
 extends: ./electron-builder.yml
-appId: de.mailophant.app
+appId: io.github.developer-simon.mailophant
 productName: Mailophant
 # directories und files werden hier vollständig wiederholt, damit buildResources und das Icon
 # auch dann gelten, wenn extends Objekte nicht tief zusammenführt.
