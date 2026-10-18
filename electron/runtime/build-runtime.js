@@ -81,10 +81,15 @@ async function ensureArchive(entry, release) {
   return archive;
 }
 
+// Unter Windows das tar von Windows (bsdtar): Das GNU-tar aus Git Bash liest "D:\..." als entfernten Host "D".
+function tarCommand(platform = process.platform, env = process.env) {
+  return platform === 'win32' ? path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+}
+
 function extractArchive(archive) {
   fs.rmSync(PYTHON_DIR, { recursive: true, force: true });
   // Das Archiv enthält ein Top-Level-Verzeichnis python/, das nach build/ entpackt wird.
-  const res = spawnSync('tar', ['-xzf', archive, '-C', BUILD_DIR], { stdio: 'inherit' });
+  const res = spawnSync(tarCommand(), ['-xzf', archive, '-C', BUILD_DIR], { stdio: 'inherit' });
   if (res.error || res.status !== 0) {
     throw new Error(`Entpacken fehlgeschlagen: ${archive}`);
   }
@@ -160,7 +165,7 @@ async function main(argv) {
   console.log(`Fertig: ${python} (Python ${lock.python}, pypff ${hasPypff ? 'ja' : 'nein'})`);
 }
 
-module.exports = { targetKey, verifySha256 };
+module.exports = { targetKey, tarCommand, verifySha256 };
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch((err) => {

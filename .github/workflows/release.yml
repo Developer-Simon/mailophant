@@ -68,7 +68,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q && sudo apt-get install -yq xvfb
-          xvfb-run -a bash -c 'env -i HOME="$HOME" DISPLAY="$DISPLAY" dist/full/linux-unpacked/mailophant --smoke --no-sandbox'
+          xvfb-run -a bash -c 'env -i HOME="$HOME" DISPLAY="$DISPLAY" XAUTHORITY="$XAUTHORITY" dist/full/linux-unpacked/mailophant --smoke --no-sandbox'
 
       - uses: actions/upload-artifact@v4
         with:

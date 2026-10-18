@@ -7,8 +7,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { targetKey, verifySha256 } = require('../runtime/build-runtime.js');
+const { targetKey, tarCommand, verifySha256 } = require('../runtime/build-runtime.js');
 const lock = require('../runtime/runtime.lock.json');
+
+test('tarCommand: Windows-tar unter win32, sonst tar aus dem PATH', () => {
+  assert.equal(tarCommand('win32', { SystemRoot: 'C:\\Windows' }), 'C:\\Windows\\System32\\tar.exe');
+  assert.equal(tarCommand('linux', {}), 'tar');
+});
 
 test('targetKey joins platform and arch', () => {
   assert.equal(targetKey('linux', 'x64'), 'linux-x64');
