@@ -146,6 +146,28 @@ button {
 .folder .icon.star { color: var(--star); }
 .folder .unread { font-weight: 600; color: var(--label); }
 .folder .count { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
+/* Tree rows: indent by --depth, the disclosure button or a spacer keeps the names in one column. */
+#folder-list > li { position: relative; display: flex; align-items: center; padding-left: calc(var(--depth, 0) * 1.125rem); }
+#folder-list > li > .folder { flex: 1 1 auto; width: auto; min-width: 0; }
+#folder-add { align-self: flex-start; margin: 0 .5rem .5rem; }
+/* Row menu of archive folders; the list hangs below its row. */
+.folder-menu-btn { flex: none; display: grid; place-items: center; width: 1.5rem; height: 1.75rem; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--label-2); cursor: pointer; }
+.folder-menu-btn .icon { width: 1rem; height: 1rem; }
+@media (hover: hover) { .folder-menu-btn:hover { background: var(--fill); } }
+.folder-menu { position: absolute; top: 100%; right: .5rem; z-index: 5; min-width: 11rem; margin: 0; padding: .25rem; list-style: none; border-radius: var(--radius-m); background: var(--content); color: var(--label); box-shadow: 0 8px 24px rgba(0, 0, 0, .2), 0 0 0 .5px rgba(0, 0, 0, .12); }
+.folder-menu button { display: block; width: 100%; padding: .375rem .5rem; border: 0; border-radius: var(--radius-s); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.folder-menu button:hover, .folder-menu button:focus-visible { background: var(--fill); }
+/* Drag and drop of archive folders: a line before or after the row, an outline for "into". */
+#folder-list > li.dragging { opacity: .5; }
+#folder-list > li.drop-before::before, #folder-list > li.drop-after::after { content: ""; position: absolute; left: .5rem; right: .5rem; height: 2px; background: var(--accent); }
+#folder-list > li.drop-before::before { top: 0; }
+#folder-list > li.drop-after::after { bottom: 0; }
+#folder-list > li.drop-into > .folder { outline: 2px solid var(--accent); outline-offset: -2px; }
+.folder-twisty, .folder-spacer { flex: none; display: grid; place-items: center; width: 1.25rem; height: 1.75rem; padding: 0; border: 0; border-radius: var(--radius-s); background: none; color: var(--label-2); cursor: pointer; }
+.folder-spacer { cursor: default; }
+.folder-twisty .icon { width: 1em; height: 1em; }
+.folder.synthetic { color: var(--label-2); }
+.folder.synthetic .icon { color: inherit; }
 .tag-dot { flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--label-2); }
 .tag-form { display: flex; flex-direction: column; gap: .25rem; width: 100%; min-width: 10rem; padding: .125rem .5rem; }
 .tag-input { width: 100%; }
@@ -159,6 +181,8 @@ label.search { position: relative; display: block; }
 .search-icon { position: absolute; left: .5625rem; top: 50%; transform: translateY(-50%); display: flex; color: var(--label-2); pointer-events: none; }
 #search { width: 100%; padding-left: 1.875rem; }
 #count { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
+.head-meta { display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-width: 0; }
+.head-meta .btn { flex: none; }
 #messages { list-style: none; margin: 0; padding: 0; flex: none; }
 /* Row colours go through --ink, --ink-2 and --dot so the selected row can switch in one place. */
 .msg { --ink: var(--label); --ink-2: var(--label-2); --dot: var(--accent); position: relative; display: flex; align-items: flex-start; margin: 0 .375rem; padding: .5625rem .75rem .5625rem .375rem; border-radius: var(--radius-m); color: var(--ink); cursor: pointer; }
@@ -193,6 +217,29 @@ body.typing .msg.selected .tag-dot { box-shadow: none; }
 .more { display: block; flex: none; margin: .75rem auto; padding: .4375rem .875rem; border: 1px solid transparent; border-radius: var(--radius-m); background: var(--fill); cursor: pointer; }
 .more:disabled { opacity: .6; cursor: default; }
 .badge { flex: none; padding: 0 .3125rem; border: 1px solid var(--label-2); border-radius: var(--radius-s); color: var(--label-2); font-size: var(--fs-caption); font-weight: 600; line-height: 1.3; letter-spacing: .01em; white-space: nowrap; }
+/* Selection mode: a bar under the head, a check mark in front of each row, picked rows tinted. */
+.select-bar { position: sticky; top: var(--list-head); z-index: 2; display: flex; flex-direction: column; gap: .125rem; padding: .375rem .75rem; background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--separator); font-size: var(--fs-footnote); }
+.select-line { display: flex; align-items: center; gap: .375rem; min-width: 0; }
+.select-sep { color: var(--label-2); }
+.select-bar .hint { margin: 0; }
+.pick { flex: none; display: none; align-items: center; justify-content: center; width: 1.125rem; height: 1.125rem; margin: .0625rem .5rem 0 0; border: 1.5px solid var(--label-2); border-radius: 50%; color: transparent; }
+#messages.selecting .pick { display: flex; }
+#messages.selecting .msg:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.pick .icon { width: .75rem; height: .75rem; }
+.msg.picked .pick { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.msg.picked:not(.selected) { background: var(--sel-muted); }
+.msg.selected .pick { border-color: var(--on-accent); }
+.msg.selected.picked .pick { background: var(--on-accent); color: var(--sel-strong); }
+.msg .archived { flex: none; display: flex; color: var(--ink-2); }
+.msg .archived .icon { width: 1em; height: 1em; }
+#m-archived { display: inline-flex; align-items: center; gap: .25rem; margin-bottom: .75rem; }
+#m-archived .icon { width: .875rem; height: .875rem; }
+.transfer-tree { max-height: 16rem; overflow: auto; }
+.transfer-row { padding-left: calc(.75rem + var(--depth, 0) * 1.125rem); }
+.transfer-row.synthetic { color: var(--label-2); }
+.transfer-row input:disabled { opacity: .4; }
+#transfer-new { margin-top: .75rem; }
+#transfer-dialog { width: min(30rem, calc(100vw - 2rem)); }
 
 /* Reader */
 #placeholder { margin-top: 2.5rem; text-align: center; }
@@ -437,7 +484,8 @@ button.copy:active { background: var(--fill-press); }
 
   <aside id="folders">
     <h2>Ordner</h2>
-    <ul id="folder-list"></ul>
+    <button id="folder-add" class="btn small" type="button" hidden>Neuer Ordner…</button>
+    <ul id="folder-list" tabindex="-1"></ul>
     <h2>Tags</h2>
     <ul id="tag-list"></ul>
     <div id="side-foot">
@@ -480,6 +528,7 @@ button.copy:active { background: var(--fill-press); }
         </div>
         <button id="job-warn-close" class="icon-btn notice-close" type="button" aria-label="Ausblenden" data-icon="xmark"></button>
       </div>
+      <div id="auto-paused"></div>
       <div id="fetch-area" hidden>
         <button id="fetch-btn" class="btn fetch-btn" type="button"><span data-icon="arrow-down"></span><span id="fetch-label">Abrufen</span></button>
         <div id="stand" class="muted stand"></div>
@@ -493,7 +542,18 @@ button.copy:active { background: var(--fill-press); }
     <div class="head">
       <button id="back-folders" class="nav-back" type="button"><span data-icon="chevron-left"></span>Ordner</button>
       <label class="search"><span id="search-icon" class="search-icon"></span><input id="search" type="search" placeholder="In diesem Ordner suchen…" aria-label="Suche"></label>
-      <div id="count" class="muted"></div>
+      <div class="head-meta">
+        <div id="count" class="muted"></div>
+        <button id="select-btn" class="btn small" type="button" aria-pressed="false">Auswählen</button>
+      </div>
+    </div>
+    <div id="select-bar" class="select-bar" hidden>
+      <div class="select-line">
+        <span id="select-count"></span>
+        <span class="select-sep" aria-hidden="true">·</span>
+        <button id="select-move" class="btn small primary" type="button" disabled>Ins Archiv…</button>
+      </div>
+      <div id="select-note" class="hint" hidden></div>
     </div>
     <ul id="messages" role="listbox" aria-label="Nachrichten"></ul>
     <button id="more" class="more" type="button" hidden>Mehr laden</button>
@@ -515,6 +575,7 @@ button.copy:active { background: var(--fill-press); }
         <h1 id="m-subject"></h1>
         <button id="m-star" class="icon-btn m-star" type="button" aria-pressed="false" title="Markieren"></button>
       </div>
+      <div id="m-archived" class="badge" hidden></div>
       <div id="m-copies" class="copies" hidden></div>
       <div class="sender">
         <span id="m-avatar" class="avatar" aria-hidden="true"></span>
@@ -564,6 +625,44 @@ button.copy:active { background: var(--fill-press); }
       <button id="library-import" class="btn" type="button" hidden>Outlook-Datei importieren…</button>
       <button id="library-create" class="btn" type="button">Hier neue Bibliothek anlegen</button>
       <button id="library-submit" class="btn primary" type="submit" disabled>Öffnen</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="folder-dialog" class="sheet" aria-labelledby="folder-title">
+  <h2 id="folder-title"></h2>
+  <div id="folder-warn" class="notice warn" role="alert" hidden></div>
+  <form id="folder-form">
+    <label id="folder-name-row" class="field"><span>Name</span>
+      <input id="folder-name" name="name" type="text" maxlength="100" autocomplete="off"></label>
+    <p id="folder-delete-text" class="hint" hidden>Die Mails bleiben im Archiv und verlieren nur diesen Ordner.</p>
+    <div class="actions">
+      <button id="folder-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="folder-submit" class="btn primary" type="submit" disabled></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="transfer-dialog" class="sheet" aria-labelledby="transfer-title">
+  <h2 id="transfer-title"></h2>
+  <div id="transfer-warn" class="notice warn" role="alert" hidden></div>
+  <form id="transfer-form">
+    <label class="field"><span>Archiv</span>
+      <select id="transfer-archive"></select></label>
+    <div class="field" role="radiogroup" aria-labelledby="transfer-folder-label">
+      <span id="transfer-folder-label">Ordner im Archiv</span>
+      <ul id="transfer-tree" class="group transfer-tree"></ul>
+    </div>
+    <div id="transfer-new" hidden>
+      <label class="field"><span>Name des neuen Ordners</span>
+        <input id="transfer-new-name" name="new_name" type="text" maxlength="100" autocomplete="off"></label>
+      <label class="field"><span>Unter</span>
+        <select id="transfer-parent"></select></label>
+    </div>
+    <p id="transfer-hint" class="hint"></p>
+    <div class="actions">
+      <button id="transfer-cancel" class="btn" type="button">Abbrechen</button>
+      <button id="transfer-submit" class="btn primary" type="submit" disabled>Ins Archiv</button>
     </div>
   </form>
 </dialog>
@@ -633,6 +732,15 @@ button.copy:active { background: var(--fill-press); }
     <h3 id="settings-sources-title">Quellen</h3>
     <p class="hint">Reihenfolge wie in der Leiste. Ausgeblendete Quellen erscheinen weder in der Leiste noch in „∑“.</p>
     <ul id="settings-sources" class="group" aria-label="Quellen"></ul>
+    <button id="settings-archive-open" class="btn small" type="button" aria-expanded="false" aria-controls="settings-archive-new">Neues Archiv…</button>
+    <form id="settings-archive-new" hidden>
+      <label class="field"><span>Name des Archivs</span>
+        <input name="name" type="text" maxlength="100" autocomplete="off"></label>
+      <div class="actions">
+        <button class="btn primary" type="submit">Anlegen</button>
+        <button id="settings-archive-cancel" class="btn" type="button">Abbrechen</button>
+      </div>
+    </form>
   </section>
 
   <section class="settings-section" aria-labelledby="settings-tags-title">
@@ -833,6 +941,8 @@ const ICONS = {
   'star-fill': [STAR_PATH],
   'chevron-up': ['m18 15-6-6-6 6'],
   'chevron-left': ['m15 18-6-6 6-6'],
+  'chevron-right': ['m9 18 6-6-6-6'],
+  'chevron-down': ['m6 9 6 6 6-6'],
   house: ['M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8', 'M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
   paperclip: ['M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'],
   tray: ['M22 12h-6l-2 3h-4l-2-3H2', 'M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z'],
@@ -850,6 +960,7 @@ const ICONS = {
   info: ['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z', 'M12 16v-4', 'M12 8h.01'],
   check: ['M20 6 9 17l-5-5'],
   tag: ['M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z', 'M7.5 7.5h.01'],
+  more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
 };
 // Mirrors PREVIEW_TYPES in server.py: types the browser shows in a tab without running the file's own code.
 const PREVIEW_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'audio/mpeg', 'audio/mp3'];
@@ -859,6 +970,156 @@ function canPreview(mime) {
 // "audio" gets a low modal around the browser's player, everything else the full-height frame.
 function previewKind(mime) {
   return String(mime || '').toLowerCase().startsWith('audio/') ? 'audio' : 'frame';
+}
+
+// Folder tree (no DOM, no state). Node = {key, folder, name, depth, children, synthetic}.
+// key is the folder key; a synthetic node (a parent path without a folder of its own) gets "synthetic:<path>".
+// Roots: system folders ("sys:" keys) in the delivered order, then the virtual entry, then the rest.
+// Siblings: order ascending, null orders after the ordered ones, then name, case-insensitively.
+// Key for matching paths and sorting names: case-insensitive, German locale (upper then lower, so ß matches ss).
+const foldCase = (s) => String(s ?? '').toLocaleUpperCase('de-DE').toLocaleLowerCase('de-DE');
+const parentPathOf = (path) => {
+  const i = String(path ?? '').lastIndexOf('/');
+  return i < 0 ? '' : path.slice(0, i);
+};
+const compareSiblings = (a, b) => {
+  const ao = a.folder?.order ?? null;
+  const bo = b.folder?.order ?? null;
+  if ((ao === null) !== (bo === null)) return ao === null ? 1 : -1;
+  if (ao !== null && ao !== bo) return ao - bo;
+  return foldCase(a.name).localeCompare(foldCase(b.name), 'de');
+};
+function buildFolderTree(folders) {
+  const byPath = new Map();
+  const real = folders.map((f) => ({ key: f.key, folder: f, name: f.name || '', depth: 0, children: [], synthetic: false }));
+  const nodes = [...real];
+  for (const n of real) {
+    const p = foldCase(n.folder.path);
+    if (p && !byPath.has(p)) byPath.set(p, n);
+  }
+  const roots = [];
+  const attach = (node, parentPath) => {
+    if (parentPath) nodeAt(parentPath).children.push(node);
+    else roots.push(node);
+  };
+  const nodeAt = (path) => {
+    const k = foldCase(path);
+    if (byPath.has(k)) return byPath.get(k);
+    const node = { key: `synthetic:${k}`, folder: null, name: path.slice(path.lastIndexOf('/') + 1), depth: 0, children: [], synthetic: true };
+    byPath.set(k, node);
+    nodes.push(node);
+    attach(node, parentPathOf(path));
+    return node;
+  };
+  for (const n of real) attach(n, parentPathOf(n.folder.path));
+  for (const n of nodes) n.children.sort(compareSiblings);
+  const isSys = (n) => String(n.folder?.key ?? '').startsWith('sys:');
+  const isVirtual = (n) => n.folder?.virtual === true;
+  const top = [
+    ...roots.filter(isSys),
+    ...roots.filter(isVirtual),
+    ...roots.filter((n) => !isSys(n) && !isVirtual(n)).sort(compareSiblings),
+  ];
+  const setDepth = (ns, depth) => ns.forEach((n) => {
+    n.depth = depth;
+    setDepth(n.children, depth + 1);
+  });
+  setDepth(top, 0);
+  return top;
+}
+
+// Flat list in display order; children of a collapsed node (by key) are left out.
+function visibleNodes(tree, collapsed) {
+  const out = [];
+  const walk = (ns) => {
+    for (const n of ns) {
+      out.push(n);
+      if (!collapsed.has(n.key)) walk(n.children);
+    }
+  };
+  walk(tree);
+  return out;
+}
+
+// Where a dragged node lands relative to overKey: zone "before" or "after" puts it next to that node,
+// "into" appends it to that node's children. siblings is the tree from buildFolderTree.
+// parentKey null means the top level. Null when the target is in the dragged node's own subtree,
+// or when the parent would be a synthetic node (it has no folder to hold the dragged one).
+function dropTarget(siblings, draggedKey, overKey, zone) {
+  const find = (list, parent, key) => {
+    for (const n of list) {
+      if (n.key === key) return { node: n, parent, list };
+      const hit = find(n.children, n, key);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const over = find(siblings, null, overKey);
+  const dragged = find(siblings, null, draggedKey);
+  if (!over || !dragged) return null;
+  const inSubtree = (n, key) => n.key === key || n.children.some((c) => inSubtree(c, key));
+  if (inSubtree(dragged.node, overKey)) return null;
+  if (zone === 'into') {
+    if (over.node.synthetic) return null;
+    const kids = over.node.children.filter((c) => c.key !== draggedKey);
+    return { parentKey: over.node.key, index: kids.length };
+  }
+  if (over.parent?.synthetic) return null;
+  const rest = over.list.filter((c) => c.key !== draggedKey);
+  const i = rest.findIndex((c) => c.key === overKey);
+  return { parentKey: over.parent ? over.parent.key : null, index: zone === 'after' ? i + 1 : i };
+}
+// The archive a sidebar folder can be changed in: its one source, if that source is an archive and no other
+// source holds the folder. System and virtual folders are never changed. Null if not manageable.
+function manageableArchive(folder, sources) {
+  if (!folder || folder.virtual === true || String(folder.key ?? '').startsWith('sys:')) return null;
+  const ids = Object.keys(folder.labels || {});
+  if (ids.length !== 1) return null;
+  const src = sources.find((s) => s.id === ids[0]);
+  return src && src.archive === true ? ids[0] : null;
+}
+// Selection of list rows. Keys are "<source>/<id>"; a mail ID may contain "/", a source ID does not.
+function toggleSelection(selected, key) {
+  return selected.includes(key) ? selected.filter((k) => k !== key) : [...selected, key];
+}
+
+// Inclusive range between anchor and to, in list order, whichever comes first. Unknown keys select just "to".
+function rangeSelection(orderedKeys, anchor, to) {
+  const a = orderedKeys.indexOf(anchor);
+  const b = orderedKeys.indexOf(to);
+  if (a < 0 || b < 0) return [to];
+  return orderedKeys.slice(Math.min(a, b), Math.max(a, b) + 1);
+}
+
+// Body of POST /api/transfer. folderId and newFolder are mutually exclusive; the server checks that.
+function transferPayload(selected, archiveId, folderId, newFolder) {
+  const items = selected.map((key) => {
+    const i = key.indexOf('/');
+    return { source: key.slice(0, i), id: key.slice(i + 1) };
+  });
+  return {
+    items,
+    archive: archiveId,
+    folder: folderId ?? null,
+    new_folder: newFolder ?? null,
+  };
+}
+// The node with this key anywhere in the tree, or null.
+function findNode(nodes, key) {
+  for (const n of nodes) {
+    if (n.key === key) return n;
+    const hit = findNode(n.children, key);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Server index for a move. dropTarget counts the sibling nodes shown (system folders included, the dragged one
+// left out). The server inserts among the user folders of the level only, so count the user folders in front of
+// the insertion point. siblings is the level the folder is dropped into (the children of its parent, or the top).
+function moveIndex(siblings, draggedKey, index) {
+  const isUser = (n) => !n.synthetic && n.folder?.virtual !== true && !String(n.key).startsWith('sys:');
+  return siblings.filter((n) => n.key !== draggedKey).slice(0, index).filter(isUser).length;
 }
 /* ---------- End pure helpers ---------- */
 
@@ -936,10 +1197,14 @@ const state = {
   sources: [], settings: null, view: null, viewSeq: 0, config: null,
   iconVer: {}, // per source: bumped after an icon upload, so the image URL changes
   navLevel: 0, navPos: 0, // narrow layout: 0 folders, 1 list, 2 mail; navPos glides towards navLevel
+  collapsed: new Set(), // folder tree nodes (keys, see buildFolderTree) whose children are hidden; session only
+  selecting: false, selected: [], anchor: null, cursor: null, // selection mode: picked rows ("<source>/<id>"), last clicked row, keyboard row
 };
 
 // Message identity across sources: the same mail id may exist in two sources.
 const msgKey = (source, id) => `${source}\n${id}`;
+// Selection key of a row, the form toggleSelection and transferPayload use.
+const rowKey = (m) => `${m.source}/${m.id}`;
 const sourceById = (id) => state.sources.find((s) => s.id === id) || null;
 const visibleSources = () => state.sources.filter((s) => !s.hidden);
 // Source ids the rail selection covers: all visible sources, or the single one.
@@ -991,6 +1256,7 @@ function updateFetchArea() {
 
 // Switching the view remembers it, reloads folders and list and clears the reader.
 function selectView(view) {
+  if (view !== state.view) clearSelection();
   state.view = view;
   storeView(view);
   renderRail();
@@ -1010,6 +1276,7 @@ async function loadFolders(keep = false) {
     state.folder = null;
     state.tag = null;
     $('folder-list').replaceChildren(el('li', { class: 'muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' }));
+    updateFolderAdd();
     state.messages = [];
     state.total = 0;
     showEmpty('none', 'Keine Nachricht ausgewählt');
@@ -1050,22 +1317,75 @@ function defaultFolderKey() {
 }
 
 function renderFolders() {
-  $('folder-list').replaceChildren(...state.folders.map((f) => {
-    const btn = el('button', { class: 'folder', type: 'button' });
-    btn.setAttribute('aria-current', String(f.key === state.folder));
-    btn.append(icon(folderIconName(f.name || '')), el('span', { class: 'name', text: f.name || '' }));
-    if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
-    btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
-    btn.addEventListener('click', () => {
-      selectFolder(f.key);
-      goTo(1);
-    });
-    return el('li', {}, [btn]);
-  }));
+  const rows = visibleNodes(buildFolderTree(state.folders), state.collapsed);
+  openMenu = null; // the rows are rebuilt, so an open row menu goes with them
+  $('folder-list').replaceChildren(...rows.map(folderRow));
+  updateFolderAdd();
   updateBackList();
 }
 
+// One sidebar row, indented by depth. A node with children gets a disclosure button in front of its row.
+// Synthetic nodes (a parent path without a folder) are muted and only expand or collapse.
+function folderRow(node) {
+  const expanded = !state.collapsed.has(node.key);
+  const toggle = () => {
+    if (expanded) state.collapsed.add(node.key);
+    else state.collapsed.delete(node.key);
+    renderFolders();
+    // The rows are rebuilt, so put the focus back on this node's toggle.
+    $('folder-list').querySelector(`[data-toggle="${CSS.escape(node.key)}"]`)?.focus({ preventScroll: true });
+  };
+  const li = el('li');
+  li.dataset.folderKey = node.key; // finds the row again after a re-render, see restoreFolderFocus
+  li.style.setProperty('--depth', String(node.depth));
+  if (node.synthetic) {
+    const btn = el('button', {
+      class: 'folder synthetic', type: 'button', 'aria-expanded': String(expanded), 'data-toggle': node.key,
+    });
+    btn.append(icon(expanded ? 'chevron-down' : 'chevron-right'), el('span', { class: 'name', text: node.name }));
+    btn.addEventListener('click', toggle);
+    li.append(btn);
+    return li;
+  }
+  if (node.children.length > 0) {
+    const twisty = el('button', {
+      class: 'folder-twisty', type: 'button', 'aria-expanded': String(expanded), 'data-toggle': node.key,
+      'aria-label': `Unterordner von ${node.name}`,
+    }, [icon(expanded ? 'chevron-down' : 'chevron-right')]);
+    twisty.addEventListener('click', toggle);
+    li.append(twisty);
+  } else {
+    li.append(el('span', { class: 'folder-spacer' }));
+  }
+  const f = node.folder;
+  const btn = el('button', { class: 'folder', type: 'button', 'data-key': node.key });
+  btn.setAttribute('aria-current', String(f.key === state.folder));
+  btn.append(icon(f.virtual ? 'trash' : folderIconName(f.name || '')), el('span', { class: 'name', text: f.name || '' }));
+  if (f.unread > 0) btn.append(el('b', { class: 'unread', text: String(f.unread) }));
+  btn.append(el('span', { class: 'count', text: String(f.count ?? 0) }));
+  btn.addEventListener('click', () => {
+    selectFolder(f.key);
+    goTo(1);
+  });
+  li.append(btn);
+  const sid = folderArchive(node);
+  attachFolderDrag(li, node, sid);
+  if (sid) {
+    const menuBtn = el('button', {
+      class: 'folder-menu-btn', type: 'button', title: 'Aktionen', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+      'aria-label': `Aktionen für ${f.name || ''}`,
+    }, [icon('more')]);
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFolderMenu(node, sid, menuBtn, li);
+    });
+    li.append(menuBtn);
+  }
+  return li;
+}
+
 function selectFolder(key) {
+  if (key !== state.folder) clearSelection();
   state.folder = key;
   state.tag = null;
   renderFolders();
@@ -1075,6 +1395,7 @@ function selectFolder(key) {
 }
 
 function selectTag(key) {
+  if (key !== state.tag) clearSelection();
   state.tag = key;
   state.folder = null;
   renderFolders();
@@ -1086,6 +1407,480 @@ function selectTag(key) {
 function updateSearchPlaceholder() {
   $('search').placeholder = state.tag ? 'In diesem Tag suchen…' : 'In diesem Ordner suchen…';
 }
+
+/* ---------- Archive folders: create, rename, delete, move ---------- */
+// The archive a row can be changed in (see manageableArchive), or null.
+const folderArchive = (node) => (node.folder ? manageableArchive(node.folder, state.sources) : null);
+// Label ID of a folder inside one archive, or null.
+const archiveLabel = (folder, sid) => folder?.labels?.[sid] ?? null;
+const FOLDER_NAME_MAX = 100;
+let folderCtx = null; // { op, sid, key, name } of the open folder dialog; key is the folder acted on (the parent for create), null at the top
+let folderBusy = false; // the dialog's request is on its way
+let openMenu = null; // { button, list } of the open row menu
+let folderReturn = null; // where focus goes when the dialog closes: { key } of the row, or { add: true } for the top-level button
+let folderDrag = null; // { key, sid } while an archive folder row is dragged
+
+// "Neuer Ordner…" at the top level: shown while exactly one archive is the selection.
+function updateFolderAdd() {
+  const ids = activeSourceIds();
+  const src = ids.length === 1 ? sourceById(ids[0]) : null;
+  $('folder-add').hidden = !(src && src.archive === true);
+}
+
+// Opens the dialog for create (folder = parent or null for the top level), rename or delete.
+function openFolderDialog(op, sid, folder) {
+  folderCtx = { op, sid, key: folder ? folder.key : null, name: folder?.name || '' };
+  const name = folderCtx.name;
+  $('folder-title').textContent = op === 'create' ? (folder ? `Neuer Unterordner in „${name}“` : 'Neuer Ordner')
+    : op === 'rename' ? `Ordner „${name}“ umbenennen` : `Ordner „${name}“ löschen`;
+  $('folder-submit').textContent = op === 'create' ? 'Anlegen' : op === 'rename' ? 'Umbenennen' : 'Löschen';
+  $('folder-name-row').hidden = op === 'delete';
+  $('folder-delete-text').hidden = op !== 'delete';
+  $('folder-name').value = op === 'rename' ? name : '';
+  showFolderWarn('');
+  setFolderBusy(false);
+  const dlg = $('folder-dialog');
+  if (!dlg.open) dlg.showModal();
+  if (op !== 'delete') $('folder-name').focus();
+}
+
+function showFolderWarn(msg) {
+  $('folder-warn').textContent = msg || '';
+  $('folder-warn').hidden = !msg;
+}
+
+function setFolderBusy(busy) {
+  folderBusy = busy;
+  $('folder-cancel').disabled = busy;
+  updateFolderSubmit();
+}
+
+// Create and rename need a name that is not empty after trimming, and a new one for rename.
+function updateFolderSubmit() {
+  const ctx = folderCtx;
+  const name = $('folder-name').value.trim();
+  const usable = !ctx || ctx.op === 'delete' || (name !== '' && name !== (ctx.op === 'rename' ? ctx.name : null));
+  $('folder-submit').disabled = folderBusy || !usable;
+}
+
+// POST that starts an archive job. Resolves to null when the job has started, else to the error text.
+async function postJob(url, body, failText) {
+  let res;
+  let data = null;
+  try {
+    res = await fetch(url, { method: 'POST', ...jsonPost(body), signal: timeoutSignal() });
+    data = await res.json().catch(() => null);
+  } catch (err) {
+    return isTimeout(err) ? TIMEOUT_TEXT : `${failText} (${err.message}).`;
+  }
+  if (res.ok) return null;
+  return res.status === 409 ? 'Es läuft gerade ein Auftrag.' : (data && data.error) || `Fehler ${res.status}`;
+}
+
+function postFolderOp(sid, body) {
+  return postJob(`/api/archives/${encodeURIComponent(sid)}/folders`, body, 'Der Ordner konnte nicht geändert werden');
+}
+
+// The folder job is quick, and the first poll may find it finished already, which pollJob would not report
+// as a change. So wait for the end here, let pollJob show a failure in job-error, then reload the folders.
+async function followFolderJob() {
+  dismissedJob = null;
+  for (let i = 0; i < 600; i++) {
+    let st = null;
+    try {
+      st = await api('/api/job');
+    } catch (_) { /* read again on the next round */ }
+    if (st && st.state !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
+  }
+  await pollJob();
+  await loadFolders(true);
+}
+
+// Drag and drop and the dialog both end here: a started job is followed, a refused one is shown in job-error.
+async function sendFolderOp(sid, body) {
+  const err = await postFolderOp(sid, body);
+  if (err) {
+    $('job-error-text').textContent = err;
+    $('job-error').hidden = false;
+    return false;
+  }
+  followFolderJob();
+  return true;
+}
+
+async function submitFolderDialog(e) {
+  e.preventDefault();
+  const ctx = folderCtx;
+  if (!ctx || folderBusy) return;
+  const folder = ctx.key === null ? null : state.folders.find((f) => f.key === ctx.key);
+  if (ctx.key !== null && !folder) {
+    showFolderWarn('Der Ordner ist nicht mehr vorhanden.');
+    return;
+  }
+  const id = folder ? archiveLabel(folder, ctx.sid) : null;
+  if (folder && id === null) {
+    showFolderWarn('Der Ordner gehört nicht zu diesem Archiv.');
+    return;
+  }
+  const name = $('folder-name').value.trim();
+  if (ctx.op !== 'delete' && [...name].length > FOLDER_NAME_MAX) {
+    showFolderWarn(`Der Name darf höchstens ${FOLDER_NAME_MAX} Zeichen lang sein.`);
+    return;
+  }
+  const body = ctx.op === 'create' ? { op: 'create', name, parent: id }
+    : ctx.op === 'rename' ? { op: 'rename', id, name }
+      : { op: 'delete', id };
+  setFolderBusy(true);
+  const err = await postFolderOp(ctx.sid, body);
+  setFolderBusy(false);
+  if (err) {
+    showFolderWarn(err);
+    return;
+  }
+  if (folderCtx === ctx) $('folder-dialog').close(); // not a dialog that was opened meanwhile
+  followFolderJob();
+}
+
+// Row menu: the three actions of an archive folder. Arrow keys move, Escape or a click outside closes it.
+function closeFolderMenu(refocus) {
+  if (!openMenu) return;
+  const { button, list } = openMenu;
+  openMenu = null;
+  list.remove();
+  button.setAttribute('aria-expanded', 'false');
+  if (refocus) button.focus();
+}
+
+function toggleFolderMenu(node, sid, button, li) {
+  if (openMenu?.button === button) {
+    closeFolderMenu(true);
+    return;
+  }
+  closeFolderMenu(false);
+  const actions = [
+    ['Neuer Unterordner…', () => openFolderDialog('create', sid, node.folder)],
+    ['Umbenennen…', () => openFolderDialog('rename', sid, node.folder)],
+    ['Löschen…', () => openFolderDialog('delete', sid, node.folder)],
+  ];
+  const items = actions.map(([label, run]) => {
+    const item = el('button', { type: 'button', role: 'menuitem', text: label });
+    item.addEventListener('click', () => {
+      closeFolderMenu(false);
+      folderReturn = { key: node.key }; // the dialog gives focus back to this row's menu button
+      run();
+    });
+    return item;
+  });
+  const list = el('ul', { class: 'folder-menu', role: 'menu', 'aria-label': `Aktionen für ${node.name}` },
+    items.map((item) => el('li', { role: 'none' }, [item])));
+  list.addEventListener('keydown', (e) => {
+    const i = items.indexOf(document.activeElement);
+    const last = items.length - 1;
+    if (e.key === 'ArrowDown') items[i < 0 || i === last ? 0 : i + 1].focus();
+    else if (e.key === 'ArrowUp') items[i <= 0 ? last : i - 1].focus();
+    else if (e.key === 'Home') items[0].focus();
+    else if (e.key === 'End') items[last].focus();
+    else if (e.key === 'Escape') closeFolderMenu(true);
+    else if (e.key === 'Tab') {
+      closeFolderMenu(true); // the button keeps focus, so the normal Tab order goes on from the menu's row
+      return;
+    } else return;
+    e.preventDefault();
+  });
+  li.append(list);
+  button.setAttribute('aria-expanded', 'true');
+  openMenu = { button, list };
+  items[0].focus();
+}
+
+// Zone of the pointer on a row: top quarter "before", bottom quarter "after", otherwise "into".
+function pointerZone(e, li) {
+  const r = li.getBoundingClientRect();
+  const y = (e.clientY - r.top) / r.height;
+  return y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
+}
+
+// Move request for dropping the dragged folder at zone of overKey, or null if that drop is not allowed.
+function folderMoveBody(sid, dragKey, overKey, zone) {
+  const tree = buildFolderTree(state.folders);
+  const plan = dropTarget(tree, dragKey, overKey, zone);
+  if (!plan) return null;
+  const id = archiveLabel(state.folders.find((f) => f.key === dragKey), sid);
+  const parent = plan.parentKey === null ? null : archiveLabel(state.folders.find((f) => f.key === plan.parentKey), sid);
+  if (id === null || (plan.parentKey !== null && parent === null)) return null;
+  const level = plan.parentKey === null ? tree : findNode(tree, plan.parentKey).children;
+  return { op: 'move', id, parent, index: moveIndex(level, dragKey, plan.index) };
+}
+
+// Drag and drop for archive folder rows. Only rows of the same archive take part.
+function attachFolderDrag(li, node, sid) {
+  if (sid) {
+    li.draggable = true;
+    li.addEventListener('dragstart', (e) => {
+      folderDrag = { key: node.key, sid };
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', node.name);
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragend', () => {
+      folderDrag = null;
+      li.classList.remove('dragging');
+      clearDropMarks();
+    });
+  }
+  li.addEventListener('dragover', (e) => {
+    clearDropMarks();
+    const drag = folderDrag;
+    if (!drag || folderArchive(node) !== drag.sid) return;
+    const zone = pointerZone(e, li);
+    if (!folderMoveBody(drag.sid, drag.key, node.key, zone)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    li.classList.add(`drop-${zone}`);
+  });
+  li.addEventListener('dragleave', (e) => {
+    if (!li.contains(e.relatedTarget)) clearDropMarks(li);
+  });
+  li.addEventListener('drop', (e) => {
+    const drag = folderDrag;
+    clearDropMarks();
+    if (!drag || folderArchive(node) !== drag.sid) return;
+    const body = folderMoveBody(drag.sid, drag.key, node.key, pointerZone(e, li));
+    if (!body) return;
+    e.preventDefault();
+    sendFolderOp(drag.sid, body);
+  });
+}
+
+// Removes the drop marks from one row, or from all rows.
+function clearDropMarks(li) {
+  const rows = li ? [li] : [...$('folder-list').children];
+  for (const row of rows) row.classList.remove('drop-before', 'drop-after', 'drop-into');
+}
+
+document.addEventListener('click', (e) => {
+  if (openMenu && !openMenu.list.contains(e.target) && e.target !== openMenu.button) closeFolderMenu(false);
+});
+$('folder-add').addEventListener('click', () => {
+  const ids = activeSourceIds();
+  if (ids.length === 1) {
+    folderReturn = { add: true };
+    openFolderDialog('create', ids[0], null);
+  }
+});
+$('folder-form').addEventListener('submit', submitFolderDialog);
+$('folder-name').addEventListener('input', updateFolderSubmit);
+$('folder-cancel').addEventListener('click', () => $('folder-dialog').close());
+// Esc does not close the dialog while its request is in flight.
+$('folder-dialog').addEventListener('cancel', (e) => {
+  if (folderBusy) e.preventDefault();
+});
+$('folder-dialog').addEventListener('close', () => {
+  folderCtx = null;
+  const ret = folderReturn;
+  folderReturn = null;
+  restoreFolderFocus(ret);
+});
+
+// Focus back to the control that opened the dialog: the row's menu button (found by key, since the rows may have
+// been rebuilt), or the top-level button. Else the folder list.
+function restoreFolderFocus(ret) {
+  let target = null;
+  if (ret?.add && !$('folder-add').hidden) target = $('folder-add');
+  if (ret?.key != null) {
+    const row = [...$('folder-list').children].find((li) => li.dataset.folderKey === ret.key);
+    target = row?.querySelector('.folder-menu-btn') ?? null;
+  }
+  (target ?? $('folder-list')).focus();
+}
+
+/* ---------- Ins Archiv… (selected mails) ---------- */
+const ALL_MAIL_KEY = 'sys:5'; // "All Mail" is never offered as a folder to put mails in
+const TRANSFER_MAX = 5000; // the server takes at most this many items in one transfer (MAX_TRANSFER_ITEMS)
+let transferCtx = null; // { keys, archive, nodes, target } of the open dialog; target: { id } for a folder, 'new', or null
+let transferBusy = false; // the POST is on its way
+let transferSeq = 0; // a folder answer for an earlier archive is dropped
+
+// Archive sources that can take mails now.
+const usableArchives = () => state.sources.filter((s) => s.archive && s.available);
+
+function showTransferWarn(msg) {
+  $('transfer-warn').textContent = msg || '';
+  $('transfer-warn').hidden = !msg;
+}
+
+function setTransferBusy(busy) {
+  transferBusy = busy;
+  updateTransferSubmit();
+}
+
+// The submit needs an archive and a folder, or "Neuer Ordner…" with a name.
+function updateTransferSubmit() {
+  const ctx = transferCtx;
+  const name = $('transfer-new-name').value.trim();
+  const target = ctx?.target ?? null;
+  const usable = Boolean(ctx && ctx.archive && (target === 'new' ? name !== '' && [...name].length <= FOLDER_NAME_MAX : target !== null));
+  $('transfer-submit').disabled = transferBusy || !usable;
+  $('transfer-cancel').disabled = transferBusy;
+}
+
+// Copied from Proton or Maildir sources, moved out of other archives, only refiled within the target archive.
+function transferNoteParts(r) {
+  const parts = [`${r.copied} kopiert`, `${r.reused} schon vorhanden`, `${r.skipped} übersprungen`];
+  if (r.refiled) parts.push(`${r.refiled} umsortiert`);
+  if (r.deleted_origin) parts.push(`${r.deleted_origin} aus dem Quellarchiv entfernt`);
+  if (r.failed) parts.push(`${r.failed} fehlgeschlagen`);
+  return parts;
+}
+
+function updateTransferHint() {
+  const ctx = transferCtx;
+  let copy = 0;
+  let move = 0;
+  let refile = 0;
+  for (const key of ctx.keys) {
+    const sid = key.slice(0, key.indexOf('/'));
+    if (sid === ctx.archive) refile += 1;
+    else if (sourceById(sid)?.archive) move += 1;
+    else copy += 1;
+  }
+  const parts = [];
+  if (copy) parts.push(`${copy} ${copy === 1 ? 'Mail wird' : 'Mails werden'} kopiert, die Originale bleiben.`);
+  if (move) parts.push(`${move} ${move === 1 ? 'Mail wird' : 'Mails werden'} aus dem Quellarchiv verschoben.`);
+  if (refile) parts.push(`${refile} ${refile === 1 ? 'Mail ist' : 'Mails sind'} schon im Archiv und ${refile === 1 ? 'wird' : 'werden'} nur umsortiert.`);
+  $('transfer-hint').textContent = parts.join(' ');
+}
+
+// The dialog opens with the selection; with no reachable archive the button only shows the note.
+function openTransferDialog() {
+  const archives = usableArchives();
+  if (state.selected.length === 0 || state.selected.length > TRANSFER_MAX || archives.length === 0) return;
+  const n = state.selected.length;
+  transferCtx = { keys: [...state.selected], archive: archives[0].id, nodes: [], target: null };
+  $('transfer-title').textContent = `${n.toLocaleString('de-DE')} ${n === 1 ? 'Mail' : 'Mails'} ins Archiv`;
+  $('transfer-archive').replaceChildren(...archives.map((s) => el('option', { value: s.id, text: s.name })));
+  $('transfer-archive').value = archives[0].id;
+  $('transfer-new-name').value = '';
+  showTransferWarn('');
+  setTransferBusy(false);
+  updateTransferHint();
+  loadTransferFolders();
+  const dlg = $('transfer-dialog');
+  if (!dlg.open) dlg.showModal();
+}
+
+// The folder tree of the chosen archive, empty folders included. "All Mail" is left out.
+async function loadTransferFolders() {
+  const ctx = transferCtx;
+  const seq = ++transferSeq;
+  ctx.nodes = [];
+  ctx.target = null;
+  $('transfer-new').hidden = true;
+  $('transfer-tree').replaceChildren(el('li', { class: 'group-row muted', text: 'Ordner werden geladen…' }));
+  updateTransferSubmit();
+  let folders;
+  try {
+    folders = await api(`/api/folders?sources=${encodeURIComponent(ctx.archive)}`);
+  } catch (e) {
+    if (seq !== transferSeq) return;
+    $('transfer-tree').replaceChildren();
+    showTransferWarn(`Ordner konnten nicht geladen werden (${e.message}).`);
+    return;
+  }
+  if (seq !== transferSeq) return;
+  const visible = folders.filter((f) => !f.virtual && f.key !== ALL_MAIL_KEY);
+  ctx.nodes = visibleNodes(buildFolderTree(visible), new Set());
+  renderTransferFolders();
+}
+
+// Radio list of the archive's folders as a tree, "Neuer Ordner…" last; its parent picker lists the same folders.
+function renderTransferFolders() {
+  const ctx = transferCtx;
+  const rows = ctx.nodes.map((node) => {
+    const id = node.folder ? archiveLabel(node.folder, ctx.archive) : null;
+    const radio = el('input', { type: 'radio', name: 'transfer-folder', value: id ?? '' });
+    radio.disabled = id === null;
+    radio.checked = id !== null && ctx.target?.id === id;
+    const label = el('label', { class: 'group-row transfer-row' + (node.synthetic ? ' synthetic' : '') }, [radio, el('span', { text: node.name })]);
+    label.style.setProperty('--depth', String(node.depth));
+    return el('li', {}, [label]);
+  });
+  const newRadio = el('input', { type: 'radio', name: 'transfer-folder', value: 'new' });
+  newRadio.checked = ctx.target === 'new';
+  rows.push(el('li', {}, [el('label', { class: 'group-row transfer-row' }, [newRadio, el('span', { text: 'Neuer Ordner…' })])]));
+  $('transfer-tree').replaceChildren(...rows);
+  $('transfer-new').hidden = ctx.target !== 'new';
+
+  const parents = [el('option', { value: '', text: 'Oberste Ebene' })];
+  for (const node of ctx.nodes) {
+    const id = node.folder ? archiveLabel(node.folder, ctx.archive) : null;
+    if (id !== null) parents.push(el('option', { value: id, text: `${'\u2003'.repeat(node.depth)}${node.name}` }));
+  }
+  $('transfer-parent').replaceChildren(...parents);
+  updateTransferSubmit();
+}
+
+// POST /api/transfer for the picked mails. The job runs on; the selection ends here.
+async function submitTransfer(e) {
+  e.preventDefault();
+  const ctx = transferCtx;
+  if (!ctx || transferBusy || $('transfer-submit').disabled) return;
+  const target = ctx.target;
+  const folderId = target === 'new' ? null : target.id;
+  const newFolder = target === 'new'
+    ? { name: $('transfer-new-name').value.trim(), parent: $('transfer-parent').value || null }
+    : null;
+  setTransferBusy(true);
+  const err = await postJob('/api/transfer', transferPayload(ctx.keys, ctx.archive, folderId, newFolder), 'Die Mails konnten nicht ins Archiv gelegt werden');
+  setTransferBusy(false);
+  if (err) {
+    showTransferWarn(err);
+    return;
+  }
+  $('transfer-dialog').close();
+  state.selecting = false;
+  state.selected = [];
+  state.anchor = null;
+  updateSelectUI();
+  // The job may already be done at the first read, which pollJob reports as a change only if it knows the job was
+  // running. Counting it as running from here makes the end of the job reload the sources, folders and list.
+  lastJob = { state: 'running' };
+  pollJob();
+}
+
+$('select-btn').addEventListener('click', () => {
+  state.selecting = !state.selecting;
+  if (!state.selecting) {
+    state.selected = [];
+    state.anchor = null;
+  }
+  updateSelectUI();
+});
+$('select-move').addEventListener('click', openTransferDialog);
+$('transfer-form').addEventListener('submit', submitTransfer);
+$('transfer-archive').addEventListener('change', () => {
+  if (!transferCtx) return;
+  transferCtx.archive = $('transfer-archive').value;
+  updateTransferHint();
+  loadTransferFolders();
+});
+$('transfer-tree').addEventListener('change', (e) => {
+  if (!transferCtx || !e.target.checked) return;
+  transferCtx.target = e.target.value === 'new' ? 'new' : { id: e.target.value };
+  $('transfer-new').hidden = transferCtx.target !== 'new';
+  if (transferCtx.target === 'new') $('transfer-new-name').focus();
+  updateTransferSubmit();
+});
+$('transfer-new-name').addEventListener('input', updateTransferSubmit);
+$('transfer-cancel').addEventListener('click', () => $('transfer-dialog').close());
+$('transfer-dialog').addEventListener('cancel', (e) => {
+  if (transferBusy) e.preventDefault(); // the request is on its way; closing now would hide its outcome
+});
+$('transfer-dialog').addEventListener('close', () => {
+  transferCtx = null;
+  transferSeq++;
+});
 
 /* ---------- Tags ---------- */
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -1239,6 +2034,7 @@ async function loadPage(reset) {
   if (ids.length === 0) {
     state.messages = [];
     state.total = 0;
+    pruneSelection([]);
     renderList();
     return;
   }
@@ -1253,6 +2049,7 @@ async function loadPage(reset) {
     const data = await api(`/api/messages?${params}`);
     if (seq !== state.listSeq) return; // stale response
     state.total = data.total ?? 0;
+    if (reset) pruneSelection(data.messages); // "Mehr laden" only adds rows, so it keeps the selection
     state.messages = reset ? data.messages : state.messages.concat(data.messages);
     state.loading = false; // renderList shows the empty notice only when nothing is loading
     renderList();
@@ -1276,7 +2073,9 @@ function renderList() {
     const selected = key === state.selectedKey;
     const li = el('li', { class: 'msg' + (m.unread ? ' unread' : '') + (selected ? ' selected' : ''), role: 'option' });
     li.dataset.key = key;
+    li.dataset.pick = rowKey(m);
     li.setAttribute('aria-selected', String(selected));
+    const pick = el('span', { class: 'pick', 'aria-hidden': 'true' }, [icon('check')]);
     const unreadCol = el('span', { class: 'unread-col' });
     if (m.unread) unreadCol.append(el('span', { class: 'unread-dot', role: 'img', 'aria-label': 'Ungelesen' }));
     const row = el('div', { class: 'row' });
@@ -1299,21 +2098,119 @@ function renderList() {
       const tag = tagById.get(String(id)); // IDs unknown to the sidebar are skipped
       if (tag) subject.append(tagDot(tag));
     }
+    const archivedIn = (m.archived || []).map((id) => sourceById(id)?.name || id);
+    if (archivedIn.length) {
+      const text = `Im Archiv: ${archivedIn.join(', ')}`;
+      subject.append(el('span', { class: 'archived', title: text, role: 'img', 'aria-label': text }, [icon('archivebox')]));
+    }
     if (m.attachments > 0) {
       const clip = icon('paperclip', 'Anhänge');
       clip.classList.add('clip');
       subject.append(clip);
     }
-    li.append(unreadCol, el('div', { class: 'text' }, [row, subject]));
-    li.addEventListener('click', () => {
+    li.append(pick, unreadCol, el('div', { class: 'text' }, [row, subject]));
+    // A shift-click in selection mode picks a range; the browser must not start a text selection for it.
+    li.addEventListener('mousedown', (e) => {
+      if (state.selecting && e.shiftKey) e.preventDefault();
+    });
+    li.addEventListener('click', (e) => {
+      if (state.selecting) {
+        pickRow(rowKey(m), e.shiftKey);
+        return;
+      }
       selectMessage(m.source, m.id);
       goTo(2);
+    });
+    // Selection mode is operable by keyboard: arrows move between the rows, Space or Enter picks (Shift: range).
+    li.addEventListener('focus', () => {
+      if (!state.selecting) return;
+      state.cursor = rowKey(m);
+      paintSelection();
+    });
+    li.addEventListener('keydown', (e) => {
+      if (!state.selecting || e.isComposing) return;
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        pickRow(rowKey(m), e.shiftKey);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const rows = pickableRows();
+        const i = rows.indexOf(li);
+        rows[e.key === 'ArrowDown' ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1)]?.focus();
+      }
     });
     return li;
   }));
   // Drawn here, not only after a load, so a later renderList() cannot erase it.
   if (state.messages.length === 0 && !state.loading) $('messages').append(emptyListItem());
   updateMore();
+  updateSelectUI();
+}
+
+/* ---------- Selection of mails ---------- */
+// Shift-click adds the rows from the last clicked one to this one; a plain click toggles the row.
+function pickRow(key, range) {
+  if (range && state.anchor !== null) {
+    const keys = state.messages.map(rowKey);
+    state.selected = [...new Set([...state.selected, ...rangeSelection(keys, state.anchor, key)])];
+  } else {
+    state.selected = toggleSelection(state.selected, key);
+  }
+  state.anchor = key;
+  updateSelectUI();
+}
+
+// The picked rows lose their selection (folder, tag, search or source changed). Selection mode stays on.
+function clearSelection() {
+  state.selected = [];
+  state.anchor = null;
+  updateSelectUI();
+}
+
+// Toggle button, bar with count and the button into the archive, check marks of the rows.
+function updateSelectUI() {
+  const btn = $('select-btn');
+  btn.textContent = state.selecting ? 'Auswahl beenden' : 'Auswählen';
+  btn.setAttribute('aria-pressed', String(state.selecting));
+  $('messages').classList.toggle('selecting', state.selecting);
+  $('messages').setAttribute('aria-multiselectable', String(state.selecting));
+  $('select-bar').hidden = !state.selecting;
+  const n = state.selected.length;
+  $('select-count').textContent = `${n.toLocaleString('de-DE')} ausgewählt`;
+  const archives = state.sources.filter((s) => s.archive);
+  const usable = usableArchives().length > 0;
+  const over = n > TRANSFER_MAX;
+  let note = archives.length === 0 ? 'Zuerst ein Archiv anlegen.' : usable ? '' : 'Kein Archiv ist erreichbar.';
+  if (over) note = `Höchstens ${TRANSFER_MAX} Mails auf einmal.`;
+  $('select-note').textContent = note;
+  $('select-note').hidden = note === '';
+  $('select-move').disabled = n === 0 || !usable || over;
+  paintSelection();
+}
+
+// Check marks and tint follow state.selected; outside selection mode the rows show only the reader's selection.
+function paintSelection() {
+  const picked = new Set(state.selected);
+  const rows = pickableRows();
+  const cursorRow = rows.find((li) => li.dataset.pick === state.cursor) || rows[0];
+  for (const li of rows) {
+    const on = state.selecting && picked.has(li.dataset.pick);
+    li.classList.toggle('picked', on);
+    li.setAttribute('aria-selected', String(state.selecting ? on : li.classList.contains('selected')));
+    // One row is in the tab order (roving tabindex); outside selection mode the rows are not focusable.
+    if (state.selecting) li.tabIndex = li === cursorRow ? 0 : -1;
+    else li.removeAttribute('tabindex');
+  }
+}
+
+// The mail rows of the list, in display order (not the empty notice).
+const pickableRows = () => [...$('messages').children].filter((li) => li.dataset.pick !== undefined);
+
+// Picked rows that the loaded list no longer shows (moved, deleted, or gone after a reload) leave the selection.
+function pruneSelection(rows) {
+  const loaded = new Set(rows.map(rowKey));
+  state.selected = state.selected.filter((k) => loaded.has(k));
+  if (state.anchor !== null && !loaded.has(state.anchor)) state.anchor = null;
 }
 
 // Shown in the list when a load returns nothing: no mail in the folder, or no search hit.
@@ -1430,6 +2327,7 @@ function renderMail(source, m) {
   renderRecipients(m);
   renderAttachments(source, m);
   renderCopies(source, m);
+  renderArchived(source, m);
 
   const err = $('m-error');
   err.hidden = !m.error;
@@ -1491,6 +2389,17 @@ function renderAttachments(source, m) {
     ]);
   }));
   $('m-attachments').hidden = list.length === 0;
+}
+
+// "Im Archiv" for a mail the list shows as archived; the archive names go in the tooltip. Not known from the
+// list row (e.g. a copy outside the open folder) means no marker.
+function renderArchived(source, m) {
+  const row = state.messages.find((x) => msgKey(x.source, x.id) === msgKey(source, m.id));
+  const names = (row?.archived || []).map((id) => sourceById(id)?.name || id);
+  const badge = $('m-archived');
+  badge.hidden = names.length === 0;
+  badge.title = names.length ? `Im Archiv: ${names.join(', ')}` : '';
+  badge.replaceChildren(...(names.length ? [icon('archivebox'), el('span', { text: 'Im Archiv' })] : []));
 }
 
 // Lists every copy of the open mail. The shown copy is marked; the others open on click, and the list selection stays.
@@ -1771,6 +2680,7 @@ function renderJob(st) {
     $('job-text').textContent = fetching ? 'Abruf läuft…'
       : st.kind === 'import' ? `Import läuft…${prog}`
       : st.kind === 'cleanup' ? 'Aufräumen läuft…'
+      : st.kind === 'archive' ? `Archiv läuft…${prog}`
       : st.progress ? `Indexiere… ${st.progress.done}/${st.progress.total}` : 'Indexiere…';
     $('job-last').textContent = (st.log || []).at(-1) || '';
     // Bar: scaled to done/total when the total is known, otherwise an indeterminate sweep.
@@ -1786,8 +2696,18 @@ function renderJob(st) {
 
 // Report of a finished import: counts, and the folders that could not be read.
 function renderImportNote(st) {
-  const r = st.kind === 'import' && st.state === 'done' ? st.result : null;
-  $('job-note').hidden = !r || dismissedJob === st.started;
+  const done = st.state === 'done';
+  // A finished transfer reports its counts; folder jobs of an archive have no counts and show no note.
+  const t = done && st.kind === 'archive' && typeof st.result?.copied === 'number' ? st.result : null;
+  const r = done && st.kind === 'import' ? st.result : null;
+  $('job-note').hidden = !(t || r) || dismissedJob === st.started;
+  if (t) {
+    $('job-note-text').textContent = transferNoteParts(t).join(', ');
+    $('job-note-list').replaceChildren();
+    $('job-note-sum').textContent = 'Details (0)';
+    $('job-note-details').hidden = true;
+    return;
+  }
   if (!r) return;
   const skipped = Object.values(r.skipped || {}).reduce((a, b) => a + b, 0);
   const parts = [`${r.imported} Mails importiert`];
@@ -2283,6 +3203,7 @@ async function fetchAdminState() {
   loadWarnings.delete('config');
   loadWarnings.delete('sources');
   renderLoadWarn();
+  renderAutoPaused();
 }
 
 // The view stays if it is still shown (∑ only in the combined view), else the first entry of the rail.
@@ -2458,6 +3379,7 @@ function settingsRow(src, i, count) {
     }
   });
   li.append(el('div', { class: 'line' }, [select, emoji, file, hide, removeBtn]));
+  if (src.kind === 'proton') li.append(targetField(src));
 
   const info = [
     `${src.count ?? 0} Mails`,
@@ -2476,6 +3398,160 @@ function renderSettingsSources() {
     ? list.map((src, i) => settingsRow(src, i, list.length))
     : [el('li', { class: 'group-row muted', text: 'Noch keine Quelle. Mit ＋ eine hinzufügen.' })]));
   restoreFocus(key);
+}
+
+/* ---------- Archive creation and automatic archiving ---------- */
+const ARCHIVE_NAME_MAX = 100;
+const TARGET_HELP = 'Mails, die online gelöscht wurden, landen beim nächsten Abruf im Ordner „Unsortiert“ dieses Archivs. Danach werden die älteren Exporte gelöscht.';
+
+// Ziel-Archiv of a proton source: the archive that takes the mails deleted online. "" turns the automation off.
+function targetField(src) {
+  const archives = state.sources.filter((s) => s.archive && s.available);
+  const current = src.archive_target || '';
+  const select = el('select', { 'aria-label': `Ziel-Archiv von ${src.name}`, 'aria-describedby': `target-help-${src.id}`, 'data-action': 'target' }, [
+    el('option', { value: '', text: 'Keins (Automatik aus)' }),
+    ...archives.map((a) => el('option', { value: a.id, text: a.name })),
+  ]);
+  // A target that is no longer reachable stays selected, so the select does not claim "Keins".
+  const kept = state.sources.find((s) => s.id === current && s.archive && !s.available);
+  if (kept) select.append(el('option', { value: kept.id, text: `${kept.name} (nicht erreichbar)` }));
+  select.value = current;
+  select.disabled = !state.sources.some((s) => s.archive);
+  select.addEventListener('change', () => {
+    const url = `/api/sources/${encodeURIComponent(src.id)}`;
+    changeSettings(() => ({ url, init: jsonPost({ archive_target: select.value }) }));
+  });
+  const field = el('label', { class: 'field' }, [el('span', { text: 'Ziel-Archiv' }), select]);
+  const parts = [el('div', { class: 'hint', id: `target-help-${src.id}`, text: TARGET_HELP })];
+  if (select.disabled) parts.push(el('div', { class: 'hint', text: 'Zuerst ein Archiv anlegen.' }));
+  return el('div', {}, [field, ...parts]);
+}
+
+function setArchiveForm(open) {
+  $('settings-archive-new').hidden = !open;
+  $('settings-archive-open').hidden = open;
+  $('settings-archive-open').setAttribute('aria-expanded', String(open));
+  if (open) $('settings-archive-new').elements.name.focus();
+}
+
+$('settings-archive-open').addEventListener('click', () => setArchiveForm(true));
+$('settings-archive-cancel').addEventListener('click', () => {
+  $('settings-archive-new').reset();
+  setArchiveForm(false);
+  $('settings-archive-open').focus();
+});
+$('settings-archive-new').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = e.currentTarget.elements.name;
+  const name = input.value.trim();
+  if (!name) {
+    showSettingsWarn('Der Name darf nicht leer sein.');
+    return;
+  }
+  if ([...name].length > ARCHIVE_NAME_MAX) {
+    showSettingsWarn(`Der Name darf höchstens ${ARCHIVE_NAME_MAX} Zeichen lang sein.`);
+    return;
+  }
+  const res = await changeSettings(() => ({ url: '/api/archives', init: jsonPost({ name }) }));
+  if (!res.ok) {
+    // The form stays with the typed name; the message is shown at the top of the dialog.
+    $('settings-warn').scrollIntoView({ block: 'nearest' });
+    return;
+  }
+  input.value = '';
+  setArchiveForm(false);
+  $('settings-archive-open').focus();
+  if (res.data?.id) selectView(res.data.id);
+});
+
+// Notices for proton sources whose automatic archiving is held back. Redrawn with every source refresh.
+function renderAutoPaused() {
+  const paused = visibleSources().filter((s) => s.kind === 'proton' && s.auto_paused);
+  $('auto-paused').replaceChildren(...paused.map((src) => autoPausedNotice(src, paused.length > 1)));
+}
+
+// Source ids with a force or discard request in flight, or a forced job still running: their buttons stay off.
+const autoBusy = new Set();
+
+// The forced job is followed to its end like a folder job: a failure is shown in job-error by pollJob,
+// then the sources are reloaded, which drops the notice once the pause is gone.
+async function followAutoJob() {
+  dismissedJob = null;
+  for (let i = 0; i < 600; i++) {
+    let st = null;
+    try {
+      st = await api('/api/job');
+    } catch (_) { /* read again on the next round */ }
+    if (st && st.state !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
+  }
+  await pollJob();
+  await loadSources();
+}
+
+// A failed request is shown in job-error, which survives the redraw of the notices.
+function showAutoError(msg) {
+  $('job-error-text').textContent = msg;
+  $('job-error').hidden = !msg;
+}
+
+function autoPausedNotice(src, named) {
+  const n = src.auto_paused.missing;
+  const text = `${named ? `${src.name}: ` : ''}Automatik angehalten: ${n} ${n === 1 ? 'Mail fehlt' : 'Mails fehlen'} im neuen Export`;
+  const url = `/api/sources/${encodeURIComponent(src.id)}/auto`;
+  const keep = el('button', { class: 'btn small primary', type: 'button', text: 'Trotzdem archivieren und alte Exporte löschen' });
+  const drop = el('button', { class: 'btn small', type: 'button', text: 'Verwerfen' });
+  // The forced job copies from the source's mails, so it needs the source reachable.
+  if (!src.available) {
+    keep.disabled = true;
+    keep.title = 'Quelle nicht erreichbar';
+  }
+  // Busy ends with a redraw, so a notice rebuilt during the job is drawn with the state then.
+  const setBusy = (busy) => {
+    keep.disabled = busy || !src.available;
+    drop.disabled = busy;
+  };
+  setBusy(autoBusy.has(src.id));
+  keep.addEventListener('click', async () => {
+    if (autoBusy.has(src.id)) return;
+    if (!confirm('Die fehlenden Mails werden ins Ziel-Archiv kopiert und die alten Exporte danach gelöscht. Fortfahren?')) return;
+    autoBusy.add(src.id);
+    setBusy(true);
+    try {
+      const err = await postJob(url, { action: 'force' }, 'Die Automatik konnte nicht gestartet werden');
+      if (err) {
+        showAutoError(err);
+        return;
+      }
+      await followAutoJob(); // the notice drops with the reload once the job has ended
+    } finally {
+      autoBusy.delete(src.id);
+      renderAutoPaused();
+    }
+  });
+  drop.addEventListener('click', async () => {
+    if (autoBusy.has(src.id)) return;
+    autoBusy.add(src.id);
+    setBusy(true);
+    try {
+      const err = await postJob(url, { action: 'discard' }, 'Die Automatik konnte nicht verworfen werden');
+      if (err) {
+        showAutoError(err);
+        return;
+      }
+      await loadSources();
+    } finally {
+      autoBusy.delete(src.id);
+      renderAutoPaused();
+    }
+  });
+  return el('div', { class: 'notice warn', role: 'status' }, [
+    el('span', { class: 'notice-icon' }, [icon('warn')]),
+    el('div', { class: 'notice-body' }, [
+      el('div', { text }),
+      el('div', { class: 'actions' }, [keep, drop]),
+    ]),
+  ]);
 }
 
 // Sends one tag change (rename, colour, delete). Errors carry the server's message.
@@ -2891,10 +3967,34 @@ function goTo(level, velocity = 0) {
 }
 
 // Focus after a step back goes to the back button of the new level, or to the selected folder or tag on level 0.
+// The sidebar row that stands for the selected folder: its own row, or the topmost collapsed ancestor hiding it.
+function visibleSelectionKey() {
+  const find = (ns, chain) => {
+    for (const n of ns) {
+      const here = [...chain, n];
+      if (n.folder?.key === state.folder) return here;
+      const hit = find(n.children, here);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const chain = find(buildFolderTree(state.folders), []);
+  if (!chain) return null;
+  return (chain.find((n) => state.collapsed.has(n.key)) ?? chain[chain.length - 1]).key;
+}
+
 function focusLevel(level) {
-  const target = level === 1
-    ? $('back-folders')
-    : document.querySelector('#folder-list .folder[aria-current="true"], #tag-list .folder[aria-current="true"]');
+  let target = null;
+  if (level === 1) {
+    target = $('back-folders');
+  } else if (state.tag) {
+    target = document.querySelector('#tag-list .folder[aria-current="true"]');
+  } else {
+    const key = visibleSelectionKey();
+    target = (key !== null && document.querySelector(`#folder-list [data-key="${CSS.escape(key)}"], #folder-list [data-toggle="${CSS.escape(key)}"]`))
+      || document.querySelector('#folder-list .folder')
+      || document.querySelector('#tag-list .folder[aria-current="true"]');
+  }
   target?.focus({ preventScroll: true });
 }
 
@@ -3049,6 +4149,7 @@ $('search').addEventListener('input', () => {
   searchTimer = setTimeout(() => {
     const q = $('search').value.trim();
     if (q === state.q) return;
+    clearSelection();
     state.q = q;
     reloadList();
   }, 300);
@@ -3139,6 +4240,7 @@ async function loadSources() {
   state.sources = sources;
   loadWarnings.delete('sources');
   renderLoadWarn();
+  renderAutoPaused();
 }
 
 loadConfig().then(async () => {

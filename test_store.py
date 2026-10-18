@@ -160,11 +160,24 @@ class StoreTests(unittest.TestCase):
             con.commit()
         self.store = store.Store(self.db)
         self.addCleanup(self.store.close)
-        self.assertEqual(store.SCHEMA_VERSION, 2)
+        self.assertEqual(store.SCHEMA_VERSION, 3)
         self.assertEqual(self.rows("SELECT count(*) FROM messages"), [(0,)])
         self.sync()
         r = self.store.messages(["s1"], None, "grüße aus".casefold(), 0, 50)
         self.assertEqual([m["id"] for m in r["messages"]], [fx.ID_PLAIN])
+
+    def test_schema_bump_rebuilds_cache(self):
+        self.sync()
+        self.store.close()
+        with contextlib.closing(sqlite3.connect(self.db)) as con:
+            con.execute("PRAGMA user_version = 2")
+            con.commit()
+        self.store = store.Store(self.db)
+        self.addCleanup(self.store.close)
+        self.assertEqual(self.rows("SELECT count(*) FROM messages"), [(0,)])
+        self.assertEqual(self.rows("SELECT ord FROM labels"), [])
+        self.sync()
+        self.assertEqual(self.rows("SELECT count(*) FROM labels WHERE ord IS NULL"), [(7,)])
 
     def test_schema_version_mismatch_rebuilds(self):
         self.sync()
@@ -322,6 +335,79 @@ class QueryTests(unittest.TestCase):
         r = self.store.messages(["s1"], None, "", -5, 0)
         self.assertEqual(r["total"], 4)
         self.assertEqual([m["id"] for m in r["messages"]], [fx.ID_PLAIN])
+
+
+class ArchiveIndexTests(unittest.TestCase):
+    """Proton source p and archive source a; the archive holds one copy of ID_PLAIN."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.proton = fx.make_export(self.tmp, "p")
+        self.archive = os.path.join(self.tmp, "a")
+        os.makedirs(self.archive)
+        shutil.copy(os.path.join(self.proton, fx.ID_PLAIN + ".eml"), self.archive)  # same mail, same identity
+        fx.write_json(os.path.join(self.archive, fx.ID_PLAIN + ".metadata.json"), fx.meta(
+            fx.ID_PLAIN, "Grüße aus Köln", ("Jürgen Müller", "juergen@example.test"),
+            [("Ann", "ann@example.test")], 1700000300, ["R1", "P1", "N1"], unread=1))
+        fx.write_json(os.path.join(self.archive, "labels.json"), {"Version": 1, "Payload": [
+            {"Path": "All Mail", "ID": "5", "ParentID": None, "Name": "All Mail", "Color": "#444", "Type": 3},
+            {"Path": "Rechnungen", "ID": "R1", "ParentID": None, "Name": "Rechnungen", "Color": "#111",
+             "Type": 1, "Order": 2},
+            {"Path": "Projekte", "ID": "P1", "ParentID": None, "Name": "Projekte", "Color": "#222",
+             "Type": 1, "Order": 1},
+            {"Path": "Ohne", "ID": "N1", "ParentID": None, "Name": "Ohne", "Color": "#333", "Type": 1},
+            {"Path": "Leer", "ID": "L1", "ParentID": None, "Name": "Leer", "Color": "#444", "Type": 1},
+        ]})
+        self.store = store.Store(os.path.join(self.tmp, "archive.db"))
+        self.addCleanup(self.store.close)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.store.sync_source("p", self.proton)
+            self.store.sync_source("a", self.archive)
+
+    def test_order_indexed_and_exposed(self):
+        f = {x["key"]: x for x in self.store.folders(["p", "a"])}
+        self.assertEqual(f["path:rechnungen"]["order"], 2)
+        self.assertEqual(f["path:projekte"]["order"], 1)
+        self.assertIsNone(f["path:ohne"]["order"])
+        self.assertIsNone(self.store.folders(["p"])[0]["order"])
+
+    def test_folders_include_empty_only_for_listed_sources(self):
+        self.assertNotIn("path:leer", {x["key"] for x in self.store.folders(["p", "a"])})
+        f = {x["key"]: x for x in self.store.folders(["p", "a"], include_empty={"a"})}
+        self.assertEqual(f["path:leer"]["count"], 0)
+        self.assertNotIn("sys:5", {x["key"] for x in self.store.folders(["a"], include_empty={"a"})})
+
+    def test_folders_expose_label_ids_per_source(self):
+        f = {x["key"]: x for x in self.store.folders(["p", "a"])}
+        self.assertEqual(f["path:rechnungen"]["labels"], {"a": "R1"})
+        self.assertEqual(f["sys:0"]["labels"], {"p": "0"})
+        self.assertEqual(f["sys:5"]["labels"], {"p": "5", "a": "5"})
+
+    def test_messages_archived_flag(self):
+        r = self.store.messages(["p", "a"], None, "", 0, 50, archive_ids=["a"])
+        by_row = {(m["source"], m["id"]): m["archived"] for m in r["messages"]}
+        self.assertEqual(by_row[("p", fx.ID_PLAIN)], ["a"])
+        self.assertEqual(by_row[("p", fx.ID_ALT)], [])
+        self.assertEqual(by_row[("a", fx.ID_PLAIN)], [])
+
+    def test_virtual_archived_folder_filters_and_counts(self):
+        r = self.store.messages(["p", "a"], "virtual:archived", "", 0, 50, archive_ids=["a"])
+        self.assertEqual([(m["source"], m["id"]) for m in r["messages"]], [("p", fx.ID_PLAIN)])
+        self.assertEqual(self.store.archived_count(["p", "a"], ["a"]), 1)
+        r = self.store.messages(["p", "a"], "virtual:archived", "", 0, 50, dedupe=True, archive_ids=["a"])
+        self.assertEqual(r["total"], 1)
+        self.assertEqual([(m["source"], m["id"]) for m in r["messages"]], [("p", fx.ID_PLAIN)])
+        self.assertEqual(self.store.archived_count(["p", "a"], ["a"], dedupe=True), 1)
+
+    def test_idents_in(self):
+        plain = self.store.ident("p", fx.ID_PLAIN)
+        alt = self.store.ident("p", fx.ID_ALT)
+        self.assertEqual(self.store.idents_in(["p"], [plain, alt, "nope"]), {plain, alt})
+        self.assertEqual(self.store.idents_in(["a"], [alt]), set())
+        many = [f"x{i}" for i in range(store.IN_CHUNK * 2 + 5)]
+        self.assertEqual(self.store.idents_in(["p", "a"], [*many, "", plain, alt]), {plain, alt})
+        self.assertEqual(self.store.idents_in(["p"], ["", ""]), set())
 
 
 class TagQueryTests(unittest.TestCase):

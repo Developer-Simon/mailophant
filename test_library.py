@@ -295,5 +295,71 @@ class SettingsTest(LibraryTestCase):
         self.assertEqual(library.Library.open(self.root).settings.view, "single")
 
 
+class ArchiveTest(LibraryTestCase):
+    def setUp(self):
+        super().setUp()
+        self.lib = library.Library.create(self.root)
+        self.proton = self.lib.add_source(self.proton_account)  # s1
+        self.loose = self.lib.add_source(self.maildir)  # s2
+        self.archive_dir = fx.make_export(self.tmp, "archive")
+
+    def test_archive_kind_addable(self):
+        src = self.lib.add_source(self.archive_dir, kind="archive")
+        self.assertEqual(src.kind, "archive")
+        self.assertTrue(library.is_archive(src))
+        self.assertEqual(library.Library.open(self.root).get(src.id).kind, "archive")
+        for kind in ("proton", "maildir"):
+            with self.subTest(kind=kind):
+                self.assertFalse(library.is_archive(library.Source(id="s9", name="x", kind=kind, path="p")))
+        self.assertFalse(library.is_archive(self.proton))
+
+    def test_archive_kind_requires_maildir(self):
+        with self.assertRaises(library.LibraryError):
+            self.lib.add_source(self.proton_account, kind="archive")
+
+    def test_old_library_json_without_archive_target_opens(self):
+        with open(os.path.join(self.root, library.LIBRARY_FILE), encoding="utf-8") as f:
+            data = json.load(f)
+        for item in data["sources"]:
+            item.pop("archive_target", None)
+        with open(os.path.join(self.root, library.LIBRARY_FILE), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        lib = library.Library.open(self.root)
+        self.assertEqual([s.archive_target for s in lib.sources], ["", ""])
+
+    def test_archive_target_must_be_archive_id(self):
+        archive = self.lib.add_source(self.archive_dir, kind="archive")  # s3
+        self.lib.update_source(self.proton.id, archive_target=archive.id)
+        self.assertEqual(library.Library.open(self.root).get("s1").archive_target, "s3")
+        self.lib.update_source(self.proton.id, archive_target="")
+        self.assertEqual(library.Library.open(self.root).get("s1").archive_target, "")
+
+    def test_archive_target_rejects_non_archive_and_unknown_ids(self):
+        other = os.path.join(self.tmp, "accounts", "other.test")
+        os.makedirs(other)
+        fx.make_export(other, "mail_20261015T130000")
+        other_proton = self.lib.add_source(other)  # s3, a proton source but not an archive
+        bad = (self.loose.id, "s99", other_proton.id)
+        for target in bad:
+            with self.subTest(target=target):
+                with self.assertRaises(library.LibraryError):
+                    self.lib.update_source(self.proton.id, archive_target=target)
+        self.assertEqual(library.Library.open(self.root).get("s1").archive_target, "")
+
+    def test_archive_target_only_on_proton_sources(self):
+        archive = self.lib.add_source(self.archive_dir, kind="archive")  # s3
+        for source_id in (self.loose.id, archive.id):
+            with self.subTest(source_id=source_id):
+                with self.assertRaises(library.LibraryError):
+                    self.lib.update_source(source_id, archive_target=archive.id)
+
+    def test_remove_archive_clears_targets(self):
+        archive = self.lib.add_source(self.archive_dir, kind="archive")  # s3
+        self.lib.update_source(self.proton.id, archive_target=archive.id)
+        self.lib.remove_source(archive.id)
+        self.assertEqual(self.lib.get("s1").archive_target, "")
+        self.assertEqual(library.Library.open(self.root).get("s1").archive_target, "")
+
+
 if __name__ == "__main__":
     unittest.main()

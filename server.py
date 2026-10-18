@@ -10,7 +10,8 @@ LIBRARY_DIR the library remembered in the config file is opened; if there is non
 asks for a library folder (optionally creating one or remembering the choice).
 Mail files are only read, except for a cleanup of an imported Outlook source (POST /api/cleanup): its
 duplicate mails become hardlinks to a reference source, or are deleted. Each run logs to
-cleanup-<time>.log in the library.
+cleanup-<time>.log in the library. Archive jobs (POST /api/archives/<id>/folders, POST /api/transfer) change
+the labels of archives, and a transfer moves mails between archives, deleting an origin only after its copy is complete.
 Optional: .pst/.ost files can be imported as sources when the pypff module is installed.
 """
 
@@ -39,8 +40,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+import autoarchive
+from archive import (
+    ALL_MAIL, check_name, create_folder, delete_folder, ensure_folder, is_system_folder, move_folder, rename_folder,
+    write_empty_archive,
+)
 from cleanup import ACTIONS, check_dirs, is_regular, plan_cleanup, remove_quiet, run_cleanup
-from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_library
+from library import ICON_DIR, Library, LibraryError, Settings, Source, detect_kind, is_archive, is_library
 from outlook import (
     INSTALL_HINT,
     NO_MAIL_HINT,
@@ -50,14 +56,15 @@ from outlook import (
     open_reader,
     pypff_available,
 )
-from store import META_SUFFIX, Store, addr, addr_list, to_int
+from store import META_SUFFIX, VIRTUAL_ARCHIVED, Store, addr, addr_list, read_labels, to_int
 from tags import TagStore, TagStoreError
+from transfer import Item, transfer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_LIMIT = 200
 MSG_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)$")
 ATT_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/attachment/(\d+)$")
-SOURCE_RE = re.compile(r"^/api/sources/([^/]+)(?:/(remove|icon))?$")
+SOURCE_RE = re.compile(r"^/api/sources/([^/]+)(?:/(remove|icon|auto))?$")
 TAG_RE = re.compile(r"^/api/tags/(\d+)(?:/(remove))?$")
 MARKS_RE = re.compile(r"^/api/message/([^/]+)/([^/]+)/marks$")
 ICON_RE = re.compile(r"^/api/sources/([^/]+)/icon$")
@@ -71,15 +78,26 @@ CLI_NAME = "proton-mail-export-cli"
 MAX_BROWSE_ENTRIES = 2000
 MAX_BODY = 64 * 1024
 MAX_ICON = 512 * 1024
+MAX_TRANSFER = 4 * 1024 * 1024  # up to 5000 items of ids
+MAX_TRANSFER_ITEMS = 5000
+MAX_ID = 512
 ICON_TYPES = {"image/png": "png", "image/svg+xml": "svg"}  # Content-Type -> file extension
 ICON_CTYPES = {ext: ctype for ctype, ext in ICON_TYPES.items()}
 # an SVG is only ever shown as an image document: no scripts, no external loads
 ICON_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; sandbox"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-SOURCE_FIELDS = ("name", "icon", "hidden", "position")
+SOURCE_FIELDS = ("name", "icon", "hidden", "position", "archive_target")
 SETTINGS_FIELDS = tuple(asdict(Settings()))
 POST_ROUTES = ("/api/library", "/api/fetch", "/api/sources", "/api/settings", "/api/import", "/api/tags",
-               "/api/cleanup")
+               "/api/cleanup", "/api/archives", "/api/transfer")
+ARCHIVE_FOLDERS_RE = re.compile(r"^/api/archives/([^/]+)/folders$")
+ARCHIVE_FOLDER_OPS = ("create", "rename", "move", "delete")
+ARCHIVE_FOLDER_FIELDS = ("op", "name", "parent", "id", "index")
+AUTO_ACTIONS = ("force", "discard")
+AUTO_FIELDS = ("action",)
+TRANSFER_FIELDS = ("items", "archive", "folder", "new_folder")
+TRANSFER_ITEM_FIELDS = ("source", "id")
+NEW_FOLDER_FIELDS = ("name", "parent")
 TAG_FIELDS = ("name", "color")
 MARK_FIELDS = ("starred", "tags")
 MAX_TAG_NAME = 40
@@ -453,6 +471,16 @@ def _text(body: Json, key: str) -> str:
     return value
 
 
+def _opt_text(body: Json, key: str) -> str | None:
+    """None for an absent or null field, else the checked string."""
+    value = body.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return check_text(value, key)
+
+
 def has_control(value: str) -> bool:
     return any(ord(c) < 32 or ord(c) == 127 for c in value)
 
@@ -470,6 +498,14 @@ def check_email(email: str) -> str:
             or "/" in email or "\\" in email or email in (".", "..")):
         raise ValueError("invalid email")
     return email
+
+
+def check_id(value: str, what: str) -> str:
+    """A source or mail ID from a request: a non-empty string of at most MAX_ID characters."""
+    check_text(value, what)
+    if not 1 <= len(value) <= MAX_ID:
+        raise ValueError(f"Ungültige {what}-Angabe.")
+    return value
 
 
 def check_tag_name(value: str) -> str:
@@ -686,6 +722,7 @@ class Viewer:
         self.store: Store | None = None
         self.tags: TagStore | None = None
         self.job = Job()
+        self.auto_paused: dict[str, int] = {}  # source id -> mails missing from it, while auto-archiving is paused
         self._lock = threading.Lock()  # serializes open_library
 
     def open_library(self, path: str, create: bool = False, remember: bool | None = None,
@@ -745,11 +782,11 @@ class Viewer:
             return src
 
     def update_source(self, source_id: str, *, name: str | None, icon: Json | None,
-                      hidden: bool | None, position: int | None) -> None:
-        """Rename, icon, hide and reorder touch library.json only, so they may run during a job."""
+                      hidden: bool | None, position: int | None, archive_target: str | None = None) -> None:
+        """Rename, icon, hide, archive target and reorder touch library.json only, so they may run during a job."""
         with self._lock:
             lib, _ = self._admin_library(idle=False)
-            lib.update_source(source_id, name=name, icon=icon, hidden=hidden)
+            lib.update_source(source_id, name=name, icon=icon, hidden=hidden, archive_target=archive_target)
             if position is not None:
                 lib.move_source(source_id, position)
 
@@ -936,6 +973,185 @@ class Viewer:
             if final is not None and not added:
                 shutil.rmtree(final, ignore_errors=True)
 
+    def create_archive(self, name: str) -> Source:
+        """Create an empty archive in a free sources/<slug> and add it as an archive source, indexed at once.
+        Synchronous under _lock. A failure removes the new directory and the source again."""
+        with self._lock:
+            lib, store = self._admin_library(idle=True)
+            sources = os.path.join(lib.root, SOURCES_DIR)
+            os.makedirs(sources, exist_ok=True)
+            final = os.path.join(sources, free_name(sources, import_slug(name)))
+            os.mkdir(final)  # free_name checked it under _lock; if this fails there is nothing of ours to remove
+            src: Source | None = None
+            try:
+                write_empty_archive(final)
+                src = lib.add_source(final, name, kind="archive")
+                store.sync_source(src.id, final)
+            except BaseException:
+                if src is not None:
+                    store.drop_source(src.id)
+                    lib.remove_source(src.id)
+                shutil.rmtree(final, ignore_errors=True)
+                raise
+            return src
+
+    def _start_archive_job(self, prepare: Callable[[Library], tuple[list[Source], Callable[[Job], None]]]) -> None:
+        """Start an archive job, checked and started under _lock like start_cleanup. prepare checks the request
+        synchronously (KeyError, ValueError) and returns the sources the job changes and the job's work. Those
+        sources are reindexed after the work, also after an error. Busy while another job runs."""
+        with self._lock:
+            lib, store = self._admin_library(idle=True)
+            touched, work = prepare(lib)
+
+            def reindex(job: Job) -> None:
+                for src in touched:
+                    if not self.available(src):
+                        job.log(f"{src.name}: nicht erreichbar")
+                        continue
+                    try:
+                        result = store.sync_source(src.id, self.mail_dir_for(src), job.progress)
+                    except (OSError, ValueError, sqlite3.Error) as exc:
+                        job.log(f"{src.name}: Fehler: {exc}")
+                        continue
+                    job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
+
+            def archive_job(job: Job) -> None:
+                try:
+                    work(job)
+                finally:
+                    try:
+                        reindex(job)
+                    finally:
+                        store.close()  # the job thread's connection, as in start_index
+
+            if not self.job.start("archive", archive_job):
+                raise Busy("job running")
+
+    def start_archive_folders(self, source_id: str, op: str, name: str | None, parent: str | None,
+                              folder_id: str | None, index: int | None) -> None:
+        """Create, rename, move or delete a folder of an archive as the job. Every id is checked against the
+        archive's labels.json before the job starts: unknown ids and system folders are ValueError (400).
+        KeyError for unknown sources, Busy while a job runs."""
+
+        def prepare(lib: Library) -> tuple[list[Source], Callable[[Job], None]]:
+            src = lib.get(source_id)
+            if not is_archive(src):
+                raise ValueError(f"Die Quelle {src.name} ist kein Archiv.")
+            if not self.available(src):
+                raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+            mail_dir = self.mail_dir_for(src)
+            labels = {x["ID"] for x in read_labels(mail_dir)}
+            if parent is not None and parent not in labels:
+                raise ValueError("Übergeordneter Ordner nicht gefunden.")
+            if op in ("rename", "move", "delete"):
+                if folder_id not in labels:
+                    raise ValueError("Ordner nicht gefunden.")
+                if is_system_folder(folder_id):
+                    raise ValueError("Systemordner können nicht geändert werden.")
+
+            def work(job: Job) -> None:
+                if op == "create":
+                    job.set_result({"id": create_folder(mail_dir, name, parent)["ID"]})
+                elif op == "rename":
+                    rename_folder(mail_dir, folder_id, name)
+                elif op == "move":
+                    move_folder(mail_dir, folder_id, parent, len(labels) if index is None else index)
+                else:
+                    job.log(f"{src.name}: {delete_folder(mail_dir, folder_id, job.log)} Mails aktualisiert")
+
+            return [src], work
+
+        self._start_archive_job(prepare)
+
+    def start_transfer(self, items: list[tuple[str, str]], archive: str, folder: str | None,
+                       new_folder: tuple[str, str | None] | None) -> None:
+        """Copy, move or refile mails into an archive as the job, after a synchronous check. Each (source, id)
+        must be indexed; the destination and the origins must be available. A new folder (name, parent) is created
+        in the job before the transfer. KeyError for unknown sources (404), ValueError (400), Busy."""
+        if folder is not None and new_folder is not None:
+            raise ValueError("Ordner und neuer Ordner schließen sich aus.")
+
+        def prepare(lib: Library) -> tuple[list[Source], Callable[[Job], None]]:
+            store = self.store  # set: _admin_library checked it under _lock
+            dest = lib.get(archive)
+            if not is_archive(dest):
+                raise ValueError(f"Die Quelle {dest.name} ist kein Archiv.")
+            if not self.available(dest):
+                raise ValueError(f"Die Quelle {dest.name} ist nicht erreichbar.")
+            dest_dir = self.mail_dir_for(dest)
+            labels = {x["ID"] for x in read_labels(dest_dir)}
+            if folder is not None and folder not in labels:
+                raise ValueError("Ordner nicht gefunden.")
+            if new_folder is not None:
+                name, parent = new_folder
+                check_name(name)
+                if parent is not None and (parent not in labels or parent == ALL_MAIL):
+                    raise ValueError("Übergeordneter Ordner nicht gefunden.")
+            sources = {sid: lib.get(sid) for sid in dict.fromkeys(sid for sid, _ in items)}
+            for src in sources.values():
+                if not self.available(src):
+                    raise ValueError(f"Die Quelle {src.name} ist nicht erreichbar.")
+            plan = []
+            for sid, mid in dict.fromkeys(items):
+                ident = store.ident(sid, mid)
+                if ident is None:
+                    raise ValueError("Eine Mail ist nicht im Index.")
+                src = sources[sid]
+                mode = "refile" if sid == dest.id else "move" if is_archive(src) else "copy"
+                plan.append(Item(self.mail_dir_for(src), mid, ident, mode))
+            touched = [dest] + [src for src in sources.values() if is_archive(src) and src.id != dest.id]
+
+            def work(job: Job) -> None:
+                folder_id = folder
+                if new_folder is not None:
+                    folder_id = create_folder(dest_dir, name, parent)["ID"]
+                result = transfer(plan, dest_dir, folder_id, job.log, job.progress)
+                job.set_result(asdict(result))
+                job.log(f"{dest.name}: {result.copied} kopiert, {result.reused} schon vorhanden, "
+                        f"{result.refiled} umsortiert, {result.deleted_origin} aus dem Ursprung entfernt, "
+                        f"{result.skipped} übersprungen, {result.failed} fehlgeschlagen")
+
+            return touched, work
+
+        self._start_archive_job(prepare)
+
+    def _paused_source(self, lib: Library, source_id: str) -> Source:
+        """The source whose automatic archive is paused. KeyError for unknown ids, ValueError if none is pending."""
+        src = lib.get(source_id)
+        if src.kind != "proton" or source_id not in self.auto_paused:
+            raise ValueError("Es steht keine angehaltene Automatik aus.")
+        return src
+
+    def start_auto(self, source_id: str, action: str) -> None:
+        """Answer a paused automatic archive: discard drops the pause, force runs the held-back archive as the job.
+        KeyError for unknown sources (404), ValueError without a pending pause or a usable target (400), Busy
+        for force while a job runs. Checked under _lock like the other archive jobs."""
+        if action == "discard":
+            with self._lock:
+                lib, _ = self._admin_library(idle=False)
+                self.auto_paused.pop(self._paused_source(lib, source_id).id, None)
+            return
+
+        def prepare(lib: Library) -> tuple[list[Source], Callable[[Job], None]]:
+            store = self.store  # set: _admin_library checked it under _lock
+            src = self._paused_source(lib, source_id)
+            if not src.archive_target:
+                raise ValueError("Ziel-Archiv nicht erreichbar.")
+            try:
+                target = lib.get(src.archive_target)
+            except KeyError as exc:
+                raise ValueError("Ziel-Archiv nicht erreichbar.") from exc
+            if not is_archive(target) or not self.available(target):
+                raise ValueError("Ziel-Archiv nicht erreichbar.")
+            newest = self.mail_dir_for(src)
+
+            def work(job: Job) -> None:
+                self._auto_archive(job, store, lib, src, newest, force=True)
+
+            return [target], work
+
+        self._start_archive_job(prepare)
+
     def check_cleanup(self, target: str, reference: str) -> tuple[Source, Source]:
         """Check the two sources of a cleanup. The preview and the run both use it, so they refuse the same
         pairs. KeyError for unknown ids (404), ValueError for unsuitable ones (400), Busy without a library."""
@@ -1026,11 +1242,68 @@ class Viewer:
                 raise
             job.log(f"{src.name}: +{result.added} ~{result.updated} -{result.removed}")
             job.set_result({"source": src.id, "export": os.path.basename(dest)})
+            try:
+                self._auto_archive(job, store, self.library, src, dest)
+            except Exception as exc:  # the fetch itself stays successful, the exports stay in place
+                job.log(redact(f"Automatik fehlgeschlagen: {exc or type(exc).__name__}", secrets))
         except Exception as exc:  # the message may echo a secret
             raise RuntimeError(redact(str(exc) or type(exc).__name__, secrets)) from None
         finally:
             if tmp is not None:
                 shutil.rmtree(tmp, ignore_errors=True)
+
+    def _auto_archive(self, job: Job, store: Store, lib: Library, src: Source, new_dir: str,
+                      force: bool = False) -> None:
+        """Archive the mails that vanished from src since the older exports into its archive target, then delete
+        those exports. Any failure logs and returns before the deletion, so the exports stay in place."""
+        if not src.archive_target:
+            return
+        try:
+            target = lib.get(src.archive_target)
+        except KeyError:
+            target = None
+        if target is None or not is_archive(target) or not self.available(target):
+            job.log("Ziel-Archiv nicht erreichbar, Automatik übersprungen")
+            return
+        account = os.path.dirname(new_dir)
+        real_new = os.path.realpath(new_dir)
+        old = [d for d in mail_dirs(account) if os.path.realpath(d) != real_new]
+        if not old:
+            return
+        plan = autoarchive.plan_vanished(old, new_dir)
+        if autoarchive.should_brake(plan) and not force:
+            self.auto_paused[src.id] = plan.vanished
+            job.log(f"Automatik angehalten: {plan.vanished} Mails fehlen im neuen Export")
+            return
+        self.auto_paused.pop(src.id, None)
+
+        archive_ids = [s.id for s in lib.sources if is_archive(s) and self.available(s)]
+        idents = [c.ident for c in plan.candidates]
+        already_in = store.idents_in(archive_ids, idents)
+        candidates = [c for c in plan.candidates if c.ident not in already_in]
+        already = len(plan.candidates) - len(candidates)
+
+        dest_dir = self.mail_dir_for(target)
+        folder_id = ensure_folder(dest_dir, autoarchive.INBOX_NAME) if candidates else None
+        result = autoarchive.archive_candidates(candidates, dest_dir, folder_id, job.log)
+        if result.failed:
+            job.log(f"Archivieren fehlgeschlagen: {result.failed} Mails, alte Exporte bleiben liegen")
+            return
+
+        store.sync_source(target.id, dest_dir)
+        copied = [c.ident for c in candidates]
+        if store.idents_in([target.id], copied) != set(copied):
+            job.log("Prüfung fehlgeschlagen: Mails fehlen im Archiv, alte Exporte bleiben liegen")
+            return
+
+        deleted = 0
+        if plan.unreadable:
+            job.log(f"{plan.unreadable} Mails in alten Exporten sind unlesbar, alte Exporte bleiben liegen")
+        else:
+            deleted = autoarchive.delete_exports(old, new_dir, job.log)
+        job.log(f"archiviert {len(candidates)}, übersprungen {already + plan.excluded} "
+                f"(schon archiviert {already}, Spam/Papierkorb/Entwurf {plan.excluded}), "
+                f"Exporte gelöscht {deleted}")
 
     def _restore_index(self, job: Job, store: Store, src: Source, previous: str | None,
                        secrets: list[str]) -> None:
@@ -1090,6 +1363,8 @@ def source_list(viewer: Viewer, lib: Library, store: Store) -> list[Json]:
             "available": viewer.available(src),
             "fetchable": src.kind == "proton" and viewer.cli_for(src) is not None,
             "count": count, "unread": unread,
+            "archive": is_archive(src), "archive_target": src.archive_target,
+            "auto_paused": {"missing": viewer.auto_paused[src.id]} if src.id in viewer.auto_paused else None,
         })
     return out
 
@@ -1173,15 +1448,25 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 if source_ids is None:
                     return self._json(400, {"error": "unknown source"})
                 merge = len(source_ids) > 1  # copies of one mail count once only when several sources are shown
+                archives = {s.id for s in lib.sources if is_archive(s)}
                 if url.path == "/api/folders":
-                    return self._json(200, store.folders(source_ids, dedupe=merge))
+                    folders = store.folders(source_ids, dedupe=merge,
+                                            include_empty=[x for x in source_ids if x in archives])
+                    if any(x not in archives for x in source_ids):  # mails of these sources with a copy in an archive
+                        count = store.archived_count(source_ids, archives, dedupe=merge)
+                        if count > 0:
+                            folders.append({"key": VIRTUAL_ARCHIVED, "name": "Online noch zu löschen", "path": "",
+                                            "color": "", "count": count, "unread": 0, "virtual": True,
+                                            "labels": {}, "order": None})
+                    return self._json(200, folders)
                 folder = _arg(query, "folder") or None
                 needle = _arg(query, "q").strip().casefold()
                 offset = max(0, _int(_arg(query, "offset"), 0))
                 limit = min(MAX_LIMIT, max(1, _int(_arg(query, "limit"), 50)))
                 tag = _arg(query, "tag") or None  # "star", a tag ID, or no filter
                 try:
-                    body = store.messages(source_ids, folder, needle, offset, limit, tag, dedupe=merge)
+                    body = store.messages(source_ids, folder, needle, offset, limit, tag, dedupe=merge,
+                                          archive_ids=archives)
                 except ValueError:
                     return self._json(400, {"error": "invalid tag"})
                 return self._json(200, body)
@@ -1233,14 +1518,19 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             m = SOURCE_RE.match(path)
             t = TAG_RE.match(path)
             mk = MARKS_RE.match(path)
-            limit = MAX_ICON if m is not None and m[2] == "icon" else MAX_BODY
+            af = ARCHIVE_FOLDERS_RE.match(path)
+            limit = MAX_BODY
+            if m is not None and m[2] == "icon":
+                limit = MAX_ICON
+            elif path == "/api/transfer":
+                limit = MAX_TRANSFER
             raw = self._read_body(limit)  # read first, so refused requests leave no unread body behind
             port = self.server.server_port
             if self.headers.get("Host") not in _hosts(port):
                 return self._json(403, {"error": "host not allowed"})
             if self.headers.get("Origin") not in _origins(port):  # a missing Origin is refused too
                 return self._json(403, {"error": "origin not allowed"})
-            if m is None and t is None and mk is None and path not in POST_ROUTES:
+            if m is None and t is None and mk is None and af is None and path not in POST_ROUTES:
                 return self._json(404, {"error": "not found"})
             if len(raw) > limit:
                 return self._json(400, {"error": "body too large"})
@@ -1250,6 +1540,8 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 return self._tag_update(int(t[1]), raw)
             if mk is not None:
                 return self._marks_update(unquote(mk[1]), unquote(mk[2]), raw)
+            if af is not None:
+                return self._archive_folders(unquote(af[1]), raw)
             if m is None:
                 if path == "/api/tags":
                     return self._tag_create(raw)
@@ -1263,10 +1555,16 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                     return self._import(raw)
                 if path == "/api/cleanup":
                     return self._cleanup(raw)
+                if path == "/api/archives":
+                    return self._create_archive(raw)
+                if path == "/api/transfer":
+                    return self._transfer(raw)
                 return self._settings(raw)
             source_id = unquote(m[1])
             if m[2] == "icon":
                 return self._set_icon(source_id, raw)
+            if m[2] == "auto":
+                return self._auto(source_id, raw)
             if m[2] == "remove":
                 return self._remove_source(source_id)
             self._update_source(source_id, raw)
@@ -1373,12 +1671,78 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
                 position = body.get("position")
                 if "position" in body and type(position) is not int:
                     raise ValueError("position muss eine ganze Zahl sein.")
-                viewer.update_source(source_id, name=body.get("name"), icon=icon,
-                                     hidden=body.get("hidden"), position=position)
+                viewer.update_source(source_id, name=body.get("name"), icon=icon, hidden=body.get("hidden"),
+                                     position=position, archive_target=body.get("archive_target"))
             self._admin(change, self._sources_reply)
 
         def _remove_source(self, source_id: str) -> None:
             self._admin(lambda: viewer.remove_source(source_id), self._sources_reply)
+
+        def _create_archive(self, raw: bytes) -> None:
+            created: list[Source] = []
+
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, ("name",))
+                name = check_text(_text(body, "name"), "name").strip()
+                if not name:
+                    raise ValueError("Der Name darf nicht leer sein.")
+                created.append(viewer.create_archive(name))
+
+            self._admin(change, lambda: next(s for s in self._sources_reply() if s["id"] == created[0].id))
+
+        def _archive_folders(self, source_id: str, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, ARCHIVE_FOLDER_FIELDS)
+                op = body.get("op")
+                if op not in ARCHIVE_FOLDER_OPS:
+                    raise ValueError("Die Aktion muss create, rename, move oder delete sein.")
+                name = _opt_text(body, "name")
+                parent = _opt_text(body, "parent")
+                folder_id = _opt_text(body, "id")
+                index = body.get("index")
+                if index is not None and type(index) is not int:
+                    raise ValueError("index muss eine ganze Zahl sein.")
+                if op in ("create", "rename") and not (name or "").strip():
+                    raise ValueError("Der Ordnername fehlt.")
+                if op != "create" and folder_id is None:
+                    raise ValueError("Die Ordner-ID fehlt.")
+                viewer.start_archive_folders(source_id, op, name, parent, folder_id, index)
+            self._admin(change, dict)
+
+        def _transfer(self, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, TRANSFER_FIELDS)
+                items = body.get("items")
+                if not isinstance(items, list) or not 1 <= len(items) <= MAX_TRANSFER_ITEMS:
+                    raise ValueError(f"Es müssen 1 bis {MAX_TRANSFER_ITEMS} Mails angegeben werden.")
+                pairs = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError("Jede Mail braucht source und id.")
+                    only_keys(item, TRANSFER_ITEM_FIELDS)
+                    pairs.append((check_id(_text(item, "source"), "source"), check_id(_text(item, "id"), "id")))
+                new_folder = body.get("new_folder")
+                if new_folder is not None:
+                    if not isinstance(new_folder, dict):
+                        raise ValueError("new_folder muss ein Objekt sein.")
+                    only_keys(new_folder, NEW_FOLDER_FIELDS)
+                    new_folder = (_text(new_folder, "name"), _opt_text(new_folder, "parent"))
+                viewer.start_transfer(pairs, check_id(_text(body, "archive"), "archive"),
+                                      _opt_text(body, "folder"), new_folder)
+            self._admin(change, dict)
+
+        def _auto(self, source_id: str, raw: bytes) -> None:
+            def change() -> None:
+                body = load_json_object(raw)
+                only_keys(body, AUTO_FIELDS)
+                action = body.get("action")
+                if action not in AUTO_ACTIONS:
+                    raise ValueError("Die Aktion muss force oder discard sein.")
+                viewer.start_auto(source_id, action)
+            self._admin(change, dict)
 
         def _set_icon(self, source_id: str, raw: bytes) -> None:
             ext = ICON_TYPES.get(self.headers.get("Content-Type") or "")

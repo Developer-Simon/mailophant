@@ -25,7 +25,9 @@ import server
 from cleanup import CleanupResult
 from library import LIBRARY_FILE, Library
 from outlook import ImportReport, Unreadable
+from store import Store
 from test_outlook import FakeReader, folder
+from transfer import TransferResult
 from test_outlook import message as outlook_message
 
 PDF = b"%PDF-1.4 synthetic fixture\n%%EOF"
@@ -192,7 +194,7 @@ class SourceTests(Base):
         self.assertEqual(len(data), 1)
         src = data[0]
         self.assertEqual(set(src), {"id", "name", "kind", "icon", "hidden", "available",
-                                    "fetchable", "count", "unread"})
+                                    "fetchable", "count", "unread", "archive", "archive_target", "auto_paused"})
         self.assertEqual((src["id"], src["kind"], src["available"], src["count"], src["unread"]),
                          ("s1", "maildir", True, 4, 2))
         self.assertFalse(src["fetchable"])  # maildirs are never fetched
@@ -202,7 +204,7 @@ class FolderTests(Base):
     def test_http_folders(self):
         status, folders = self.get_json("/api/folders")
         self.assertEqual(status, 200)
-        self.assertEqual(set(folders[0]), {"key", "name", "path", "color", "count", "unread"})
+        self.assertEqual(set(folders[0]), {"key", "name", "path", "color", "count", "unread", "order", "labels"})
         # system folders first in fixed order, then the rest by name; empty labels omitted
         self.assertEqual([(f["key"], f["count"], f["unread"]) for f in folders],
                          [("sys:0", 3, 2), ("sys:7", 1, 1), ("sys:5", 2, 1), ("path:beta", 1, 0),
@@ -2327,6 +2329,516 @@ class CleanupRouteTests(unittest.TestCase):
         self.assertEqual(self.post(srv, "/api/cleanup", self.cleanup_body(),
                                    origin="http://evil.example")[0], 403)
         self.assertEqual(wait_job(srv.server_port)["kind"], "index")  # only the initial index ran
+
+
+class ArchiveServerTests(unittest.TestCase):
+    """Helpers for archive tests: a library with the export s1, a server per test, requests and folder jobs."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.enterContext(contextlib.redirect_stderr(io.StringIO()))  # the index logs skipped files
+        self.servers = []
+        self.addCleanup(self.stop_all)
+        self.export = make_export(self.tmp, "export")
+        self.config = os.path.join(self.tmp, "config.json")
+
+    def stop_all(self):
+        for srv in list(self.servers):
+            wait_job(srv.server_port)
+            self.stop(srv)
+
+    def stop(self, srv):
+        if srv in self.servers:
+            self.servers.remove(srv)
+        srv.shutdown()
+        srv.server_close()
+        if srv.viewer.store is not None:
+            srv.viewer.store.close()
+        if srv.viewer.tags is not None:
+            srv.viewer.tags.close()
+
+    def serve(self, library_dir, cli=None):
+        srv = server.make_server(library_dir, 0, self.tmp, cli=cli, config_path=self.config)
+        self.servers.append(srv)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        wait_job(srv.server_port)
+        return srv
+
+    def post(self, srv, path, body=None, *, origin="same"):
+        headers = {"Content-Type": "application/json"}
+        if origin == "same":
+            origin = f"http://127.0.0.1:{srv.server_port}"
+        if origin is not None:
+            headers["Origin"] = origin
+        status, _, data = request_raw(srv.server_port, "POST", path,
+                                      json.dumps(body if body is not None else {}).encode("utf-8"), headers)
+        return status, json.loads(data)
+
+    def create(self, srv, name="Privat"):
+        return self.post(srv, "/api/archives", {"name": name})
+
+    def folder_op(self, srv, sid, body):
+        return self.post(srv, f"/api/archives/{sid}/folders", body)
+
+    def folders(self, srv, sources="s2"):
+        return request(srv.server_port, "GET", f"/api/folders?sources={sources}")[1]
+
+    def run_folder_op(self, srv, body):
+        """Start a folder job on s2 and return the finished job."""
+        self.assertEqual(self.folder_op(srv, "s2", body), (200, {}))
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["kind"]), ("done", "archive"), job.get("message"))
+        return job
+
+
+class ArchiveRouteTests(ArchiveServerTests):
+    """Archive creation, folder jobs and the archive fields of source_list. Each test gets its own server."""
+
+    def test_create_archive(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        status, data = self.create(srv)
+        self.assertEqual(status, 200)
+        self.assertEqual((data["id"], data["kind"], data["available"], data["count"]), ("s2", "archive", True, 0))
+        status, again = self.create(srv)
+        self.assertEqual(status, 200)
+        self.assertNotEqual(again["id"], data["id"])
+        lib = Library.open(os.path.join(self.tmp, "library"))
+        dirs = {s.id: os.path.basename(lib.abspath(s)) for s in lib.sources if s.kind == "archive"}
+        self.assertEqual(dirs, {"s2": "privat", "s3": "privat_1"})
+        self.assertEqual(self.create(srv, "  ")[0], 400)
+        self.assertEqual(self.post(srv, "/api/archives", {"name": "X", "kind": "archive"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/archives", {"name": "X"}, origin=None)[0], 403)
+
+    def test_create_archive_removes_directory_on_failure(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        with mock.patch("server.write_empty_archive", side_effect=OSError("disk full")):
+            status, data = self.create(srv, "Kaputt")
+        self.assertEqual((status, data), (400, {"error": "disk full"}))
+        self.assertEqual(os.listdir(os.path.join(self.tmp, "library", "sources")), [])
+        self.assertEqual([s["id"] for s in request(srv.server_port, "GET", "/api/sources")[1]], ["s1"])
+
+    def test_folder_ops_via_job(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.create(srv)[0], 200)
+        job = self.run_folder_op(srv, {"op": "create", "name": "Reisen"})
+        reisen = job["result"]["id"]
+        folder = next(f for f in self.folders(srv) if f["name"] == "Reisen")
+        self.assertEqual((folder["count"], folder["labels"]), (0, {"s2": reisen}))
+        urlaub = self.run_folder_op(srv, {"op": "create", "name": "Urlaub", "parent": reisen})["result"]["id"]
+        self.run_folder_op(srv, {"op": "rename", "id": reisen, "name": "Reise"})
+        paths = {f["name"]: f["path"] for f in self.folders(srv)}
+        self.assertEqual(paths, {"Reise": "Reise", "Urlaub": "Reise/Urlaub"})
+        self.run_folder_op(srv, {"op": "move", "id": urlaub, "parent": None, "index": 0})
+        self.assertEqual({f["name"]: f["path"] for f in self.folders(srv)}, {"Reise": "Reise", "Urlaub": "Urlaub"})
+        self.run_folder_op(srv, {"op": "delete", "id": reisen})
+        self.assertEqual([f["name"] for f in self.folders(srv)], ["Urlaub"])
+
+    def test_folder_op_rejections(self):
+        srv = self.serve(make_library(self.tmp, self.export))
+        self.assertEqual(self.create(srv)[0], 200)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "rename", "id": "5", "name": "X"})[0], 400)  # All Mail
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "delete", "id": "nope"})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "create", "name": "X", "parent": "nope"})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "explode"})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "create"})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "create", "name": 5})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s2", {"op": "create", "name": "X", "extra": 1})[0], 400)
+        self.assertEqual(self.folder_op(srv, "s1", {"op": "create", "name": "X"})[0], 400)  # not an archive
+        self.assertEqual(self.folder_op(srv, "s9", {"op": "create", "name": "X"})[0], 404)
+        self.assertEqual(self.post(srv, "/api/archives/s2/folders", {"op": "create", "name": "X"},
+                                   origin=None)[0], 403)
+        self.assertEqual(wait_job(srv.server_port)["kind"], "index")  # no folder job was started
+
+    def test_source_list_archive_fields(self):
+        account = os.path.join(self.tmp, "account")
+        make_export(account, "mail_20260101T000000")  # a proton account: s1
+        srv = self.serve(make_library(self.tmp, account))
+        self.assertEqual(self.create(srv)[0], 200)
+        _, sources = request(srv.server_port, "GET", "/api/sources")
+        by_id = {s["id"]: s for s in sources}
+        self.assertEqual((by_id["s1"]["archive"], by_id["s1"]["archive_target"], by_id["s1"]["auto_paused"]),
+                         (False, "", None))
+        self.assertEqual((by_id["s2"]["archive"], by_id["s2"]["archive_target"], by_id["s2"]["auto_paused"]),
+                         (True, "", None))
+        srv.viewer.auto_paused["s1"] = 3
+        _, sources = request(srv.server_port, "GET", "/api/sources")
+        self.assertEqual(next(s for s in sources if s["id"] == "s1")["auto_paused"], {"missing": 3})
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"archive_target": "s2"})[0], 200)
+        _, sources = request(srv.server_port, "GET", "/api/sources")
+        self.assertEqual(next(s for s in sources if s["id"] == "s1")["archive_target"], "s2")
+        status, data = self.post(srv, "/api/sources/s2", {"archive_target": "s1"})
+        self.assertEqual((status, "Archiv" in data["error"]), (400, True))  # only proton sources archive
+
+
+class ArchiveTransferTests(ArchiveServerTests):
+    """POST /api/transfer: copy, move and refile mails into archives, and the archived marker."""
+
+    def serve_proton(self):
+        """Library whose s1 is a Proton export, so copies come from a source that is only read."""
+        self.account = os.path.join(self.tmp, "account")
+        make_export(self.account, "mail_20260101T000000")
+        return self.serve(make_library(self.tmp, self.account))
+
+    def transfer(self, srv, items, archive="s2", folder=None, new_folder=None, origin="same"):
+        body = {"items": [{"source": s, "id": i} for s, i in items], "archive": archive,
+                "folder": folder, "new_folder": new_folder}
+        return self.post(srv, "/api/transfer", body, origin=origin)
+
+    def run_transfer(self, srv, items, **kwargs):
+        """Start a transfer and return the finished job."""
+        self.assertEqual(self.transfer(srv, items, **kwargs), (200, {}))
+        return self.wait_done(srv)
+
+    def wait_done(self, srv):
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["kind"]), ("done", "archive"), job.get("message"))
+        return job
+
+    def folder_job(self, srv, sid, body):
+        self.assertEqual(self.folder_op(srv, sid, body), (200, {}))
+        return self.wait_done(srv)
+
+    def messages(self, srv, sources, **params):
+        return request(srv.server_port, "GET", "/api/messages?" + urlencode({"sources": sources, **params}))[1]
+
+    def only_mid(self, srv, sid):
+        """The id of the one mail in archive sid (archive copies have their own ids)."""
+        body = self.messages(srv, sid)
+        self.assertEqual(body["total"], 1)
+        return body["messages"][0]["id"]
+
+    def eml_files(self, name):
+        return sorted(x for x in os.listdir(os.path.join(self.tmp, "library", "sources", name)) if x.endswith(".eml"))
+
+    def test_transfer_copy_from_proton(self):
+        srv = self.serve_proton()
+        self.assertEqual(self.create(srv)[0], 200)
+        reisen = self.folder_job(srv, "s2", {"op": "create", "name": "Reisen"})["result"]["id"]
+        eml = os.path.join(self.account, "mail_20260101T000000", ID_PLAIN + ".eml")
+        meta = os.path.join(self.account, "mail_20260101T000000", ID_PLAIN + ".metadata.json")
+        before = [open(p, "rb").read() for p in (eml, meta)]
+
+        self.assertEqual(self.run_transfer(srv, [("s1", ID_PLAIN)], folder=reisen)["result"]["copied"], 1)
+        self.assertEqual([open(p, "rb").read() for p in (eml, meta)], before)
+
+        key = next(f["key"] for f in self.folders(srv) if f["name"] == "Reisen")
+        listed = self.messages(srv, "s2", folder=key)
+        self.assertEqual([m["subject"] for m in listed["messages"]], ["Grüße aus Köln"])
+        rows = {m["id"]: m for m in self.messages(srv, "s1")["messages"]}
+        self.assertEqual(rows[ID_PLAIN]["archived"], ["s2"])
+        self.assertEqual(rows[ID_ALT]["archived"], [])
+        virtual = [f for f in self.folders(srv, "s1") if f["key"] == "virtual:archived"]
+        self.assertEqual((virtual[0]["count"], virtual[0]["name"]), (1, "Online noch zu löschen"))
+        only = self.messages(srv, "s1", folder="virtual:archived")
+        self.assertEqual([m["id"] for m in only["messages"]], [ID_PLAIN])
+
+    def test_transfer_move_between_archives_and_refile(self):
+        srv = self.serve_proton()
+        self.assertEqual(self.create(srv, "Privat")[0], 200)  # s2
+        self.assertEqual(self.create(srv, "Arbeit")[0], 200)  # s3
+        self.run_transfer(srv, [("s1", ID_PLAIN)], archive="s2")
+        mid = self.only_mid(srv, "s2")
+
+        job = self.run_transfer(srv, [("s2", mid)], archive="s3")
+        self.assertEqual(job["result"]["deleted_origin"], 1)
+        self.assertEqual(self.messages(srv, "s2")["total"], 0)
+        self.assertEqual(self.eml_files("privat"), [])
+        self.assertEqual(len(self.eml_files("arbeit")), 1)
+
+        mid = self.only_mid(srv, "s3")
+        reisen = self.folder_job(srv, "s3", {"op": "create", "name": "Reisen"})["result"]["id"]
+        job = self.run_transfer(srv, [("s3", mid)], archive="s3", folder=reisen)
+        self.assertEqual((job["result"]["refiled"], job["result"]["copied"]), (1, 0))
+        self.assertEqual(len(self.eml_files("arbeit")), 1)
+        key = next(f["key"] for f in self.folders(srv, "s3") if f["name"] == "Reisen")
+        self.assertEqual(self.messages(srv, "s3", folder=key)["total"], 1)
+
+    def test_transfer_new_folder_in_same_job(self):
+        srv = self.serve_proton()
+        self.assertEqual(self.create(srv)[0], 200)
+        job = self.run_transfer(srv, [("s1", ID_PLAIN)], new_folder={"name": "Neu", "parent": None})
+        self.assertEqual(job["result"]["copied"], 1)
+        neu = next(f for f in self.folders(srv) if f["name"] == "Neu")
+        self.assertEqual(neu["count"], 1)
+
+        reisen = neu["labels"]["s2"]
+        self.run_transfer(srv, [("s1", ID_ALT)], new_folder={"name": "Unter", "parent": reisen})
+        unter = next(f for f in self.folders(srv) if f["name"] == "Unter")
+        self.assertEqual((unter["path"], unter["count"]), ("Neu/Unter", 1))
+
+    def test_transfer_rejections(self):
+        srv = self.serve_proton()
+        self.assertEqual(self.create(srv)[0], 200)
+        self.assertEqual(self.transfer(srv, [("s1", "nope")])[0], 400)  # not indexed
+        self.assertEqual(self.transfer(srv, [("s1", "../x")])[0], 400)  # path traversal
+        self.assertEqual(self.transfer(srv, [("s9", ID_PLAIN)])[0], 404)  # unknown source
+        self.assertEqual(self.transfer(srv, [])[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)] * 5001)[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], folder="X1",
+                                       new_folder={"name": "N", "parent": None})[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], folder="nope")[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], new_folder={"name": " ", "parent": None})[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], new_folder={"name": "N", "parent": "nope"})[0], 400)
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], archive="s1")[0], 400)  # not an archive
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)], origin="http://evil.test")[0], 403)
+        self.assertEqual(self.messages(srv, "s2")["total"], 0)
+        self.assertEqual(wait_job(srv.server_port)["kind"], "index")  # no transfer job was started
+
+        privat = os.path.join(self.tmp, "library", "sources", "privat")
+        os.rename(privat, privat + "_weg")
+        status, data = self.transfer(srv, [("s1", ID_PLAIN)])
+        self.assertEqual((status, "nicht erreichbar" in data["error"]), (400, True))
+        os.rename(privat + "_weg", privat)
+        os.rename(self.account, self.account + "_weg")
+        status, data = self.transfer(srv, [("s1", ID_PLAIN)])
+        self.assertEqual((status, "nicht erreichbar" in data["error"]), (400, True))
+        os.rename(self.account + "_weg", self.account)
+
+        gate = threading.Event()
+        self.assertTrue(srv.viewer.job.start("index", lambda job: gate.wait(5)))
+        self.assertEqual(self.transfer(srv, [("s1", ID_PLAIN)])[0], 409)
+        gate.set()
+        wait_job(srv.server_port)
+
+
+FEED_CLI = '''import json, os, shutil, sys
+
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "next.json"), encoding="utf-8") as f:
+    feed = json.load(f)  # the export this run brings: a copy of feed["src"], named feed["name"]
+if len(sys.argv) != 3 or sys.argv[1] != "--dir":
+    sys.exit(6)
+parent = os.path.join(sys.argv[2], os.environ["ET_USER_EMAIL"])
+os.makedirs(parent, exist_ok=True)
+shutil.copytree(feed["src"], os.path.join(parent, feed["name"]))
+'''
+
+
+def write_export(parent: str, name: str, mails: list[tuple[str, list[str]]], ghost: bool = False) -> str:
+    """Export with one mail per (key, label ids); the subject is the key. ghost adds metadata without
+    an .eml, which counts as unreadable."""
+    export = os.path.join(parent, name)
+    os.makedirs(export)
+    write_json(os.path.join(export, "labels.json"), LABELS)
+    for key, labels in mails:
+        mid = "m_" + key
+        write(os.path.join(export, mid + ".eml"), f"Message-ID: <{key}@example.test>\nSubject: {key}\n\nHallo\n")
+        write_json(os.path.join(export, mid + ".metadata.json"), meta(
+            mid, key, ("Sam Sender", "sam@example.test"), [("Ann", "ann@example.test")], 1700000000, labels))
+    if ghost:
+        write_json(os.path.join(export, "m_ghost.metadata.json"), meta(
+            "m_ghost", "ghost", ("Gus Geist", "gus@example.test"), [], 1700000000, ["0"]))
+    return export
+
+
+# Mails every export keeps: a few vanished mails stay below the brake's ratio.
+BASE = [(f"b{n:02d}", ["0"]) for n in range(20)]
+
+
+class AutoArchiveTests(ArchiveServerTests):
+    """Automatic archive after a fetch: mails that vanished from the Proton source go to its archive target,
+    then the old exports are deleted. Every failure keeps the exports. A stand-in CLI brings the export
+    named in bin/next.json, so several fetches in a row make several mail_* exports."""
+
+    def setUp(self):
+        super().setUp()
+        self.account = os.path.join(self.tmp, ACCOUNT)
+        self.cli = os.path.join(self.tmp, "bin", CLI_NAME)
+        os.makedirs(os.path.dirname(self.cli))
+        write(self.cli, "#!/usr/bin/env python3\n" + FEED_CLI)
+        os.chmod(self.cli, 0o755)
+        self.archive_dir = os.path.join(self.tmp, "library", "sources", "privat")
+
+    def start(self, initial, ghost=False):
+        """Account with the export OLD holding BASE and the given mails; server with s1 = account and cli."""
+        write_export(self.account, OLD, BASE + initial, ghost)
+        return self.serve(make_library(self.tmp, self.account), cli=self.cli)
+
+    def target(self, srv):
+        """Archive s2 as the archive target of s1."""
+        self.assertEqual(self.create(srv)[0], 200)
+        self.assertEqual(self.post(srv, "/api/sources/s1", {"archive_target": "s2"})[0], 200)
+
+    def fetch(self, srv, name, mails, ghost=False):
+        """Bring the export name with the given mails as the next one; returns the finished fetch job."""
+        src = write_export(os.path.join(self.tmp, "feeds"), name, BASE + mails, ghost)
+        write_json(os.path.join(self.tmp, "bin", "next.json"), {"src": src, "name": name})
+        self.assertEqual(self.post(srv, "/api/fetch", {"source": "s1", "password": PW}), (202, {"state": "running"}))
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["kind"]), ("done", "fetch"), job.get("message"))
+        return job
+
+    def exports(self):
+        return sorted(os.path.basename(d) for d in server.mail_dirs(self.account))
+
+    def archived(self):
+        """(subject, LabelIDs) of each mail in the archive s2, sorted. The subject is the mail's key."""
+        out = []
+        for name in os.listdir(self.archive_dir):
+            if name.endswith(".metadata.json"):
+                with open(os.path.join(self.archive_dir, name), encoding="utf-8") as f:
+                    payload = json.load(f)["Payload"]
+                out.append((payload["Subject"], payload["LabelIDs"]))
+        return sorted(out)
+
+    def unsorted_id(self):
+        with open(os.path.join(self.archive_dir, "labels.json"), encoding="utf-8") as f:
+            return next(x["ID"] for x in json.load(f)["Payload"] if x["Name"] == "Unsortiert")
+
+    def source(self, srv, sid):
+        return next(s for s in request(srv.server_port, "GET", "/api/sources")[1] if s["id"] == sid)
+
+    def test_fetch_without_target_keeps_old_exports(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.fetch(srv, "mail_20260103T000000", [("Y", ["0"]), ("Z", ["0"])])
+        self.fetch(srv, "mail_20260104T000000", [("Z", ["0"])])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000", "mail_20260103T000000", "mail_20260104T000000"])
+
+    def test_vanished_mail_archived_then_old_exports_deleted(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
+        self.assertEqual(self.exports(), ["mail_20260102T000000"])
+        self.assertTrue(any(line.startswith("archiviert 1,") for line in job["log"]), job["log"])
+        self.assertEqual(self.source(srv, "s2")["count"], 1)
+
+    def test_already_archived_mail_skipped(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        self.assertEqual(self.post(srv, "/api/transfer", {
+            "items": [{"source": "s1", "id": "m_X"}], "archive": "s2", "folder": None, "new_folder": None}), (200, {}))
+        self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        before = self.archived()
+        job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.archived(), before)
+        self.assertEqual(self.exports(), ["mail_20260102T000000"])
+        self.assertIn("archiviert 0, übersprungen 1 (schon archiviert 1, Spam/Papierkorb/Entwurf 0), "
+                      "Exporte gelöscht 1", job["log"])
+
+    def test_no_new_candidates_does_not_recreate_inbox_folder(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        self.assertEqual(self.post(srv, "/api/transfer", {
+            "items": [{"source": "s1", "id": "m_X"}], "archive": "s2", "folder": None, "new_folder": None}), (200, {}))
+        self.assertEqual(wait_job(srv.server_port)["state"], "done")
+        self.assertNotIn("Unsortiert", self.archive_names())
+        self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertNotIn("Unsortiert", self.archive_names())
+
+    def archive_names(self):
+        with open(os.path.join(self.archive_dir, "labels.json"), encoding="utf-8") as f:
+            return [x["Name"] for x in json.load(f)["Payload"]]
+
+    def test_spam_and_trash_not_archived_but_exports_deleted(self):
+        srv = self.start([("X", ["0"]), ("S", ["3"]), ("T", ["4"]), ("Y", ["0"])])
+        self.target(srv)
+        job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
+        self.assertEqual(self.exports(), ["mail_20260102T000000"])
+        self.assertIn("archiviert 1, übersprungen 2 (schon archiviert 0, Spam/Papierkorb/Entwurf 2), "
+                      "Exporte gelöscht 1", job["log"])
+
+    def test_brake_pauses_and_keeps_everything(self):
+        mails = [(f"k{n:03d}", ["0"]) for n in range(100)]
+        srv = self.start(mails)
+        self.target(srv)
+        job = self.fetch(srv, "mail_20260102T000000", mails[:50])
+        self.assertEqual(self.archived(), [])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+        self.assertEqual(self.source(srv, "s1")["auto_paused"], {"missing": 50})
+        self.assertIn("Automatik angehalten: 50 Mails fehlen im neuen Export", job["log"])
+
+        self.assertEqual(self.auto(srv, "s1", "discard"), (200, {}))
+        self.assertIsNone(self.source(srv, "s1")["auto_paused"])
+        self.assertEqual(self.archived(), [])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+
+        self.fetch(srv, "mail_20260103T000000", mails[:50])  # brakes again: the same 50 are missing
+        self.assertEqual(self.source(srv, "s1")["auto_paused"], {"missing": 50})
+        job = self.auto_job(srv, "s1", "force")
+        self.assertEqual(self.archived(), sorted((k, [self.unsorted_id(), "5"]) for k, _ in mails[50:]))
+        self.assertEqual(self.exports(), ["mail_20260103T000000"])
+        self.assertIsNone(self.source(srv, "s1")["auto_paused"])
+        self.assertTrue(any(line.startswith("archiviert 50,") for line in job["log"]), job["log"])
+
+    def auto(self, srv, sid, action):
+        return self.post(srv, f"/api/sources/{sid}/auto", {"action": action})
+
+    def auto_job(self, srv, sid, action):
+        """Force the pause of sid as the job; returns the finished job."""
+        self.assertEqual(self.auto(srv, sid, action), (200, {}))
+        job = wait_job(srv.server_port)
+        self.assertEqual((job["state"], job["kind"]), ("done", "archive"), job.get("message"))
+        return job
+
+    def test_auto_without_pending_pause_is_400(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        self.assertEqual(self.auto(srv, "s1", "discard"), (400, {"error": "Es steht keine angehaltene Automatik aus."}))
+        self.assertEqual(self.auto(srv, "s1", "force")[0], 400)
+        self.assertEqual(self.exports(), [OLD])
+
+    def test_auto_rejects_bad_body_and_wrong_origin(self):
+        srv = self.start([("X", ["0"])])
+        self.target(srv)
+        srv.viewer.auto_paused["s1"] = 3
+        self.assertEqual(self.post(srv, "/api/sources/s1/auto", {"action": "explode"})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1/auto", {"action": "discard", "x": 1})[0], 400)
+        self.assertEqual(self.post(srv, "/api/sources/s1/auto", {"action": "discard"}, origin=None)[0], 403)
+        evil = {"action": "discard"}
+        self.assertEqual(self.post(srv, "/api/sources/s1/auto", evil, origin="http://evil.test")[0], 403)
+        self.assertEqual(srv.viewer.auto_paused, {"s1": 3})
+
+    def test_auto_unknown_source_is_404(self):
+        srv = self.start([("X", ["0"])])
+        self.assertEqual(self.auto(srv, "s9", "discard")[0], 404)
+
+    def test_force_while_job_runs_is_409(self):
+        srv = self.start([("X", ["0"])])
+        self.target(srv)
+        srv.viewer.auto_paused["s1"] = 3
+        release = threading.Event()
+        self.assertTrue(srv.viewer.job.start("index", lambda job: release.wait(10)))
+        try:
+            self.assertEqual(self.auto(srv, "s1", "force")[0], 409)
+        finally:
+            release.set()
+            wait_job(srv.server_port)
+        self.assertEqual(srv.viewer.auto_paused, {"s1": 3})
+
+    def test_target_unavailable_skips_and_keeps_exports(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        os.rename(self.archive_dir, self.archive_dir + "_weg")
+        job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+        self.assertIn("Ziel-Archiv nicht erreichbar, Automatik übersprungen", job["log"])
+
+    def test_copy_failure_keeps_exports(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        with mock.patch("autoarchive.transfer.transfer", return_value=TransferResult(failed=1)):
+            job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+        self.assertTrue(any("Archivieren fehlgeschlagen" in line for line in job["log"]), job["log"])
+
+    def test_verification_failure_keeps_exports(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])])
+        self.target(srv)
+        with mock.patch.object(Store, "idents_in", return_value=set()):
+            job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+        self.assertTrue(any("Prüfung fehlgeschlagen" in line for line in job["log"]), job["log"])
+
+    def test_unreadable_old_mail_keeps_exports(self):
+        srv = self.start([("X", ["0"]), ("Y", ["0"])], ghost=True)
+        self.target(srv)
+        job = self.fetch(srv, "mail_20260102T000000", [("Y", ["0"])])
+        self.assertEqual(self.archived(), [("X", [self.unsorted_id(), "5"])])
+        self.assertEqual(self.exports(), [OLD, "mail_20260102T000000"])
+        self.assertIn("1 Mails in alten Exporten sind unlesbar, alte Exporte bleiben liegen", job["log"])
 
 
 class CliOverrideTests(unittest.TestCase):

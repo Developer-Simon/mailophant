@@ -14,7 +14,8 @@ from typing import Any
 LIBRARY_FILE = "library.json"
 LIBRARY_VERSION = 1
 ICON_DIR = "icons"
-KINDS = ("proton", "maildir", "outlook")
+KINDS = ("proton", "maildir", "outlook", "archive")
+ARCHIVE_KINDS = ("outlook", "archive")
 VIEWS = ("combined", "single")
 MAX_EMOJI_LEN = 16
 ID_RE = re.compile(r"^s([1-9]\d*)$")
@@ -34,6 +35,7 @@ class Source:
     path: str  # relative to the library if the source lies inside it, else absolute
     icon: Json = field(default_factory=lambda: {"type": "auto"})
     hidden: bool = False
+    archive_target: str = ""  # id of an archive source that a proton source is archived into, "" for none
 
 
 @dataclass
@@ -61,6 +63,10 @@ def detect_kind(path: str) -> str:
     if _has_mail_dir(path):
         return "proton"
     raise LibraryError(f"Kein Mail-Export gefunden in {path}.")
+
+
+def is_archive(src: Source) -> bool:
+    return src.kind in ARCHIVE_KINDS
 
 
 def is_library(path: str) -> bool:
@@ -99,9 +105,11 @@ def _source_from(item: Any) -> Source:
     if not isinstance(item, dict):
         raise ValueError("source is not an object")
     src = Source(id=item["id"], name=item["name"], kind=item["kind"], path=item["path"],
-                 icon=_check_icon(item["icon"]), hidden=item["hidden"])
+                 icon=_check_icon(item["icon"]), hidden=item["hidden"],
+                 archive_target=item.get("archive_target", ""))
     if src.kind not in KINDS or not isinstance(src.id, str) or not isinstance(src.name, str) \
-            or not isinstance(src.path, str) or type(src.hidden) is not bool:
+            or not isinstance(src.path, str) or type(src.hidden) is not bool \
+            or not isinstance(src.archive_target, str):
         raise ValueError("bad source field")
     return src
 
@@ -192,8 +200,8 @@ class Library:
     def add_source(self, path: str, name: str = "", kind: str | None = None) -> Source:
         if kind is None:
             kind = detect_kind(path)
-        elif kind == "outlook":
-            # Outlook files are imported into a maildir first, so only a maildir can be added as outlook.
+        elif kind in ARCHIVE_KINDS:
+            # Outlook files and archives are kept as maildirs, so only a maildir can be added as one.
             if detect_kind(path) != "maildir":
                 raise LibraryError(f"Kein Maildir-Export in {path}.")
         else:
@@ -215,12 +223,15 @@ class Library:
         return src
 
     def update_source(self, source_id: str, *, name: str | None = None,
-                      icon: Json | None = None, hidden: bool | None = None) -> Source:
+                      icon: Json | None = None, hidden: bool | None = None,
+                      archive_target: str | None = None) -> Source:
         src = self.get(source_id)
         if name is not None and (not isinstance(name, str) or not name.strip()):
             raise LibraryError("Der Name darf nicht leer sein.")
         if hidden is not None and not isinstance(hidden, bool):
             raise LibraryError("Ausblenden muss an oder aus sein.")
+        if archive_target is not None:
+            self._check_archive_target(src, archive_target)
         new_icon = _check_icon(icon) if icon is not None else None
         changes: Json = {}
         if name is not None:
@@ -229,11 +240,27 @@ class Library:
             changes["icon"] = new_icon
         if hidden is not None:
             changes["hidden"] = hidden
+        if archive_target is not None:
+            changes["archive_target"] = archive_target
         updated = replace(src, **changes)
         sources = [updated if s is src else s for s in self.sources]
         self.save(sources)
         self.sources = sources
         return updated
+
+    def _check_archive_target(self, src: Source, target: str) -> None:
+        if not isinstance(target, str):
+            raise LibraryError("Ungültiges Archiv-Ziel.")
+        if target == "":
+            return
+        if src.kind != "proton":
+            raise LibraryError("Nur Proton-Quellen können in ein Archiv verschoben werden.")
+        try:
+            archive = self.get(target)
+        except KeyError:
+            raise LibraryError("Das Archiv-Ziel gibt es nicht.") from None
+        if not is_archive(archive):
+            raise LibraryError("Das Archiv-Ziel ist kein Archiv.")
 
     def move_source(self, source_id: str, position: int) -> None:
         src = self.get(source_id)
@@ -243,9 +270,11 @@ class Library:
         self.save()
 
     def remove_source(self, source_id: str) -> Source:
-        """Forget the source and its icon. The mail folder itself is left alone."""
+        """Forget the source and its icon. The mail folder itself is left alone.
+        Proton sources that archived into it lose that target in the same save."""
         src = self.get(source_id)
-        sources = [s for s in self.sources if s is not src]
+        sources = [replace(s, archive_target="") if s.archive_target == src.id else s
+                   for s in self.sources if s is not src]
         self.save(sources)
         self.sources = sources
         icons = os.path.join(self.root, ICON_DIR)

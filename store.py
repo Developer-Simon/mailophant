@@ -14,15 +14,16 @@ import threading
 from dataclasses import dataclass
 from email import policy
 from email.parser import BytesParser
-from typing import Any, Callable
+from typing import Any, Callable, Collection
 
 import tags
 
 META_SUFFIX = ".metadata.json"
-SCHEMA_VERSION = 2  # 2: FTS columns hold casefolded text
+SCHEMA_VERSION = 3  # 2: FTS columns hold casefolded text; 3: labels.ord
 COMMIT_EVERY = 1000
 SYSTEM_FOLDER_ORDER = ["0", "7", "5", "4", "3", "6", "8"]
 IN_CHUNK = 200  # identities per IN (...) lookup, well below SQLite's variable limit
+VIRTUAL_ARCHIVED = "virtual:archived"  # mails with a copy in an archive source
 # One group per mail across sources; mails without an identity (no .eml) stay one group per copy
 GROUP_KEY_SQL = "CASE WHEN m.ident = '' THEN m.source_id || '/' || m.mid ELSE m.ident END"
 
@@ -36,7 +37,7 @@ CREATE TABLE messages (source_id TEXT, mid TEXT, stat TEXT NOT NULL, ident TEXT 
 CREATE INDEX messages_time ON messages (time DESC, mid);
 CREATE INDEX messages_ident ON messages (ident);
 CREATE TABLE labels (source_id TEXT, label_id TEXT, name TEXT, path TEXT, color TEXT, type INTEGER,
-  PRIMARY KEY (source_id, label_id));
+  ord INTEGER, PRIMARY KEY (source_id, label_id));
 CREATE TABLE message_labels (source_id TEXT, mid TEXT, label_id TEXT, PRIMARY KEY (source_id, mid, label_id));
 CREATE VIRTUAL TABLE messages_fts USING fts5(source_id UNINDEXED, mid UNINDEXED, subject, people,
   tokenize = 'trigram case_sensitive 0');
@@ -85,6 +86,13 @@ def to_int(value: Any) -> int:
         return int(float(value))
     except (TypeError, ValueError, OverflowError):
         return 0
+
+
+def label_order(label: Json) -> int | None:
+    value = label.get("Order")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return to_int(value)
 
 
 def people_text(meta: Json) -> str:
@@ -136,6 +144,14 @@ def casefold_sql(value: Any) -> Any:
 
 def escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def archived_clause(archive: list[str]) -> tuple[str, list[str]]:
+    """Rows (alias m) outside archive whose mail also has a copy in archive."""
+    marks = ",".join("?" for _ in archive)
+    clause = (f"m.source_id NOT IN ({marks}) AND m.ident <> '' "
+              f"AND m.ident IN (SELECT ident FROM messages WHERE source_id IN ({marks}))")
+    return clause, [*archive, *archive]
 
 
 class Store:
@@ -220,9 +236,9 @@ class Store:
         con.execute("INSERT INTO sources (id, mail_dir) VALUES (?, ?) "
                     "ON CONFLICT (id) DO UPDATE SET mail_dir = excluded.mail_dir", (source_id, mail_dir))
         con.execute("DELETE FROM labels WHERE source_id = ?", (source_id,))
-        con.executemany("INSERT INTO labels VALUES (?, ?, ?, ?, ?, ?)", [
-            (source_id, str(x["ID"]), x.get("Name"), x.get("Path"), x.get("Color"), x.get("Type"))
-            for x in read_labels(mail_dir)])
+        con.executemany("INSERT INTO labels VALUES (?, ?, ?, ?, ?, ?, ?)", [
+            (source_id, str(x["ID"]), x.get("Name"), x.get("Path"), x.get("Color"), x.get("Type"),
+             label_order(x)) for x in read_labels(mail_dir)])
         stale = removed + changed
         if stale:
             con.execute("CREATE TEMP TABLE IF NOT EXISTS stale (mid TEXT PRIMARY KEY)")
@@ -263,16 +279,20 @@ class Store:
         con.commit()
         return result
 
-    def folders(self, source_ids: list[str], dedupe: bool = False) -> list[Json]:
+    def folders(self, source_ids: list[str], dedupe: bool = False,
+                include_empty: Collection[str] = ()) -> list[Json]:
         """Folders with at least one message, merged across sources by folder_key; counts are distinct messages.
 
         With dedupe, a count is a group of copies (see GROUP_KEY_SQL); unread comes from the best-ranked copy.
+        Sources in include_empty also list their folders without messages (count 0), except All Mail.
+        Each folder has order (first Order in source_ids) and labels (source -> label ID of every source holding it).
         """
         if not source_ids:
             return []
         rank = {sid: i for i, sid in enumerate(dict.fromkeys(source_ids))}
         marks = ",".join("?" for _ in rank)
-        rows = self._conn().execute(
+        con = self._conn()
+        rows = con.execute(
             "SELECT ml.source_id, ml.mid, ml.label_id, l.name, l.path, l.color, m.unread, m.ident "
             "FROM message_labels ml "
             "JOIN labels l ON l.source_id = ml.source_id AND l.label_id = ml.label_id "
@@ -291,15 +311,36 @@ class Store:
             seen.add(member)
             entry["count"] += 1
             entry["unread"] += unread
+        labels_of: dict[str, Json] = {}
+        order: dict[str, int] = {}
+        empty: dict[str, Json] = {}
+        label_rows = con.execute(
+            f"SELECT source_id, label_id, name, path, color, ord FROM labels WHERE source_id IN ({marks})",
+            list(rank)).fetchall()
+        for sid, label_id, name, path, color, position in sorted(label_rows, key=lambda r: rank[r[0]]):
+            key = folder_key(label_id, path or "")
+            labels_of.setdefault(key, {}).setdefault(sid, label_id)
+            if position is not None:
+                order.setdefault(key, position)
+            if sid in include_empty and label_id != "5":
+                empty.setdefault(key, {"key": key, "name": name or "", "path": path or "",
+                                       "color": color or "", "count": 0, "unread": 0})
+        for key, entry in empty.items():
+            merged.setdefault(key, entry)
+        for key, entry in merged.items():
+            entry["order"] = order.get(key)
+            entry["labels"] = labels_of.get(key, {})
         return sorted(merged.values(), key=folder_sort_key)
 
     def messages(self, source_ids: list[str], folder: str | None, needle: str, offset: int, limit: int,
-                 tag: str | None = None, dedupe: bool = False) -> Json:
+                 tag: str | None = None, dedupe: bool = False, archive_ids: Collection[str] = ()) -> Json:
         """Newest first across sources; needle must already be casefolded.
 
         tag is "star", a tag ID as decimal string, or None. Rows carry ident, starred and tags from tags.db.
         With dedupe, copies of one mail collapse into one row (see GROUP_KEY_SQL): the copy from the
         first source in source_ids that matches the filters, and copies counts the sources holding it.
+        Rows outside archive_ids list the archive sources holding a copy as archived; folder VIRTUAL_ARCHIVED
+        keeps only those rows.
         """
         if tag is not None and tag != "star":
             if not (tag.isascii() and tag.isdigit()):
@@ -311,10 +352,17 @@ class Store:
         limit, offset = max(1, limit), max(0, offset)
         con = self._conn()
         sources = list(dict.fromkeys(source_ids))
+        archive = list(dict.fromkeys(archive_ids))
         marks = ",".join("?" for _ in sources)
         where = [f"m.source_id IN ({marks})"]
         args: list[Any] = list(sources)
-        if folder is not None:
+        if folder == VIRTUAL_ARCHIVED:
+            if not archive:
+                return {"total": 0, "messages": []}
+            clause, clause_args = archived_clause(archive)
+            where.append(clause)
+            args += clause_args
+        elif folder is not None:
             pairs = [(sid, lid) for sid, lid, path in con.execute(
                 f"SELECT source_id, label_id, path FROM labels WHERE source_id IN ({marks})", sources)
                 if folder_key(lid, path or "") == folder]
@@ -360,13 +408,62 @@ class Store:
             [*params, limit, offset]).fetchall()
         marks = self._marks([ident for *_, ident in rows])
         copies = self._copies([ident for *_, ident in rows], sources) if dedupe else {}
+        archived = self._archived([ident for *_, ident in rows], archive) if archive else {}
         messages = []
         for sid, mid, payload, unread, ident in rows:
             mark = marks.get(ident, {"starred": False, "tags": []})  # ident "" (no .eml) never has marks
             messages.append(summarize(mid, json.loads(payload)) | {
                 "source": sid, "unread": bool(unread), "ident": ident,
-                "starred": mark["starred"], "tags": list(mark["tags"]), "copies": copies.get(ident, 1)})
+                "starred": mark["starred"], "tags": list(mark["tags"]), "copies": copies.get(ident, 1),
+                "archived": [] if sid in archive else archived.get(ident, [])})
         return {"total": total, "messages": messages}
+
+    def archived_count(self, source_ids: list[str], archive_ids: Collection[str], dedupe: bool = False) -> int:
+        """Total of messages(folder=VIRTUAL_ARCHIVED) for the same sources, archive_ids and dedupe."""
+        sources = list(dict.fromkeys(source_ids))
+        archive = list(dict.fromkeys(archive_ids))
+        if not sources or not archive:
+            return 0
+        marks = ",".join("?" for _ in sources)
+        clause, clause_args = archived_clause(archive)
+        what = f"COUNT(DISTINCT {GROUP_KEY_SQL})" if dedupe else "COUNT(*)"
+        return self._conn().execute(
+            f"SELECT {what} FROM messages m WHERE m.source_id IN ({marks}) AND {clause}",
+            [*sources, *clause_args]).fetchone()[0]
+
+    def idents_in(self, source_ids: Collection[str], idents: Collection[str]) -> set[str]:
+        """The identities among idents that occur in one of source_ids; "" is never returned."""
+        ids = [ident for ident in dict.fromkeys(idents) if ident]
+        sources = list(dict.fromkeys(source_ids))
+        if not ids or not sources:
+            return set()
+        con = self._conn()
+        marks_src = ",".join("?" for _ in sources)
+        found: set[str] = set()
+        for i in range(0, len(ids), IN_CHUNK):
+            chunk = ids[i:i + IN_CHUNK]
+            marks = ",".join("?" for _ in chunk)
+            found.update(ident for (ident,) in con.execute(
+                f"SELECT DISTINCT ident FROM messages WHERE ident IN ({marks}) AND source_id IN ({marks_src})",
+                [*chunk, *sources]))
+        return found
+
+    def _archived(self, idents: list[str], archive_ids: list[str]) -> dict[str, list[str]]:
+        """Archive sources holding each identity, sorted; "" is not looked up."""
+        con = self._conn()
+        ids = [ident for ident in dict.fromkeys(idents) if ident]
+        marks_src = ",".join("?" for _ in archive_ids)
+        found: dict[str, list[str]] = {}
+        for i in range(0, len(ids), IN_CHUNK):
+            chunk = ids[i:i + IN_CHUNK]
+            marks = ",".join("?" for _ in chunk)
+            for ident, sid in con.execute(
+                    f"SELECT DISTINCT ident, source_id FROM messages "
+                    f"WHERE ident IN ({marks}) AND source_id IN ({marks_src})", [*chunk, *archive_ids]):
+                found.setdefault(ident, []).append(sid)
+        for sids in found.values():
+            sids.sort()
+        return found
 
     def _copies(self, idents: list[str], source_ids: list[str]) -> dict[str, int]:
         """Number of distinct sources among source_ids that hold each identity; "" is not looked up."""
