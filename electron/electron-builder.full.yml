@@ -1,0 +1,38 @@
+# Full-Variante: wie electron-builder.yml, zusätzlich mit gebündeltem Python-Interpreter
+# (electron/build/python, erzeugt von `npm run build:runtime`).
+extends: ./electron-builder.yml
+appId: de.mailophant.app
+productName: Mailophant
+# directories und files werden hier vollständig wiederholt, damit buildResources und das Icon
+# auch dann gelten, wenn extends Objekte nicht tief zusammenführt.
+directories:
+  output: dist/full
+  buildResources: assets
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+extraResources:
+  - from: ../mailviewer
+    to: mailviewer
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: ../static
+    to: static
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: build/python
+    to: python
+linux:
+  target: AppImage
+  icon: assets/icon.png
+  category: Office
+  artifactName: "${productName}-${version}-${arch}-full.${ext}"
+mac:
+  artifactName: "${productName}-${version}-${arch}-full.${ext}"
+win:
+  artifactName: "${productName}-${version}-${arch}-full.${ext}"

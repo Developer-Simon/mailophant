@@ -1,0 +1,24 @@
+<!-- App-Icon Mailophant (Variante 6b): Squircle, Archivbox mit Umschlag, Elefantenkopf. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="512" height="512">
+  <defs>
+    <linearGradient id="l6bbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a7fe8"/><stop offset="1" stop-color="#0058c0"/></linearGradient>
+    <linearGradient id="l6bhi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".4" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="l6bpaper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e3eefb"/></linearGradient>
+    <filter id="l6bdrop" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="14" stdDeviation="14" flood-color="#00265c" flood-opacity=".28"/></filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#l6bbg)"/><rect width="1024" height="1024" rx="224" fill="url(#l6bhi)"/>
+  <g filter="url(#l6bdrop)">
+    <rect x="292" y="220" width="440" height="330" rx="44" fill="#fff" opacity=".9"/>
+    <path d="M326 268 512 410 698 268" fill="none" stroke="#0066d6" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="232" y="500" width="560" height="300" rx="52" fill="url(#l6bpaper)"/>
+    <rect x="188" y="440" width="648" height="116" rx="42" fill="#fff"/>
+  </g>
+  <g transform="translate(512.5 674) scale(0.5)" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke="#0066d6" stroke-width="24.0" opacity=".8">
+    <path d="M-72 6C-94 -46 -66 -104 0 -106C64 -105 92 -48 74 2"/>
+    <path d="M-84 -74C-130 -118 -214 -100 -214 -24C-214 40 -168 76 -112 58"/>
+    <path d="M86 -72C132 -114 214 -96 212 -20C210 42 166 74 112 56"/>
+    <path d="M-30 6C-28 66 -24 118 2 120C24 122 34 106 28 86C24 62 28 32 32 4"/>
+    <circle cx="-42" cy="-46" r="9" fill="#0066d6" stroke="none"/>
+    <circle cx="43" cy="-48" r="9" fill="#0066d6" stroke="none"/>
+  </g>
+</svg>

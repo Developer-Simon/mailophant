@@ -1,0 +1,111 @@
+'use strict';
+
+const path = require('node:path');
+const nodeFs = require('node:fs/promises');
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { findSystemPython } = require('./python-locator');
+const { ensureVenv } = require('./venv-manager');
+
+const PYPFF_CHECK_TIMEOUT_MS = 30 * 1000;
+const FULL_HINT = 'Die „full“-Variante der App bringt Python mit.';
+
+const execFileAsync = promisify(execFile);
+
+/** @type {(file: string, args: string[], opts: { timeout: number }) => Promise<{ stdout: string, stderr: string }>} */
+const defaultRun = (file, args, opts) => execFileAsync(file, args, { ...opts, windowsHide: true });
+
+async function defaultExists(p) {
+  try {
+    await nodeFs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pfad zum mitgelieferten Python.
+ * @param {string} resourcesDir
+ * @param {string} [platform]
+ */
+function bundledPython(resourcesDir, platform = process.platform) {
+  return platform === 'win32'
+    ? path.win32.join(resourcesDir, 'python', 'python.exe')
+    : path.posix.join(resourcesDir, 'python', 'bin', 'python3');
+}
+
+class RuntimeUnavailableError extends Error {
+  /**
+   * @param {{ cmd: string[], reason: string }[]} rejected alle Ablehnungsgründe
+   */
+  constructor(rejected) {
+    const lines = rejected.map((r) => `  - ${r.cmd.join(' ')}: ${r.reason}`);
+    const details = lines.length > 0 ? lines.join('\n') : '  (keine Kandidaten gefunden)';
+    super(
+      'Kein nutzbares Python gefunden.\n' +
+        `Geprüft wurde:\n${details}\n` +
+        `Bitte Python 3.10 oder neuer mit venv installieren. ${FULL_HINT}`,
+    );
+    this.name = 'RuntimeUnavailableError';
+    this.rejected = rejected;
+  }
+}
+
+/**
+ * Prüft, ob pypff im mitgelieferten Python importierbar ist.
+ * @returns {Promise<boolean>}
+ */
+async function checkPypff(run, python) {
+  try {
+    await run(python, ['-c', 'import pypff'], { timeout: PYPFF_CHECK_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wählt den Interpreter: zuerst System-Python mit venv, sonst das mitgelieferte.
+ * @param {{ userDataDir: string, resourcesDir: string, onProgress?: (m: string) => void,
+ *           deps?: { find?: Function, ensure?: Function, exists?: Function, run?: Function } }} opts
+ * @returns {Promise<{ python: string[], mode: 'system' | 'bundled', pypff: boolean }>}
+ */
+async function resolveRuntime({ userDataDir, resourcesDir, onProgress, deps = {} }) {
+  const find = deps.find ?? (() => findSystemPython());
+  const ensure = deps.ensure ?? ensureVenv;
+  const exists = deps.exists ?? defaultExists;
+  const run = deps.run ?? defaultRun;
+
+  const rejected = [];
+
+  const found = await find();
+  if (found.python) {
+    try {
+      const venv = await ensure({
+        probe: found.python,
+        venvDir: path.join(userDataDir, 'venv'),
+        onProgress,
+      });
+      return { python: [venv.python], mode: 'system', pypff: venv.pypff };
+    } catch (err) {
+      rejected.push(...(found.rejected ?? []));
+      rejected.push({
+        cmd: found.python.cmd,
+        reason: `venv fehlgeschlagen: ${err && err.message ? err.message : err}`,
+      });
+    }
+  } else {
+    rejected.push(...(found.rejected ?? []));
+  }
+
+  const bundled = bundledPython(resourcesDir);
+  if (await exists(bundled)) {
+    const pypff = await checkPypff(run, bundled);
+    return { python: [bundled], mode: 'bundled', pypff };
+  }
+
+  throw new RuntimeUnavailableError(rejected);
+}
+
+module.exports = { bundledPython, resolveRuntime, RuntimeUnavailableError };

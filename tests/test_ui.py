@@ -342,3 +342,38 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(run_js("transferPayload(['s1/a'], 's3', 'L1', {name: 'N', parent: null})"), {
             "items": [{"source": "s1", "id": "a"}], "archive": "s3",
             "folder": "L1", "new_folder": {"name": "N", "parent": None}})
+
+
+INDEX_HTML = Path(__file__).resolve().parent.parent / 'static' / 'index.html'
+
+
+def run_electron_detect(user_agent: str, platform: str):
+    # The detection script sits inline in index.html, before the stylesheet, so it runs before the first render.
+    html = INDEX_HTML.read_text(encoding='utf-8')
+    body = html[html.index('<script id="electron-detect">') + len('<script id="electron-detect">'):]
+    body = body[:body.index('</script>')]
+    code = (f"const out = [];\nconst navigator = {json.dumps({'userAgent': user_agent, 'platform': platform})};\n"
+            f"const document = {{ documentElement: {{ classList: {{ add: (...c) => out.push(...c) }} }} }};\n"
+            f"{body}\nprocess.stdout.write(JSON.stringify(out));")
+    out = subprocess.run(['node', '-e', code], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class ElectronDetectTest(unittest.TestCase):
+    ELECTRON_MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Electron/38.0.0 Safari/537.36'
+    ELECTRON_WIN = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Electron/38.0.0 Safari/537.36'
+    ELECTRON_LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Electron/38.0.0 Safari/537.36'
+    BROWSER = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138.0.0.0 Safari/537.36'
+
+    def test_no_classes_outside_electron(self):
+        self.assertEqual(run_electron_detect(self.BROWSER, 'Linux x86_64'), [])
+        self.assertEqual(run_electron_detect('Mozilla/5.0 (Macintosh)', 'MacIntel'), [])
+
+    def test_platform_classes(self):
+        self.assertEqual(run_electron_detect(self.ELECTRON_MAC, 'MacIntel'), ['electron', 'platform-mac'])
+        self.assertEqual(run_electron_detect(self.ELECTRON_WIN, 'Win32'), ['electron', 'platform-win'])
+        self.assertEqual(run_electron_detect(self.ELECTRON_LINUX, 'Linux x86_64'), ['electron', 'platform-linux'])
+
+    def test_falls_back_to_user_agent_without_platform(self):
+        self.assertEqual(run_electron_detect(self.ELECTRON_MAC, ''), ['electron', 'platform-mac'])

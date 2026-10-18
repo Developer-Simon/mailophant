@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -473,6 +474,33 @@ class TestPypff(unittest.TestCase):
             self.assertEqual(len(emls), report.imported)
             for mid in emls:
                 self.assertIsNone(mailparse.load_message(dest, mid, {})["error"])
+
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def read_install_hint(env_value: str | None) -> str:
+    """Import INSTALL_HINT in a fresh interpreter with the given env value (None = unset)."""
+    env = dict(os.environ)
+    env.pop("MAILVIEWER_INSTALL_HINT", None)
+    if env_value is not None:
+        env["MAILVIEWER_INSTALL_HINT"] = env_value
+    result = subprocess.run(
+        [sys.executable, "-c", "from mailviewer.outlook import INSTALL_HINT; print(INSTALL_HINT)"],
+        env=env, cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    return result.stdout.rstrip("\n")
+
+
+class InstallHintTest(unittest.TestCase):
+    def test_install_hint_default_mentions_pip(self):
+        self.assertIn("libpff-python", read_install_hint(None))
+
+    def test_install_hint_overridable_by_env(self):
+        self.assertEqual(read_install_hint("Eigener Hinweis"), "Eigener Hinweis")
+
+    def test_install_hint_empty_env_falls_back_to_default(self):
+        self.assertIn("libpff-python", read_install_hint(""))
 
 
 if __name__ == "__main__":

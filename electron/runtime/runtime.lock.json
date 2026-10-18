@@ -1,0 +1,22 @@
+{
+  "release": "20261013",
+  "python": "3.13.16",
+  "targets": {
+    "linux-x64": {
+      "asset": "cpython-3.13.16+20261013-x86_64-unknown-linux-gnu-install_only.tar.gz",
+      "sha256": "e588e50db882fa6a89f926d9a9ad64e445183af0eda5bda226a2c151b17db8a6"
+    },
+    "darwin-arm64": {
+      "asset": "cpython-3.13.16+20261013-aarch64-apple-darwin-install_only.tar.gz",
+      "sha256": "ca0e6a70fb75a0984751bd75493e3de77680aef7fbd0fea9b903c299537b3423"
+    },
+    "darwin-x64": {
+      "asset": "cpython-3.13.16+20261013-x86_64-apple-darwin-install_only.tar.gz",
+      "sha256": "d1f2e7b5f0cfa25fc856fea819890bbe722f47a692e5ce2552636b5240930b38"
+    },
+    "win32-x64": {
+      "asset": "cpython-3.13.16+20261013-x86_64-pc-windows-msvc-install_only.tar.gz",
+      "sha256": "e1f9233e780fbe951e531b0eb207d794e1c3fb39d523a6f481f4fc01ef2b6ca5"
+    }
+  }
+}

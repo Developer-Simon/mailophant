@@ -1,0 +1,35 @@
+# Slim-Variante: ohne Python-Interpreter, der Viewer nutzt ein System-Python mit venv.
+# Die full-Variante steht in electron-builder.full.yml und erweitert diese Datei.
+appId: de.mailophant.app
+productName: Mailophant
+directories:
+  output: dist/slim
+  buildResources: assets
+files:
+  - src/**/*
+  - assets/**/*
+  - package.json
+extraResources:
+  - from: ../mailviewer
+    to: mailviewer
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+  - from: ../static
+    to: static
+    filter:
+      - "**/*"
+      - "!**/__pycache__/**"
+      - "!**/*.pyc"
+linux:
+  target: AppImage
+  icon: assets/icon.png
+  category: Office
+  artifactName: "${productName}-${version}-${arch}-slim.${ext}"
+mac:
+  target: dmg
+  artifactName: "${productName}-${version}-${arch}-slim.${ext}"
+win:
+  target: nsis
+  artifactName: "${productName}-${version}-${arch}-slim.${ext}"

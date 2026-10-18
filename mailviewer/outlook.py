@@ -20,9 +20,10 @@ BOUNDARY_PREFIX = "=_mbv_"
 RTF_NAME = "Nachricht.rtf"
 TMP_EML = ".tmp.eml"
 MAIL_CLASS_PREFIXES = ("ipm.note", "ipm.schedule.meeting", "report.ipm.note")
-INSTALL_HINT = ("Für den Outlook-Import fehlt das Python-Modul pypff. Installieren mit: "
-                "python3 -m venv .venv && .venv/bin/pip install libpff-python, "
-                "danach den Viewer neu starten.")
+INSTALL_HINT = (os.environ.get("MAILVIEWER_INSTALL_HINT")
+                or ("Für den Outlook-Import fehlt das Python-Modul pypff. Installieren mit: "
+                    "python3 -m venv .venv && .venv/bin/pip install libpff-python, "
+                    "danach den Viewer neu starten."))
 NO_MAIL_HINT = ("In der Datei wurden keine lesbaren Mails gefunden. Bei einer OST-Datei: "
                 "in Outlook als PST exportieren und diese importieren.")
 NO_MAILBOX_MSG = "Im Postfach wurde kein Posteingang gefunden."

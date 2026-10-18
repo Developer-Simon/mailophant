@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Startet den Mail-Backup-Viewer und öffnet ihn im Browser.
+# Startet Mailophant (Viewer) und öffnet ihn im Browser.
 # Usage: ./start.sh [--no-window] [--port PORT] [LIBRARY_DIR]
 #   --no-window  Browser nicht automatisch öffnen
 #   LIBRARY_DIR  optional; ohne Angabe gilt die gemerkte Bibliothek, sonst fragt der Viewer im Browser

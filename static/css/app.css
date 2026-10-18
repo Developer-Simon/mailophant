@@ -19,6 +19,7 @@
   --spring: linear(0, .092 6.3%, .268 12.5%, .447 18.8%, .599 25%, .718 31.3%, .805 37.5%, .868 43.8%, .911 50%, .941 56.3%, .961 62.5%, .975 68.8%, .984 75%, .989 81.3%, .993 87.5%, .996 93.8%, 1);
   --blur: blur(20px) saturate(180%);
   --list-head: 4.75rem;
+  --titlebar-h: 36px;
   /* type scale (size only; weight, line height and tracking live on the selectors) */
   --fs-caption: .6875rem; --fs-footnote: .75rem; --fs-body: .8125rem; --fs-headline: .8125rem;
   --fs-callout: .9375rem; --fs-title: 1.375rem; --fs-dialog-title: 1.0625rem;
@@ -431,6 +432,29 @@ button.copy:active { background: var(--fill-press); }
   #reader { padding: 0 1rem; }
   #reader-nav { display: flex; align-items: center; position: sticky; top: 0; z-index: 4; flex: none; height: 2.5rem; margin: 0 -1rem; padding: 0 1rem; background: var(--material); backdrop-filter: var(--blur); box-shadow: 0 1px 0 var(--separator); }
   #m-bar { top: 2.5rem; margin: 0 -1rem -2.75rem; padding: 0 1rem; }
+}
+
+/* ---------- Electron: own title bar (only in the Electron shell, see the detection script in index.html) ---------- */
+#titlebar { display: none; }
+html.electron body { padding-top: var(--titlebar-h); }
+html.electron .app { height: calc(100vh - var(--titlebar-h)); }
+/* The bar is solid, not material: nothing scrolls beneath it (the app starts below it), and the Windows/Linux
+   overlay colours are solid too (chromeColors in electron/src/main.js), so a translucent bar would not match them.
+   It holds no controls, so the whole bar is a drag region. Sheets are top-layer and their backdrop covers the bar. */
+html.electron #titlebar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 11; /* above the narrow-screen dimming, below the dialogs' top layer */
+  display: flex; align-items: center; justify-content: center; gap: .375rem; height: var(--titlebar-h);
+  padding-inline: 8.75rem; /* 140 px: the Windows/Linux window buttons sit on the right, the title stays centred */
+  background: var(--sidebar); box-shadow: 0 1px 0 var(--separator);
+  color: var(--label-2); font-size: var(--fs-footnote); font-weight: 600; line-height: 1.35;
+  -webkit-app-region: drag; user-select: none;
+}
+html.electron.platform-mac #titlebar { padding-inline: 5.25rem; } /* 80 px traffic lights on the left */
+#titlebar-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.titlebar-icon { flex: none; width: 16px; height: 16px; }
+@media (max-width: 900px) {
+  html.electron .app { height: calc(100dvh - var(--titlebar-h)); }
+  html.electron .edge-swipe { height: calc(100dvh - var(--titlebar-h)); margin-bottom: calc(var(--titlebar-h) - 100dvh); }
 }
 
 /* ---------- Accessibility ---------- */

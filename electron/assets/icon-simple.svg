@@ -1,0 +1,13 @@
+<!-- Mailophant, vereinfacht (ohne Elefant) für Favicon und Titelleiste. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="l6bbg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a7fe8"/><stop offset="1" stop-color="#0058c0"/></linearGradient>
+    <linearGradient id="l6bhi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".16"/><stop offset=".4" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="l6bpaper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e3eefb"/></linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#l6bbg)"/><rect width="1024" height="1024" rx="224" fill="url(#l6bhi)"/>
+  <rect x="292" y="220" width="440" height="330" rx="44" fill="#fff" opacity=".9"/>
+  <path d="M326 268 512 410 698 268" fill="none" stroke="#0066d6" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="232" y="500" width="560" height="300" rx="52" fill="url(#l6bpaper)"/>
+  <rect x="188" y="440" width="648" height="116" rx="42" fill="#fff"/>
+</svg>

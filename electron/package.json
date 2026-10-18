@@ -1,0 +1,18 @@
+{
+  "name": "mailophant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron-Hülle für Mailophant",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node scripts/start.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "build:runtime": "node runtime/build-runtime.js",
+    "dist:slim": "electron-builder --config electron-builder.yml",
+    "dist:full": "electron-builder --config electron-builder.full.yml"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  }
+}
