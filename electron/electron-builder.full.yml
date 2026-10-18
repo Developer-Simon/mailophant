@@ -30,10 +30,17 @@ extraResources:
 linux:
   # Flatpak nur hier: in der Sandbox gibt es kein System-Python, die slim-Variante liefe dort nicht.
   target: [AppImage, flatpak]
-  icon: assets/icon.png
+  # Einzelne Größen bis 512 px: Flatpak nimmt keine größeren Icons an, nur mit icon.png fehlte es dort ganz.
+  icon: assets/icons
   category: Office
+  desktop:
+    entry:
+      "Comment[de]": Proton-Mail- und Outlook-Backups lesen, durchsuchen, taggen und archivieren
   artifactName: "${productName}-${version}-${arch}-full.${ext}"
 flatpak:
+  desktop:
+    entry:
+      "Comment[de]": Proton-Mail- und Outlook-Backups lesen, durchsuchen, taggen und archivieren
   runtimeVersion: "26.08"
   baseVersion: "26.08"
   finishArgs:

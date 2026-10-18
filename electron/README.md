@@ -45,6 +45,10 @@ Hinweis: Paketieren für macOS und Windows geht nur auf dem jeweiligen Betriebss
   cd electron
   magick -background none -density 96 assets/icon.svg -resize 1024x1024 -depth 8 PNG32:assets/icon.png
   magick assets/icon.png -resize 512x512 -depth 8 PNG32:assets/icon-512.png
+  # Linux (AppImage, Flatpak): einzelne Größen bis 512 px, Flatpak lehnt größere ab
+  for s in 16 24 32 48 64 128 256 512; do
+    magick -background none -density 96 assets/icon.svg -resize ${s}x${s} -depth 8 PNG32:assets/icons/${s}x${s}.png
+  done
   ```
 
 - **Fenster**: rahmenlos mit eigener, 36 px hoher Kopfzeile. Auf macOS liegt die Ampel darin, unter Windows und Linux die Overlay-Buttons. Die Web-Oberfläche gestaltet die Leiste über `html.electron`. Die Farben in `src/main.js` (`chromeColors`) entsprechen `--sidebar` und `--label` aus `static/css/app.css`; auf Windows und Linux folgen sie dem System-Theme.

@@ -24,8 +24,12 @@ extraResources:
       - "!**/*.pyc"
 linux:
   target: AppImage
-  icon: assets/icon.png
+  # Einzelne Größen bis 512 px: Flatpak nimmt keine größeren Icons an, nur mit icon.png fehlte es dort ganz.
+  icon: assets/icons
   category: Office
+  desktop:
+    entry:
+      "Comment[de]": Proton-Mail- und Outlook-Backups lesen, durchsuchen, taggen und archivieren
   artifactName: "${productName}-${version}-${arch}-slim.${ext}"
 mac:
   target: dmg
