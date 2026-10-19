@@ -241,6 +241,7 @@
   "ui.fetch.password": "Password",
   "ui.fetch.retry": "Try again",
   "ui.fetch.running": "Fetching…",
+  "ui.fetch.running_progress": "Fetching… {percent}%",
   "ui.fetch.start": "Start fetch",
   "ui.fetch.title": "Fetch mails",
   "ui.fetch.totp": "2FA code (optional)",

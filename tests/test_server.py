@@ -458,12 +458,18 @@ print("echo", pw, quote(pw, safe=""), json.dumps(pw)[1:-1], flush=True)
 if MODE == "fail":
     print("login failed", file=sys.stderr)
     sys.exit(3)
-if MODE == "sleep":
-    time.sleep(1)
 if MODE in ("ok", "sleep", "dup"):
     # like CLI 1.0.7: a backup ignores ET_DIR and asks on stdin unless --dir is given
     if len(sys.argv) != 3 or sys.argv[1] != "--dir":
         sys.exit(6)
+    # repaints like CLI 1.0.7: spinner steps, then the progress bar; 42.50 twice, so the first is a complete line
+    sys.stdout.write("".join("\\r" + c + " Logging In" + " " * 30 for c in "-\\\\|/-") + "\\n")
+    sys.stdout.write("Starting Export - Path=x\\n\\r[00.00%][" + " " * 50 + "]" + " " * 7)
+    sys.stdout.write("\\r[05.00%][|||" + " " * 47 + "]" + ("\\r[42.50%][" + "|" * 22 + " " * 28 + "]") * 2)
+    sys.stdout.flush()
+    if MODE == "sleep":
+        time.sleep(1)
+    print("\\r[100.00%][" + "|" * 50 + "]\\nExport Finished", flush=True)
     out = os.path.join(sys.argv[2], env["ET_USER_EMAIL"], "mail_20261015T120000")
     os.makedirs(out)
     labels = {"Payload": [{"ID": "0", "Name": "Inbox", "Path": "Inbox", "Color": "#111", "Type": 3}]}
@@ -556,6 +562,20 @@ class ResolveTests(unittest.TestCase):
         write(os.path.join(root, "a", "b", CLI_NAME), "not executable")  # skipped
         self.assertEqual(exports.find_cli(near), cli)
         self.assertIsNone(exports.find_cli(deep))
+
+    def test_cli_text_drops_spinner_and_padding(self):
+        self.assertEqual(exports.cli_text("\\ Logging In     \n"), "Logging In")
+        self.assertEqual(exports.cli_text("- x"), "x")
+        self.assertEqual(exports.cli_text("-x"), "-x")
+        self.assertEqual(exports.cli_text("Export Finished\n"), "Export Finished")
+
+    def test_cli_progress(self):
+        bar = "[" + "|" * 22 + " " * 28 + "]"
+        self.assertEqual(exports.cli_progress("[42.50%]" + bar), 42.5)
+        self.assertEqual(exports.cli_progress("[05.00%]" + bar), 5.0)
+        self.assertEqual(exports.cli_progress("[100.00%]" + bar), 100.0)
+        self.assertIsNone(exports.cli_progress("Starting Export - Path=[1%]"))
+        self.assertIsNone(exports.cli_progress("Can't connect to proton servers. Retrying..."))
 
     def test_free_name(self):
         os.makedirs(os.path.join(self.tmp, "mail_1"))
@@ -784,6 +804,22 @@ class FetchTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.account, NEW)))
         self.assertEqual(sorted(os.listdir(os.path.join(self.account, OLD))), self.old_files)
         self.assertEqual([n for n in os.listdir(self.account) if n.startswith(".fetch-")], [])
+
+    def test_cli_progress_feeds_the_job_not_the_log(self):
+        self.serve(mode="sleep")
+        self.post({"password": PW})
+        deadline = time.monotonic() + 5
+        while True:
+            _, st = self.get("/api/job")
+            if st["progress"] and st["progress"].get("unit") == "percent":
+                break
+            self.assertLess(time.monotonic(), deadline, st)
+            time.sleep(0.02)
+        self.assertEqual(st["progress"], {"done": 42.5, "total": 100, "unit": "percent"})
+        log = texts(self.wait_fetch()["log"])
+        self.assertEqual(log.count("Logging In"), 1, log)  # spinner repaints collapse into one line
+        self.assertIn("Export Finished", log)
+        self.assertFalse([line for line in log if "%]" in line or not line.strip()], log)
 
     def test_fetch_syncs_index_so_new_mail_is_listed(self):
         self.serve()

@@ -5,12 +5,16 @@ from __future__ import annotations
 import filecmp
 import json
 import os
+import re
 from urllib.parse import quote
 
 from mailviewer.cleanup import is_regular, remove_quiet
 from mailviewer.store import META_SUFFIX
 
 CLI_NAME = "proton-mail-export-cli"
+# The CLI repaints its progress bar after a \r: "[42.50%][|||||     ]", below 10 % as "[05.00%]"
+CLI_PROGRESS = re.compile(r"\[(\d{1,3}(?:\.\d+)?)%\]")
+CLI_SPINNER = "-\\|/"  # leading char of the repainted "- Logging In" lines while a step runs
 
 
 def mail_dirs(parent: str) -> list[str]:
@@ -72,6 +76,20 @@ def cli_env(email: str, tmp: str, password: str, mailbox: str, totp: str) -> dic
     if totp:
         env["ET_TOTP_CODE"] = totp
     return env
+
+
+def cli_text(segment: str) -> str:
+    """One repaint or line of CLI output without its spinner char and the trailing padding."""
+    text = segment.rstrip()
+    if len(text) > 2 and text[0] in CLI_SPINNER and text[1] == " ":
+        text = text[2:]
+    return text
+
+
+def cli_progress(text: str) -> float | None:
+    """Percent shown by a progress bar repaint of the CLI, None for any other output."""
+    m = CLI_PROGRESS.match(text)
+    return min(100.0, float(m.group(1))) if m else None
 
 
 def redact(text: str, secrets: list[str]) -> str:

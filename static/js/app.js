@@ -1582,6 +1582,22 @@ function showProgress() {
   $('fetch-progress').hidden = false;
   $('fetch-retry').hidden = true;
   $('fetch-status').textContent = t('ui.fetch.running');
+  $('fetch-bar-box').hidden = false;
+  renderBar($('fetch-bar-box'), $('fetch-bar'), null);
+}
+
+// Bar: scaled to done/total when the total is known, otherwise an indeterminate sweep.
+function renderBar(box, bar, progress) {
+  const total = progress?.total || 0;
+  box.classList.toggle('indeterminate', total === 0);
+  bar.style.transform = total === 0 ? '' : `scaleX(${Math.min(1, (progress.done || 0) / total)})`;
+}
+
+// A running fetch: the share the export CLI reports, then the counts of the index sync.
+function fetchStatusText(progress) {
+  if (progress?.unit === 'percent') return t('ui.fetch.running_progress', { percent: Math.floor(progress.done) });
+  if (progress) return t('ui.job.indexing_progress', { done: progress.done, total: progress.total });
+  return t('ui.fetch.running');
 }
 
 function showWarn(msg) {
@@ -1615,17 +1631,14 @@ function renderJob(st) {
   $('job-status').hidden = !running;
   if (running) {
     const prog = st.progress ? ` ${st.progress.done}/${st.progress.total}` : '';
-    $('job-text').textContent = fetching ? t('ui.fetch.running')
+    $('job-text').textContent = fetching ? fetchStatusText(st.progress)
       : st.kind === 'import' ? t('ui.job.importing', { progress: prog })
       : st.kind === 'cleanup' ? t('ui.job.cleaning')
       : st.kind === 'cli_install' ? t('ui.job.cli_installing')
       : st.kind === 'archive' ? t('ui.job.archiving', { progress: prog })
       : st.progress ? t('ui.job.indexing_progress', { done: st.progress.done, total: st.progress.total }) : t('ui.job.indexing');
     $('job-last').textContent = I18N.msgText((st.log || []).at(-1));
-    // Bar: scaled to done/total when the total is known, otherwise an indeterminate sweep.
-    const total = st.progress?.total || 0;
-    $('job-progress').classList.toggle('indeterminate', total === 0);
-    $('job-bar').style.transform = total === 0 ? '' : `scaleX(${Math.min(1, (st.progress.done || 0) / total)})`;
+    renderBar($('job-progress'), $('job-bar'), st.progress);
   }
   $('job-error').hidden = st.state !== 'error';
   $('job-error-text').textContent = st.state === 'error' ? (I18N.msgText(st.message) || t('ui.job.failed')) : '';
@@ -1688,6 +1701,8 @@ function updateFetchDialog(st) {
       showProgress();
       showWarn('');
     }
+    $('fetch-status').textContent = fetchStatusText(st.progress);
+    renderBar($('fetch-bar-box'), $('fetch-bar'), st.progress);
     renderLog(st);
     return;
   }
@@ -1699,11 +1714,13 @@ function updateFetchDialog(st) {
   renderLog(st);
   if (st.state === 'done') {
     $('fetch-status').textContent = t('ui.fetch.done');
+    renderBar($('fetch-bar-box'), $('fetch-bar'), { done: 1, total: 1 });
     showWarn('');
     clearTimeout(closeTimer);
     closeTimer = setTimeout(closeFetchDialog, 1500);
   } else if (st.state === 'error') {
     $('fetch-status').textContent = t('ui.fetch.failed_status');
+    $('fetch-bar-box').hidden = true;
     showWarn(I18N.msgText(st.message) || t('ui.fetch.failed'));
     $('fetch-retry').hidden = false;
   } else {

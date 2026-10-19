@@ -360,6 +360,7 @@ button.copy:active { background: var(--fill-press); }
 .hint { color: var(--label-2); font-size: var(--fs-footnote); line-height: 1.35; }
 .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
 #fetch-status { margin: 0 0 .5rem; }
+#fetch-bar-box { margin: 0 0 .75rem; }
 #fetch-log { margin: 0; height: 15rem; max-height: 40vh; overflow: auto; padding: .5rem .625rem; border: 0; border-radius: var(--radius-m); background: var(--content-2); font: .75rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- Verzeichnis-Auswahl ---------- */

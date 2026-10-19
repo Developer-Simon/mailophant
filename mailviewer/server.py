@@ -43,7 +43,7 @@ from mailviewer.archive import (
 from mailviewer.browse import browse
 from mailviewer.config import default_config_path, load_language, load_legacy, load_saved, update_config
 from mailviewer.exports import (
-    account_dir_of, account_email, cli_env, dedupe_with_previous, find_cli, is_executable, mail_dirs, newest_fetched,
+    account_dir_of, account_email, cli_env, cli_progress, cli_text, dedupe_with_previous, find_cli, is_executable, mail_dirs, newest_fetched,
     redact, resolve_mail_dir,
 )
 from mailviewer.mailparse import attachment_headers, attachment_name, attachment_payload, get_attachment, load_message, preview_type
@@ -270,6 +270,11 @@ class Job:
     def progress(self, done: int, total: int) -> None:
         with self._lock:
             self._state["progress"] = {"done": done, "total": total}
+
+    def percent(self, value: float) -> None:
+        """Progress known only as a share, like that of the export CLI."""
+        with self._lock:
+            self._state["progress"] = {"done": value, "total": 100, "unit": "percent"}
 
     def status(self) -> Json:
         with self._lock:
@@ -945,9 +950,16 @@ class Viewer:
         proc = subprocess.Popen([cli, "--dir", env["ET_DIR"]], env=env, stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                 encoding="utf-8", errors="replace")
+        last = None
         with proc:
-            for line in proc.stdout:
-                self.job.log(raw(redact(line.rstrip("\r\n"), secrets)))
+            for line in proc.stdout:  # text mode splits at \r too, so each repaint arrives on its own
+                text = redact(cli_text(line), secrets)
+                percent = cli_progress(text)
+                if percent is not None:
+                    self.job.percent(percent)
+                elif text and text != last:  # a step repaints its line every 500 ms
+                    self.job.log(raw(text))
+                    last = text
             return proc.wait()
 
     def _link_previous(self, previous: str | None, dest: str) -> None:

@@ -241,6 +241,7 @@
   "ui.fetch.password": "Passwort",
   "ui.fetch.retry": "Erneut versuchen",
   "ui.fetch.running": "Abruf läuft…",
+  "ui.fetch.running_progress": "Abruf läuft… {percent} %",
   "ui.fetch.start": "Abrufen starten",
   "ui.fetch.title": "Mails abrufen",
   "ui.fetch.totp": "2FA-Code (optional)",
