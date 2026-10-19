@@ -1,6 +1,7 @@
 """Tests for protoncli.py. Downloads are served from in-memory archives, nothing touches the network."""
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -159,6 +160,28 @@ class InstallTests(unittest.TestCase):
         path = self.install()
         self.assert_refused("err.cli_download", open_=failing)
         self.assertEqual(protoncli.installed_cli(self.dir, LINUX), path)
+
+    def test_pinned_release_from_github(self):
+        urls = []
+        def open_(url):
+            urls.append(url)
+            return FakeResponse(LINUX_ARCHIVE)
+        sha = hashlib.sha256(LINUX_ARCHIVE).hexdigest()
+        with mock.patch.dict(protoncli.PINNED_SHA256, {LINUX: sha}), \
+                mock.patch.dict(os.environ, {"MAILOPHANT_CLI_PINNED": "1"}):
+            self.install(open_=open_)
+        self.assertEqual(urls, [protoncli.PINNED_URL + protoncli.ARCHIVES[LINUX][0]])  # no version.json
+        self.assertIn(f"/download/v{protoncli.PINNED_VERSION}/", urls[0])
+        self.assertEqual(protoncli.installed_info(self.dir, LINUX)["version"], protoncli.PINNED_VERSION)
+
+    def test_pinned_checksum_mismatch_keeps_previous_install(self):
+        path = self.install()
+        with mock.patch.dict(os.environ, {"MAILOPHANT_CLI_PINNED": "1"}):
+            self.assert_refused("err.cli_checksum")
+        self.assertEqual(protoncli.installed_cli(self.dir, LINUX), path)
+
+    def test_pinned_hashes_cover_every_archive(self):
+        self.assertEqual(protoncli.PINNED_SHA256.keys(), protoncli.ARCHIVES.keys())
 
     def test_unsupported_platform(self):
         with mock.patch.object(protoncli, "platform_key", return_value=None):

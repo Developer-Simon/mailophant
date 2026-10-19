@@ -4,8 +4,8 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>Mailophant</name>
-  <summary>Read, search, tag and archive your mail backups</summary>
-  <summary xml:lang="de">Mail-Backups lesen, durchsuchen, taggen und archivieren</summary>
+  <summary>Read and archive your mail backups</summary>
+  <summary xml:lang="de">Mail-Backups lesen und archivieren</summary>
   <developer id="io.github.developer_simon">
     <name>Developer-Simon</name>
   </developer>
@@ -44,19 +44,19 @@
   <screenshots>
     <screenshot type="default">
       <caption>All sources in one combined mailbox</caption>
-      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/overview.png</image>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/v0.1.0/docs/images/overview.png</image>
     </screenshot>
     <screenshot>
       <caption>Archives with nested folders</caption>
-      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/archive.png</image>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/v0.1.0/docs/images/archive.png</image>
     </screenshot>
     <screenshot>
       <caption>Attachment preview</caption>
-      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/preview.png</image>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/v0.1.0/docs/images/preview.png</image>
     </screenshot>
     <screenshot>
       <caption>Dark mode</caption>
-      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/overview-dark.png</image>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/v0.1.0/docs/images/overview-dark.png</image>
     </screenshot>
   </screenshots>
   <branding>
@@ -76,6 +76,19 @@
     <category>Email</category>
   </categories>
   <releases>
-    <release version="0.1.0" date="2026-10-18"/>
+    <release version="0.1.0" date="2026-10-18">
+      <description>
+        <p>First release.</p>
+        <p xml:lang="de">Erste Veröffentlichung.</p>
+        <ul>
+          <li>Proton exports, Outlook .pst/.ost files and Maildir folders in one library</li>
+          <li xml:lang="de">Proton-Exporte, Outlook-.pst/.ost-Dateien und Maildir-Ordner in einer Bibliothek</li>
+          <li>Fetch new mail with the official Proton Mail Export CLI</li>
+          <li xml:lang="de">Neue Mails über die offizielle Proton Mail Export CLI abholen</li>
+          <li>Archives with nested folders, full-text search, stars and tags</li>
+          <li xml:lang="de">Archive mit verschachtelten Ordnern, Volltextsuche, Sterne und Tags</li>
+        </ul>
+      </description>
+    </release>
   </releases>
 </component>

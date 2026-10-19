@@ -18,6 +18,8 @@ finish-args:
   - --device=dri
   - --socket=pulseaudio      # MP3 preview
   - --share=network          # Proton fetch and download of the export CLI
+  # Export CLI from the GitHub release protoncli.PINNED_VERSION, checked against its SHA-256, not proton.me's latest.
+  - --env=MAILOPHANT_CLI_PINNED=1
   - --talk-name=org.freedesktop.Notifications
   - --env=MAILOPHANT_PYTHON=/usr/bin/python3  # runtime's Python, pypff lives in /app
   # No filesystem access: library, sources and .pst files come through the system dialog (document portal).

@@ -1,8 +1,10 @@
 """Download and install the official Proton Mail Export CLI into Mailophant's data folder.
 
 Proton publishes one archive per platform under a fixed URL and no checksums, so the archive is
-trusted on the strength of HTTPS to proton.me. It is unpacked into a staging folder with every
-member checked (no absolute paths, no "..", no links), and only then swapped in as current/.
+trusted on the strength of HTTPS to proton.me. With MAILOPHANT_CLI_PINNED=1 (the Flatpak) it comes
+instead from the GitHub release PINNED_VERSION and must match the SHA-256 recorded here. It is
+unpacked into a staging folder with every member checked (no absolute paths, no "..", no links),
+and only then swapped in as current/.
 install.json next to it records where it came from and its SHA-256."""
 
 from __future__ import annotations
@@ -33,6 +35,15 @@ TIMEOUT = 60
 CURRENT = "current"
 MANIFEST = "install.json"
 
+PINNED_VERSION = "1.0.7"
+PINNED_URL = f"https://github.com/ProtonMail/proton-mail-export/releases/download/v{PINNED_VERSION}/"
+# SHA-256 of the release assets per platform key, as GitHub lists them for the tag.
+PINNED_SHA256 = {
+    "linux-x64": "350b7d9884c1fd75236d2902ecc5e5d4155f829c864817c6ad5e8907c9f06bd6",
+    "darwin": "98a077356909b177102307d200e81fe93954a281bc765be879df10e3864bfa1e",
+    "win-x64": "a9a22d1d5d8755cabe904e9645515c35a88aabe54a0b59eac399a3eef04ce139",
+}
+
 # (archive name, path of the executable inside it) per platform key.
 ARCHIVES = {
     "linux-x64": ("proton-mail-export-cli-linux_x86_64.tar.gz", "proton-mail-export-cli"),
@@ -53,6 +64,11 @@ def platform_key(system: str | None = None, machine: str | None = None) -> str |
     if system == "win32" and machine in ("x86_64", "amd64", "arm64"):  # arm64 runs it emulated
         return "win-x64"
     return None
+
+
+def pinned() -> bool:
+    """Whether to install the pinned GitHub release instead of Proton's latest download."""
+    return os.environ.get("MAILOPHANT_CLI_PINNED") == "1"
 
 
 def default_install_dir() -> str:
@@ -203,14 +219,16 @@ def _version(opener: Opener) -> str | None:
 
 
 def install(install_dir: str, log: Callable[[Msg], None], progress: Callable[[int, int], None],
-            opener: Opener = _open, key: str | None = None) -> str:
+            opener: Opener = _open, key: str | None = None, pin: bool | None = None) -> str:
     """Download the CLI for this platform and make it install_dir/current. Returns the executable.
-    The previous install stays in place until the new one is complete. Raises UserError."""
+    pin=None follows MAILOPHANT_CLI_PINNED. The previous install stays in place until the new one is
+    complete. Raises UserError."""
     key = key or platform_key()
     if key is None:
         raise UserError("err.cli_unsupported", platform=f"{sys.platform} {platform.machine()}")
+    pin = pinned() if pin is None else pin
     name, exe = ARCHIVES[key]
-    url = BASE_URL + name
+    url = (PINNED_URL if pin else BASE_URL) + name
     os.makedirs(install_dir, exist_ok=True)
     staging = tempfile.mkdtemp(prefix=".new-", dir=install_dir)
     archive = os.path.join(install_dir, f".{name}.part")
@@ -219,6 +237,8 @@ def install(install_dir: str, log: Callable[[Msg], None], progress: Callable[[in
         log(msg("log.cli_download", url=url))
         sha256, modified = _download(url, archive, opener, progress)
         log(msg("log.cli_downloaded", size=os.path.getsize(archive), sha256=sha256))
+        if pin and sha256 != PINNED_SHA256[key]:
+            raise UserError("err.cli_checksum", expected=PINNED_SHA256[key], actual=sha256)
         _extract(archive, name, staging)
         path = os.path.join(staging, *exe.split("/"))
         if not os.path.isfile(path):
@@ -231,7 +251,7 @@ def install(install_dir: str, log: Callable[[Msg], None], progress: Callable[[in
         os.replace(staging, current)
         staging = None
         manifest = {"url": url, "sha256": sha256, "last_modified": modified,
-                    "version": _version(opener), "installed": int(time.time())}
+                    "version": PINNED_VERSION if pin else _version(opener), "installed": int(time.time())}
         tmp = os.path.join(install_dir, MANIFEST + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(manifest, f)
