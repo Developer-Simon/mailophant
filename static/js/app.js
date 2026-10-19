@@ -1860,7 +1860,7 @@ function updateLibSubmit() {
     : mode === 'import' ? Boolean(dirState.file) && $('import-name').value.trim() !== '' && importAvailable()
       : dirState.openable;
   $('library-submit').disabled = libBusy || !ok;
-  $('library-create').disabled = libBusy;
+  $('library-create').disabled = libBusy || !dirState.path;
   $('library-import').disabled = libBusy;
 }
 
@@ -1878,6 +1878,39 @@ const humanSize = (n) => {
 function setLibBusy(busy) {
   libBusy = busy;
   $('library-cancel').disabled = busy;
+  updateLibSubmit();
+}
+
+function dirHint(data) {
+  return libMode() === 'import'
+    ? (importAvailable() ? t('ui.library.hint_import') : I18N.msgText(state.config?.install_hint))
+    : libMode() === 'library'
+    ? (data.library
+      ? t('ui.library.hint_lib_here')
+      : t('ui.library.hint_lib'))
+    : (data.openable
+      ? t('ui.library.hint_export_here')
+      : t('ui.library.hint_export'));
+}
+
+// Flatpak: the system dialog (file portal) replaces the folder list; the app sees only what is picked there.
+const nativePickerReady = Promise.resolve(window.mailophant?.nativePicker?.() ?? false).then(Boolean, () => false);
+
+async function pickNative() {
+  if (libBusy) return;
+  const isImport = libMode() === 'import';
+  const picked = await window.mailophant.pickPath({
+    kind: isImport ? 'outlook' : 'folder', title: $('library-title').textContent, filterName: t('ui.library.outlook_files'),
+  });
+  if (!picked) return;
+  if (!isImport) {
+    browseTo(picked);
+    return;
+  }
+  const name = picked.slice(picked.lastIndexOf('/') + 1);
+  dirState.file = picked;
+  $('dir-shown').textContent = name;
+  $('import-name').value = name.replace(/\.[^.]*$/, '');
   updateLibSubmit();
 }
 
@@ -1900,16 +1933,9 @@ async function browseTo(path) {
     file: null,
   });
   $('dir-path').value = data.path;
+  $('dir-shown').textContent = data.shown || data.path;
   $('dir-up').disabled = data.parent === null;
-  $('dir-hint').textContent = libMode() === 'import'
-    ? (importAvailable() ? t('ui.library.hint_import') : I18N.msgText(state.config?.install_hint))
-    : libMode() === 'library'
-    ? (data.library
-      ? t('ui.library.hint_lib_here')
-      : t('ui.library.hint_lib'))
-    : (data.openable
-      ? t('ui.library.hint_export_here')
-      : t('ui.library.hint_export'));
+  $('dir-hint').textContent = dirHint(data);
   updateLibSubmit();
   const dirItems = data.dirs.length || (data.files || []).length ? data.dirs.map((d) => {
     const btn = el('button', { type: 'button' }, [icon(d.library ? 'archivebox' : 'folder'), el('span', { text: d.name })]);
@@ -1966,8 +1992,25 @@ function openPicker(mode, required) {
   setLibBusy(false);
   if (!dlg.open) dlg.showModal();
   const savedError = isLib ? cfg.saved_error : null;
-  browseTo((mode === 'import' && dirState.path) || cfg.library || cfg.saved || cfg.home || '~').then(() => {
+  const warnSaved = () => {
     if (savedError) showLibWarn(t('ui.library.saved_unavailable', { detail: I18N.msgText(savedError) }));
+  };
+  nativePickerReady.then((native) => {
+    $('dir-bar').hidden = native;
+    $('dir-list').hidden = native;
+    $('dir-native').hidden = !native;
+    if (!native) {
+      browseTo((mode === 'import' && dirState.path) || cfg.library || cfg.saved || cfg.home || '~').then(warnSaved);
+      return;
+    }
+    // Only the open library is known to be reachable; anything else is picked in the system dialog.
+    $('dir-pick').textContent = isImport ? t('ui.library.pick_file') : t('ui.library.pick_folder');
+    Object.assign(dirState, { path: '', parent: null, openable: false, library: false, file: null });
+    $('dir-shown').textContent = t('ui.library.none_picked');
+    $('dir-hint').textContent = dirHint({});
+    updateLibSubmit();
+    if (isLib && cfg.library) browseTo(cfg.library).then(warnSaved);
+    else warnSaved();
   });
 }
 
@@ -2064,6 +2107,7 @@ showEmpty('none', t('ui.mail.none_selected')); // start: nothing selected yet
 $('search-icon').replaceChildren(icon('search'));
 // Notice and button icons are named in data-icon attributes (the close buttons carry aria-label).
 for (const slot of document.querySelectorAll('[data-icon]')) slot.replaceChildren(icon(slot.dataset.icon));
+$('dir-pick').addEventListener('click', pickNative);
 $('dir-up').addEventListener('click', () => { if (dirState.parent) browseTo(dirState.parent); });
 $('dir-home').addEventListener('click', () => browseTo(dirState.home || '~'));
 $('dir-go').addEventListener('click', () => browseTo($('dir-path').value.trim()));
@@ -2223,7 +2267,7 @@ function renderSettingsCliInstall() {
 }
 
 function renderSettingsLibrary() {
-  $('settings-library-path').textContent = state.config?.library || t('ui.mail.none');
+  $('settings-library-path').textContent = state.config?.library_shown || state.config?.library || t('ui.mail.none');
 }
 
 // Focus survives a redraw of the list: the same control of the same source, else the same control of

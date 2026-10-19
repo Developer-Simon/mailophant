@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.developer_simon.mailophant</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Mailophant</name>
+  <summary>Read, search, tag and archive your mail backups</summary>
+  <summary xml:lang="de">Mail-Backups lesen, durchsuchen, taggen und archivieren</summary>
+  <developer id="io.github.developer_simon">
+    <name>Developer-Simon</name>
+  </developer>
+  <description>
+    <p>
+      Mailophant keeps your Proton Mail exports and old Outlook files in one local library,
+      where you can read, search, tag and archive them like in a normal mail client.
+    </p>
+    <p xml:lang="de">
+      Mailophant hält deine Proton-Mail-Exporte und alte Outlook-Dateien in einer lokalen Bibliothek,
+      in der du sie wie in einem normalen Mailprogramm lesen, durchsuchen, taggen und archivieren kannst.
+    </p>
+    <ul>
+      <li>Proton exports, Outlook .pst files and Maildir folders in one combined mailbox</li>
+      <li xml:lang="de">Proton-Exporte, Outlook-.pst-Dateien und Maildir-Ordner in einem gemeinsamen Postfach</li>
+      <li>New mail straight from Proton with the official export tool</li>
+      <li xml:lang="de">Neue Mails direkt von Proton über das offizielle Export-Werkzeug</li>
+      <li>Archives with nested folders that keep what Proton deletes</li>
+      <li xml:lang="de">Archive mit verschachtelten Ordnern, die behalten, was in Proton gelöscht wird</li>
+      <li>Full-text search, stars and coloured tags across every source</li>
+      <li xml:lang="de">Volltextsuche, Sterne und farbige Tags über alle Quellen</li>
+      <li>Duplicates across backups are shown once</li>
+      <li xml:lang="de">Doppelte Mails aus mehreren Backups erscheinen nur einmal</li>
+    </ul>
+    <p>
+      Everything stays on your machine. Your exported mail files are only read.
+    </p>
+    <p xml:lang="de">
+      Alles bleibt auf deinem Rechner. Deine exportierten Mail-Dateien werden nur gelesen.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.developer_simon.mailophant.desktop</launchable>
+  <url type="homepage">https://github.com/Developer-Simon/mailophant</url>
+  <url type="bugtracker">https://github.com/Developer-Simon/mailophant/issues</url>
+  <url type="vcs-browser">https://github.com/Developer-Simon/mailophant</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>All sources in one combined mailbox</caption>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/overview.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Archives with nested folders</caption>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/archive.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Attachment preview</caption>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/preview.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Dark mode</caption>
+      <image>https://raw.githubusercontent.com/Developer-Simon/mailophant/main/docs/images/overview-dark.png</image>
+    </screenshot>
+  </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#8fc1f5</color>
+    <color type="primary" scheme_preference="dark">#0058c0</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <categories>
+    <category>Office</category>
+    <category>Email</category>
+  </categories>
+  <releases>
+    <release version="0.1.0" date="2026-10-18"/>
+  </releases>
+</component>

@@ -58,3 +58,9 @@ Thumbs.db
 .docs/
 .claude/worktrees/
 .claude/settings.local.json
+
+# --- Flatpak ---
+flatpak/build-dir/
+flatpak/.flatpak-builder/
+flatpak/repo/
+flatpak/build.log

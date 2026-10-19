@@ -364,6 +364,7 @@ button.copy:active { background: var(--fill-press); }
 
 /* ---------- Verzeichnis-Auswahl ---------- */
 .pathbar { display: flex; gap: .375rem; margin-bottom: .625rem; }
+#dir-native { align-items: center; }
 .pathbar input { flex: 1; font: .8125rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 #dir-list { margin: 0 0 .625rem; height: 17.5rem; overflow: auto; }
 #dir-list .group-row { padding: 0; }

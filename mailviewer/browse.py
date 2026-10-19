@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from mailviewer import portal
 from mailviewer.exports import mail_dirs
 from mailviewer.library import is_library
 
@@ -48,6 +49,7 @@ def browse(path: str, files: bool = False) -> Json:
                 continue
     result: Json = {
         "path": p,
+        "shown": portal.host_path(p),  # the host path behind a Flatpak portal path
         "parent": None if p == os.path.dirname(p) else os.path.dirname(p),
         "home": os.path.expanduser("~"),
         "openable": is_openable(p),

@@ -96,3 +96,18 @@ test('nichts vorhanden -> RuntimeUnavailableError mit Ablehnungsgrund', async ()
     return true;
   });
 });
+
+test('MAILOPHANT_PYTHON gesetzt -> dieser Interpreter ohne venv, mode bundled, pypff geprüft', async () => {
+  const { deps, calls } = fakes();
+  deps.env = { MAILOPHANT_PYTHON: '/usr/bin/python3' };
+  const result = await resolve(deps);
+  assert.deepEqual(result, { python: ['/usr/bin/python3'], mode: 'bundled', pypff: true });
+  assert.equal(calls.ensure.length, 0);
+  assert.deepEqual(calls.run.map((c) => c.file), ['/usr/bin/python3']);
+});
+
+test('MAILOPHANT_PYTHON ohne pypff -> pypff false', async () => {
+  const { deps } = fakes({ runError: new Error('No module named pypff') });
+  deps.env = { MAILOPHANT_PYTHON: '/usr/bin/python3' };
+  assert.equal((await resolve(deps)).pypff, false);
+});

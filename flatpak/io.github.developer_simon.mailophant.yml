@@ -1,0 +1,72 @@
+# Flatpak manifest for Flathub. Builds without network access: npm packages and Electron come from
+# generated-sources.json (flatpak-node-generator npm electron/package-lock.json), pypff from the sdist.
+# Building locally: see flatpak/README.md.
+id: io.github.developer_simon.mailophant
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '26.08'
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.node24
+command: mailophant
+separate-locales: false
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio      # MP3 preview
+  - --share=network          # Proton fetch and download of the export CLI
+  - --talk-name=org.freedesktop.Notifications
+  - --env=MAILOPHANT_PYTHON=/usr/bin/python3  # runtime's Python, pypff lives in /app
+  # No filesystem access: library, sources and .pst files come through the system dialog (document portal).
+  - --env=MAILOPHANT_NATIVE_PICKER=1
+
+modules:
+  - name: python3-libpff-python
+    buildsystem: simple
+    build-commands:
+      - pip3 install --verbose --no-index --find-links="file://${PWD}" --prefix=${FLATPAK_DEST}
+        --no-build-isolation libpff-python
+    sources:
+      - type: file
+        url: https://files.pythonhosted.org/packages/5e/88/4cbe38a6ebf9e9ab629827ef00a749d19ad7230cbd8dce7359fb675f5a51/libpff_python-20260926.tar.gz
+        sha256: be56440d7f214de912f9568fc94b1b7c0a10a131de21a7f4c7096ba5722b6e40
+
+  - name: mailophant
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/node24/bin
+      env:
+        XDG_CACHE_HOME: /run/build/mailophant/flatpak-node/cache
+        npm_config_cache: /run/build/mailophant/flatpak-node/npm-cache
+        npm_config_offline: 'true'
+    build-commands:
+      - cd electron && npm ci --offline
+      # Electron from the sources instead of the network: unpack the zip for the build architecture.
+      - unzip -q flatpak-node/cache/electron/electron-v*-linux-*.zip -d electron/electron-dist
+      - . flatpak-node/electron-builder-arch-args.sh &&
+        cd electron && npx electron-builder --config electron-builder.yml --linux dir $ELECTRON_BUILDER_ARCH_ARGS
+        -c.electronDist=electron-dist
+      - cp -a electron/dist/slim/linux*-unpacked ${FLATPAK_DEST}/mailophant
+      - install -Dm755 flatpak/mailophant.sh ${FLATPAK_DEST}/bin/mailophant
+      - install -Dm644 flatpak/${FLATPAK_ID}.desktop -t ${FLATPAK_DEST}/share/applications
+      - install -Dm644 flatpak/${FLATPAK_ID}.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo
+      - for s in 16 24 32 48 64 128 256 512; do
+          install -Dm644 electron/assets/icons/${s}x${s}.png ${FLATPAK_DEST}/share/icons/hicolor/${s}x${s}/apps/${FLATPAK_ID}.png;
+        done
+      - install -Dm644 electron/assets/icon.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
+    sources:
+      # For Flathub, replace with: type: git, url: https://github.com/Developer-Simon/mailophant.git, tag, commit
+      - type: dir
+        path: ..
+        skip:
+          - .git
+          - electron/node_modules
+          - electron/dist
+          - electron/build
+          - flatpak/build-dir
+          - flatpak/.flatpak-builder
+          - flatpak/repo
+      - generated-sources.json

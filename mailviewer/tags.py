@@ -9,6 +9,7 @@ import os
 import sqlite3
 import threading
 from typing import Any
+from mailviewer import portal
 from mailviewer.i18n import UserError
 
 SCHEMA_VERSION = 1
@@ -32,7 +33,8 @@ class TagStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._local = threading.local()
-        self._write_lock = threading.Lock()  # one writer at a time; readers stay lock-free (WAL)
+        self._write_lock = threading.Lock()  # one writer at a time; readers stay lock-free (WAL; on a portal path they wait out a commit)
+        portal.leave_wal(db_path)  # a library from outside the Flatpak, now opened through the portal
         con = self._conn()
         try:
             version = con.execute("PRAGMA user_version").fetchone()[0]
@@ -51,7 +53,7 @@ class TagStore:
         con = getattr(self._local, "con", None)
         if con is None:
             con = self._local.con = sqlite3.connect(self.db_path, timeout=30)
-            con.execute("PRAGMA journal_mode = WAL")
+            con.execute(f"PRAGMA journal_mode = {portal.journal_mode(self.db_path)}")
         return con
 
     def close(self) -> None:

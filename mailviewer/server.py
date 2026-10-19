@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from mailviewer import autoarchive, i18n, protoncli
+from mailviewer import autoarchive, i18n, portal, protoncli
 from mailviewer.i18n import Msg, UserError, detail, error_body, msg, raw
 from mailviewer.archive import (
     ALL_MAIL, check_name, create_folder, delete_folder, ensure_folder, is_system_folder, move_folder, rename_folder,
@@ -1529,6 +1529,7 @@ def make_handler(viewer: Viewer, static_dir: str) -> type[BaseHTTPRequestHandler
             return {
                 "configured": lib is not None,
                 "library": lib.root if lib is not None else None,
+                "library_shown": portal.host_path(lib.root) if lib is not None else None,
                 "saved": viewer.saved,
                 "saved_error": viewer.saved_error.to_json() if viewer.saved_error else None,
                 "legacy": load_legacy(viewer.config_path) if viewer.config_path else None,

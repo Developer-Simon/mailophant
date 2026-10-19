@@ -62,9 +62,10 @@ async function checkPypff(run, python) {
 }
 
 /**
- * Wählt den Interpreter: zuerst System-Python mit venv, sonst das mitgelieferte.
+ * Wählt den Interpreter: MAILOPHANT_PYTHON, wenn gesetzt (Flatpak: Python der Runtime, pypff im Paket),
+ * sonst System-Python mit venv, sonst das mitgelieferte.
  * @param {{ userDataDir: string, resourcesDir: string, onProgress?: (m: string) => void,
- *           deps?: { find?: Function, ensure?: Function, exists?: Function, run?: Function } }} opts
+ *           deps?: { find?: Function, ensure?: Function, exists?: Function, run?: Function, env?: object } }} opts
  * @returns {Promise<{ python: string[], mode: 'system' | 'bundled', pypff: boolean }>}
  */
 async function resolveRuntime({ userDataDir, resourcesDir, onProgress, deps = {} }) {
@@ -72,6 +73,12 @@ async function resolveRuntime({ userDataDir, resourcesDir, onProgress, deps = {}
   const ensure = deps.ensure ?? ensureVenv;
   const exists = deps.exists ?? defaultExists;
   const run = deps.run ?? defaultRun;
+  const env = deps.env ?? process.env;
+
+  if (env.MAILOPHANT_PYTHON) {
+    const fixed = env.MAILOPHANT_PYTHON;
+    return { python: [fixed], mode: 'bundled', pypff: await checkPypff(run, fixed) };
+  }
 
   const rejected = [];
 

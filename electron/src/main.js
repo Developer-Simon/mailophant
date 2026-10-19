@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('node:path');
-const { app, BrowserWindow, Menu, dialog, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, shell } = require('electron');
 const { resolveRuntime } = require('./resolve-runtime');
 const { findSystemPython } = require('./python-locator');
 const { ensureVenv } = require('./venv-manager');
@@ -10,8 +10,11 @@ const { runSmoke } = require('./smoke');
 const i18n = require('./i18n');
 const { t } = i18n;
 const { migrateLegacyConfig } = require('./legacy-config');
+const { registerPicker } = require('./native-picker');
 
-const WEB_PREFERENCES = { contextIsolation: true, nodeIntegration: false, sandbox: true };
+const WEB_PREFERENCES = {
+  contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(__dirname, 'preload.js'),
+};
 const TITLE = 'Mailophant';
 /** Höhe der eigenen Kopfzeile (Ampel/Overlay-Buttons sitzen darin). */
 const TITLEBAR_HEIGHT = 36;
@@ -397,6 +400,7 @@ function onBeforeQuit(event) {
 
 async function run() {
   await app.whenReady();
+  registerPicker({ ipcMain, dialog, isAllowed: (url) => serverUrl !== null && isSameOrigin(url) });
   nativeTheme.on('updated', applyChromeColors);
   try {
     await runExclusive(startup);

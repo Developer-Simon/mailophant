@@ -16,7 +16,7 @@ from email import policy
 from email.parser import BytesParser
 from typing import Any, Callable, Collection
 
-from mailviewer import tags
+from mailviewer import portal, tags
 
 META_SUFFIX = ".metadata.json"
 SCHEMA_VERSION = 3  # 2: FTS columns hold casefolded text; 3: labels.ord
@@ -159,7 +159,8 @@ class Store:
         self.db_path = db_path
         self.tags_db = tags_db if tags_db is not None else ":memory:"  # tests: empty tags, one per connection
         self._local = threading.local()
-        self._write_lock = threading.Lock()  # one writer at a time; readers stay lock-free (WAL)
+        self._write_lock = threading.Lock()  # one writer at a time; readers stay lock-free (WAL; on a portal path they wait out a commit)
+        portal.leave_wal(db_path)  # a library from outside the Flatpak, now opened through the portal
         con = self._conn()
         if con.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
             self.close()
@@ -182,7 +183,7 @@ class Store:
             con.execute("ATTACH DATABASE ? AS tags", (self.tags_db,))
             if self.tags_db == ":memory:":
                 tags.create_schema(con, "tags")
-            con.execute("PRAGMA journal_mode = WAL")
+            con.execute(f"PRAGMA journal_mode = {portal.journal_mode(self.db_path)}")
         return con
 
     def close(self) -> None:

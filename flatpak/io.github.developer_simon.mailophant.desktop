@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Mailophant
+Comment=Read, search, tag and archive your Proton Mail and Outlook backups
+Comment[de]=Proton-Mail- und Outlook-Backups lesen, durchsuchen, taggen und archivieren
+Exec=mailophant %U
+Icon=io.github.developer_simon.mailophant
+Terminal=false
+Categories=Office;Email;
+Keywords=mail;backup;archive;proton;outlook;pst;eml;
+Keywords[de]=Mail;Backup;Archiv;Proton;Outlook;PST;EML;
+StartupWMClass=Mailophant

@@ -151,11 +151,15 @@
   <h2 id="library-title" data-i18n="ui.library.title">Choose library</h2>
   <div id="library-warn" class="warn" role="alert" hidden></div>
   <form id="library-form">
-    <div class="pathbar">
+    <div id="dir-bar" class="pathbar">
       <button id="dir-up" class="icon-btn" type="button" title="Parent directory" data-i18n-title="ui.library.up" aria-label="Parent directory" data-i18n-aria-label="ui.library.up"></button>
       <button id="dir-home" class="icon-btn" type="button" title="Home directory" data-i18n-title="ui.library.home" aria-label="Home directory" data-i18n-aria-label="ui.library.home"></button>
       <input id="dir-path" name="path" type="text" spellcheck="false" autocomplete="off" aria-label="Path" data-i18n-aria-label="ui.library.path">
       <button id="dir-go" class="btn" type="button" data-i18n="ui.library.go">Go to</button>
+    </div>
+    <div id="dir-native" class="pathbar" hidden>
+      <button id="dir-pick" class="btn" type="button"></button>
+      <span id="dir-shown" class="libpath"></span>
     </div>
     <ul id="dir-list" class="group" aria-label="Subdirectories" data-i18n-aria-label="ui.library.subdirs"></ul>
     <p class="hint" id="dir-hint"></p>
