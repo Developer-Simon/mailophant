@@ -76,6 +76,14 @@
     <category>Email</category>
   </categories>
   <releases>
+    <release version="0.2.1" date="2026-10-21">
+      <description>
+        <ul>
+          <li>Install the Flatpak from our own repository and get updates automatically</li>
+          <li xml:lang="de">Das Flatpak lässt sich aus unserem eigenen Repository installieren und aktualisiert sich automatisch</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-21">
       <description>
         <ul>
