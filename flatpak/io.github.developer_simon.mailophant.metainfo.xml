@@ -76,6 +76,22 @@
     <category>Email</category>
   </categories>
   <releases>
+    <release version="0.2.0" date="2026-10-21">
+      <description>
+        <ul>
+          <li>Flatpak for Flathub: files are opened through the system dialog, no access to your home folder</li>
+          <li xml:lang="de">Flatpak für Flathub: Dateien werden über den Systemdialog geöffnet, ohne Zugriff auf deinen Home-Ordner</li>
+          <li>Progress bar while fetching from Proton</li>
+          <li xml:lang="de">Fortschrittsbalken beim Abruf von Proton</li>
+          <li>Resizable folder sidebar on wide windows</li>
+          <li xml:lang="de">Verstellbare Ordnerleiste in breiten Fenstern</li>
+          <li>Mails still to delete in Proton are highlighted; archiving preselects the folder</li>
+          <li xml:lang="de">Noch in Proton zu löschende Mails sind hervorgehoben; beim Archivieren ist der Ordner vorausgewählt</li>
+          <li>Tooltips show texts that are cut off</li>
+          <li xml:lang="de">Tooltips zeigen abgeschnittene Texte vollständig</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-18">
       <description>
         <p>First release.</p>
