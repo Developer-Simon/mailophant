@@ -24,6 +24,9 @@ const SMOKE = process.argv.includes('--smoke');
 
 // Der Namen vor dem ersten Start setzen: entspricht dem productName der Pakete.
 app.setName(TITLE);
+// Im Flatpak muss das Wayland-app_id der Flatpak-ID entsprechen, sonst ordnet die Shell Fenster und
+// Desktop-Datei (Icon, Name) nicht zu. Ohne desktopName setzt Electron selbst „mailophant.desktop“.
+if (process.env.FLATPAK_ID) app.setDesktopName(`${process.env.FLATPAK_ID}.desktop`);
 
 /**
  * Farben der Titelleiste (Overlay unter Windows/Linux, Ladefenster), abgeleitet aus static/css/app.css:
