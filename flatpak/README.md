@@ -34,6 +34,34 @@ Lint like Flathub does:
 Locally, the linters also report `appstream-external-screenshot-url` and
 `appstream-screenshots-not-mirrored-in-ostree`; on Flathub the build mirrors the screenshots itself.
 
+## Flatpak repo on GitHub Pages
+
+Until the app is on Flathub (and for pre-releases afterwards), release tags publish it to our own
+Flatpak repo at https://developer-simon.github.io/mailophant/, with an install page and
+`mailophant.flatpakref`. Tags like `v0.3.0` go to branch `stable`, tags with a `-` like
+`v0.3.0-beta.1` to `beta` (`mailophant-beta.flatpakref`). The `flatpak-repo` job in
+`.github/workflows/release.yml` runs `publish-repo.sh`: it mirrors the published repo, builds into
+it, drops the debug symbols, signs, keeps the last 3 versions per branch and generates the site.
+
+The repo is signed with the key in `repo-signing-key.asc`. Every installation trusts that key, so it
+can't be swapped without breaking updates: keep a backup of the private key offline.
+
+Setup, once:
+
+    gh secret set FLATPAK_REPO_GPG_KEY < flatpak-repo-private.asc   # armored private key, no passphrase
+    gh api -X POST repos/Developer-Simon/mailophant/pages -f build_type=workflow
+    gh api -X POST repos/Developer-Simon/mailophant/environments/github-pages/deployment-branch-policies \
+      -f name='v*' -f type=tag
+
+The last command lets tags deploy; by default the `github-pages` environment only accepts the
+default branch.
+
+Trying it locally (the Builder Flatpak has all the tools; `GNUPGHOME` holds the private key,
+`PAGES_URL` can point to a local `python3 -m http.server` serving an earlier `site/`):
+
+    flatpak run --env=FLATPAK_USER_DIR=$HOME/.local/share/flatpak --env=GNUPGHOME=… \
+      --command=bash org.flatpak.Builder flatpak/publish-repo.sh stable flatpak/site
+
 ## After changes to electron/package-lock.json
 
 Regenerate `generated-sources.json`:

@@ -63,4 +63,5 @@ Thumbs.db
 flatpak/build-dir/
 flatpak/.flatpak-builder/
 flatpak/repo/
+flatpak/site/
 flatpak/build.log

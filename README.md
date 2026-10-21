@@ -9,6 +9,7 @@ tag and archive them.**
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776ab.svg)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)
+[![Install as Flatpak](https://img.shields.io/badge/install-Flatpak-4a86cf.svg?logo=flatpak&logoColor=white)](https://developer-simon.github.io/mailophant/)
 
 ![Mailophant showing the combined inbox of four sources](docs/images/overview.png)
 
@@ -155,9 +156,18 @@ Then open <http://127.0.0.1:8025/>.
 
 Pushing a tag like `v0.2.0` builds the installers for Linux (AppImage and
 Flatpak), macOS (arm64 and x64) and Windows on GitHub Actions and attaches them
-to a release of that tag. The Flatpak installs with
-`flatpak install --user Mailophant-<version>-x86_64-full.flatpak` and needs the
-Flathub remote for its runtime.
+to a release of that tag. Each tag is also published to the Flatpak repo behind
+the [install page](https://developer-simon.github.io/mailophant/), which keeps
+the app up to date:
+
+```bash
+flatpak install --user https://developer-simon.github.io/mailophant/mailophant.flatpakref
+```
+
+Pre-release tags go to the `beta` branch (`mailophant-beta.flatpakref`). The
+Flatpak bundle on the release page installs with
+`flatpak install --user Mailophant-<version>-x86_64-full.flatpak`, but doesn't
+update itself and needs the Flathub remote for its runtime.
 
 The desktop app can be built as an AppImage (Linux), a dmg (macOS) or an NSIS
 installer (Windows). The slim variant uses the system Python. The full variant
