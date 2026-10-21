@@ -101,7 +101,7 @@ button {
 }
 
 /* ---------- Layout ---------- */
-.app { display: grid; grid-template-columns: 3.25rem 12.5rem minmax(16.25rem, 22.5rem) 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 3.25rem var(--folders-w, 12.5rem) minmax(16.25rem, 22.5rem) 1fr; height: 100vh; }
 #folders, #list-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--content); overflow: hidden; }
 #folders { background: var(--sidebar); }
 /* The list pane is the scroll container; the head is sticky inside it. */
@@ -127,7 +127,14 @@ button {
 .src-icon.list.glyph { font-size: .75rem; }
 
 /* Folders */
-#folders { padding: .75rem .5rem; }
+#folders { position: relative; padding: .75rem .5rem; }
+#folders-resize { position: absolute; top: 0; right: 0; bottom: 0; width: .375rem; cursor: col-resize; touch-action: none; z-index: 2; }
+#folders-resize::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 2px; background: transparent; }
+#folders-resize:focus-visible { outline: none; }
+#folders-resize:focus-visible::after, #folders-resize.dragging::after { background: var(--accent); }
+@media (hover: hover) { #folders-resize:hover::after { background: var(--accent); } }
+html.resizing-folders { cursor: col-resize; user-select: none; }
+html.resizing-folders iframe { pointer-events: none; }
 #folders h2 { font-size: var(--fs-caption); font-weight: 600; line-height: 1.3; letter-spacing: .01em; color: var(--label-2); margin: 1rem .5rem .5rem; }
 #folder-list, #tag-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
 .folder { display: flex; align-items: center; gap: .5rem; width: 100%; height: 1.75rem; padding: 0 .5rem; border: 0; border-radius: var(--radius-s); background: none; text-align: left; cursor: pointer; }
@@ -414,6 +421,7 @@ button.copy:active { background: var(--fill-press); }
 #reader-nav { display: none; }
 .edge-swipe { display: none; }
 @media (max-width: 900px) {
+  #folders-resize { display: none; }
   :root { --list-head: 7.5rem; }
   .app { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); grid-template-areas: "stack"; height: 100dvh; overflow: hidden; overflow: clip; /* clip: no programmatic horizontal scroll */ }
   #nav-root, #list-pane, #reader { grid-area: stack; position: relative; min-width: 0; min-height: 0; will-change: transform; }

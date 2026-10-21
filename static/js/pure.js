@@ -287,4 +287,14 @@ function pickLocale(lang, navLanguages) {
   const own = (navLanguages || []).find((l) => String(l).toLowerCase().split('-')[0] === lang);
   return own || lang;
 }
+
+const FOLDERS_MIN_WIDTH = 200;
+// Folder sidebar width in whole px, within [FOLDERS_MIN_WIDTH, half the viewport]. Anything that is not a number
+// (null, "", "abc", NaN) counts as the minimum. parseFloat, not Number: Number(null) and Number("") would be 0.
+function clampFoldersWidth(width, viewportWidth) {
+  const max = Math.max(FOLDERS_MIN_WIDTH, Math.floor(viewportWidth / 2));
+  const w = parseFloat(width);
+  const v = Number.isNaN(w) ? FOLDERS_MIN_WIDTH : w;
+  return Math.round(Math.min(max, Math.max(FOLDERS_MIN_WIDTH, v)));
+}
 /* ---------- End pure helpers ---------- */

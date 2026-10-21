@@ -264,6 +264,8 @@
   "ui.folders.actions": "Aktionen",
   "ui.folders.actions_for": "Aktionen für {name}",
   "ui.folders.new": "Neuer Ordner…",
+  "ui.folders.resize": "Ordnerleiste, Breite",
+  "ui.folders.resize_hint": "Ziehen zum Ändern, Doppelklick setzt zurück",
   "ui.folders.subfolders_of": "Unterordner von {name}",
   "ui.folders.title": "Ordner",
   "ui.import.folder_unreadable": "Ordner nicht lesbar: {name}",

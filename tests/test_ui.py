@@ -440,6 +440,32 @@ class PickLocaleTest(unittest.TestCase):
 
 
 @unittest.skipUnless(shutil.which('node'), 'node fehlt')
+class ClampFoldersWidthTest(unittest.TestCase):
+    def test_within_range(self):
+        self.assertEqual(run_js("clampFoldersWidth(320, 1600)"), 320)
+        self.assertEqual(run_js("clampFoldersWidth(320.6, 1600)"), 321)
+
+    def test_limits(self):
+        self.assertEqual(run_js("clampFoldersWidth(50, 1600)"), 200)
+        self.assertEqual(run_js("clampFoldersWidth(1200, 1600)"), 800)
+        self.assertEqual(run_js("clampFoldersWidth(600, 901)"), 450)
+
+    def test_max_never_below_min(self):
+        self.assertEqual(run_js("clampFoldersWidth(300, 300)"), 200)
+
+    def test_stored_garbage(self):
+        for raw in ['null', 'undefined', '"abc"', '""', 'NaN']:
+            self.assertEqual(run_js(f"clampFoldersWidth({raw}, 1600)"), 200, raw)
+        self.assertEqual(run_js('clampFoldersWidth("340", 1600)'), 340)
+        self.assertEqual(run_js('clampFoldersWidth("-5", 1600)'), 200)
+
+    def test_infinite_viewport_keeps_large_values(self):
+        # Used on load: filters garbage, keeps the wish even if the window is small now.
+        self.assertEqual(run_js("clampFoldersWidth(900, Infinity)"), 900)
+        self.assertEqual(run_js("clampFoldersWidth(Infinity, 1000)"), 500)
+
+
+@unittest.skipUnless(shutil.which('node'), 'node fehlt')
 class MessageRuntimeTest(unittest.TestCase):
     """js/i18n.js without a DOM: window carries the boot data, document is undefined."""
     BOOT = {"lang": "de", "setting": "de", "languages": [],

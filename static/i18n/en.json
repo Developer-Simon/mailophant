@@ -264,6 +264,8 @@
   "ui.folders.actions": "Actions",
   "ui.folders.actions_for": "Actions for {name}",
   "ui.folders.new": "New folder…",
+  "ui.folders.resize": "Folder sidebar width",
+  "ui.folders.resize_hint": "Drag to resize, double-click to reset",
   "ui.folders.subfolders_of": "Subfolders of {name}",
   "ui.folders.title": "Folders",
   "ui.import.folder_unreadable": "Folder not readable: {name}",

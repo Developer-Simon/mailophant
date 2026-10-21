@@ -2889,6 +2889,73 @@ $('preview-dialog').addEventListener('close', () => {
   $('preview-audio').load(); // drops the buffered file
 });
 
+/* ---------- Folder sidebar width ---------- */
+const FOLDERS_W_KEY = 'mailviewer.foldersWidth';
+function storedFoldersWidth() {
+  try { return localStorage.getItem(FOLDERS_W_KEY); } catch (_) { return null; }
+}
+function storeFoldersWidth(px) {
+  try { localStorage.setItem(FOLDERS_W_KEY, String(px)); } catch (_) { /* not remembered, e.g. private window */ }
+}
+function clearFoldersWidth() {
+  try { localStorage.removeItem(FOLDERS_W_KEY); } catch (_) { /* nothing to clear */ }
+}
+
+const foldersHandle = document.getElementById('folders-resize');
+// The wanted width (stored or default), not the clamped one: a small window only limits the display.
+let foldersWidth = clampFoldersWidth(storedFoldersWidth(), Infinity);
+
+function applyFoldersWidth(px) {
+  const w = clampFoldersWidth(px, window.innerWidth);
+  document.querySelector('.app').style.setProperty('--folders-w', `${w}px`);
+  foldersHandle.setAttribute('aria-valuenow', String(w));
+  foldersHandle.setAttribute('aria-valuemin', String(FOLDERS_MIN_WIDTH));
+  foldersHandle.setAttribute('aria-valuemax', String(clampFoldersWidth(Infinity, window.innerWidth)));
+  return w;
+}
+
+let foldersDrag = null;
+foldersHandle.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  foldersHandle.setPointerCapture(e.pointerId);
+  foldersDrag = { x: e.clientX, w: document.getElementById('folders').getBoundingClientRect().width };
+  foldersHandle.classList.add('dragging');
+  document.documentElement.classList.add('resizing-folders');
+  e.preventDefault();
+});
+foldersHandle.addEventListener('pointermove', (e) => {
+  if (foldersDrag) foldersWidth = applyFoldersWidth(foldersDrag.w + e.clientX - foldersDrag.x);
+});
+function endFoldersDrag() {
+  if (!foldersDrag) return;
+  foldersDrag = null;
+  foldersHandle.classList.remove('dragging');
+  document.documentElement.classList.remove('resizing-folders');
+  storeFoldersWidth(foldersWidth);
+}
+foldersHandle.addEventListener('pointerup', endFoldersDrag);
+foldersHandle.addEventListener('pointercancel', endFoldersDrag);
+foldersHandle.addEventListener('dblclick', () => {
+  foldersWidth = FOLDERS_MIN_WIDTH;
+  clearFoldersWidth();
+  applyFoldersWidth(foldersWidth);
+});
+foldersHandle.addEventListener('keydown', (e) => {
+  const step = e.shiftKey ? 64 : 16;
+  const current = Number(foldersHandle.getAttribute('aria-valuenow')) || FOLDERS_MIN_WIDTH;
+  let next;
+  if (e.key === 'ArrowLeft') next = current - step;
+  else if (e.key === 'ArrowRight') next = current + step;
+  else if (e.key === 'Home') next = FOLDERS_MIN_WIDTH;
+  else if (e.key === 'End') next = Infinity;
+  else return;
+  e.preventDefault();
+  foldersWidth = applyFoldersWidth(next);
+  storeFoldersWidth(foldersWidth);
+});
+window.addEventListener('resize', () => applyFoldersWidth(foldersWidth));
+applyFoldersWidth(foldersWidth);
+
 /* ---------- Narrow layout: navigation levels ---------- */
 // Narrow windows show one level at a time: 0 folders and tags, 1 message list, 2 mail.
 // Wide windows keep all columns; there only state.navLevel changes and nothing is transformed.
