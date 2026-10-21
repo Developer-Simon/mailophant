@@ -122,3 +122,48 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "${GITHUB_REF_NAME#v}" \
             --generate-notes $prerelease *
+
+  # Flatpak repo on GitHub Pages: v0.3.0 goes to branch stable, v0.3.0-beta.1 to beta.
+  # Setup (signing key secret, Pages, tag rule): flatpak/README.md.
+  flatpak-repo:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    # The job mirrors what is published and deploys it again, so two tags must not overlap.
+    concurrency:
+      group: flatpak-repo
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Flatpak tooling
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq flatpak flatpak-builder ostree
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.freedesktop.Platform//26.08 org.freedesktop.Sdk//26.08 \
+            org.freedesktop.Sdk.Extension.node24//26.08 org.electronjs.Electron2.BaseApp//26.08
+      - name: Signing key
+        env:
+          KEY: ${{ secrets.FLATPAK_REPO_GPG_KEY }}
+        run: |
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m700 "$GNUPGHOME"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Build into the repo
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) branch=beta ;; *) branch=stable ;; esac
+          flatpak/publish-repo.sh "$branch" "$RUNNER_TEMP/site"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/site
+      - id: deploy
+        uses: actions/deploy-pages@v4

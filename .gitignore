@@ -26,6 +26,7 @@ npm-debug.log*
 *.key
 *.p12
 *.pfx
+.secrets/
 
 # --- Mail data (safety net in case a library or an export ends up in the repo) ---
 library.json
@@ -63,4 +64,5 @@ Thumbs.db
 flatpak/build-dir/
 flatpak/.flatpak-builder/
 flatpak/repo/
+flatpak/site/
 flatpak/build.log

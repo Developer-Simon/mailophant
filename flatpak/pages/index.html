@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install Mailophant</title>
+<meta name="description" content="Install Mailophant on Linux as a Flatpak, with automatic updates.">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2026; --muted: #5d6470; --border: #dde1e7;
+    --accent: #3b6fd8; --accent-text: #fff; --code: #eef0f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --card: #1f2229; --text: #e6e8ec; --muted: #9aa1ad; --border: #2e323b;
+      --accent: #6b97f0; --accent-text: #0e1320; --code: #282c35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Cantarell, sans-serif;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 48px 16px; }
+  header { display: flex; gap: 20px; align-items: center; margin-bottom: 32px; }
+  header img { width: 80px; height: 80px; }
+  h1 { margin: 0; font-size: 2rem; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  section {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px; margin-bottom: 20px;
+  }
+  h2 { margin: 0 0 12px; font-size: 1.15rem; }
+  p { margin: 0 0 12px; }
+  .button {
+    display: inline-block; background: var(--accent); color: var(--accent-text); text-decoration: none;
+    font-weight: 600; padding: 12px 28px; border-radius: 8px; margin: 4px 0 16px;
+  }
+  .button:hover { filter: brightness(1.08); }
+  code, pre { font: 0.88rem/1.5 ui-monospace, "Cascadia Code", "DejaVu Sans Mono", monospace; }
+  pre {
+    background: var(--code); border-radius: 8px; padding: 12px 14px; margin: 0 0 12px;
+    overflow-x: auto; white-space: pre;
+  }
+  code { background: var(--code); border-radius: 4px; padding: 1px 5px; }
+  pre code { background: none; padding: 0; }
+  .muted { color: var(--muted); font-size: 0.92rem; }
+  a { color: var(--accent); }
+  footer { color: var(--muted); font-size: 0.88rem; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <div>
+      <h1>Mailophant</h1>
+      <p>Read and archive your mail backups</p>
+    </div>
+  </header>
+
+  <section>
+    <h2>Install on Linux</h2>
+    <a class="button" href="mailophant.flatpakref">Install</a>
+    <p>
+      This downloads a small installer file. Open it and GNOME Software or KDE Discover installs
+      Mailophant. Updates then arrive like for any other app.
+    </p>
+    <p class="muted">
+      Needs Flatpak. If your distribution doesn't have it yet, see
+      <a href="https://flathub.org/setup">flathub.org/setup</a>.
+    </p>
+  </section>
+
+  <section>
+    <h2>From the terminal</h2>
+    <pre><code>flatpak install --user @PAGES_URL@/mailophant.flatpakref
+flatpak run io.github.developer_simon.mailophant</code></pre>
+    <p class="muted">Updates come with <code>flatpak update</code>.</p>
+  </section>
+
+  <!-- beta -->
+  <section>
+    <h2>Beta</h2>
+    <p>
+      Pre-releases for testing new features. They can have rough edges, so keep a backup of your library.
+    </p>
+    <pre><code>flatpak install --user @PAGES_URL@/mailophant-beta.flatpakref</code></pre>
+    <p class="muted">
+      Back to the stable version: <code>flatpak make-current --user io.github.developer_simon.mailophant stable</code>
+    </p>
+  </section>
+  <!-- /beta -->
+
+  <footer>
+    <p>
+      <a href="https://github.com/Developer-Simon/mailophant">Source code and other platforms on GitHub</a>
+    </p>
+    <p>Repository signing key: <code>@FINGERPRINT@</code></p>
+  </footer>
+</main>
+</body>
+</html>
