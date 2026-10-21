@@ -12,8 +12,8 @@ const okOutput = (v, venv = true) => ({
 const enoent = (file) =>
   Object.assign(new Error(`spawn ${file} ENOENT`), { code: 'ENOENT' });
 
-// Fake-Runner: ruft `respond(file, cmdArgs, opts)` auf und gibt dessen Ergebnis oder Fehler zurück.
-// Zeichnet die Aufrufe als [file, ...cmdArgs] auf (ohne das Probe-Skript ab `-c`).
+// Fake runner: calls `respond(file, cmdArgs, opts)` and returns its result or error.
+// Records the calls as [file, ...cmdArgs] (without the probe script from `-c` on).
 function fakeRun(respond) {
   const calls = [];
   const run = async (file, args, opts) => {
@@ -24,11 +24,11 @@ function fakeRun(respond) {
   return { run, calls };
 }
 
-test('MIN_PYTHON ist 3.10', () => {
+test('MIN_PYTHON is 3.10', () => {
   assert.deepEqual(MIN_PYTHON, [3, 10]);
 });
 
-test('probePython akzeptiert Python 3.12.4', async () => {
+test('probePython accepts Python 3.12.4', async () => {
   const { run } = fakeRun(() => okOutput([3, 12, 4]));
   const result = await probePython(['python3'], run);
   assert.equal(result.ok, true);
@@ -36,14 +36,14 @@ test('probePython akzeptiert Python 3.12.4', async () => {
   assert.deepEqual(result.probe.cmd, ['python3']);
 });
 
-test('probePython lehnt Python 3.9.18 mit Hinweis auf 3.10 ab', async () => {
+test('probePython rejects Python 3.9.18 and mentions 3.10', async () => {
   const { run } = fakeRun(() => okOutput([3, 9, 18]));
   const result = await probePython(['python3'], run);
   assert.equal(result.ok, false);
   assert.match(result.reason, /3\.10/);
 });
 
-test('probePython meldet ENOENT als nicht ok', async () => {
+test('probePython reports ENOENT as not ok', async () => {
   const { run } = fakeRun((file) => {
     throw enoent(file);
   });
@@ -52,7 +52,7 @@ test('probePython meldet ENOENT als nicht ok', async () => {
   assert.equal(typeof result.reason, 'string');
 });
 
-test('probePython meldet Timeout (killed) mit Zeitüberschreitung', async () => {
+test('probePython reports a timeout (killed) as timed out', async () => {
   const { run } = fakeRun(() => {
     throw Object.assign(new Error('Command failed'), { killed: true });
   });
@@ -61,14 +61,14 @@ test('probePython meldet Timeout (killed) mit Zeitüberschreitung', async () => 
   assert.match(result.reason, /timed out/i);
 });
 
-test('probePython meldet fehlendes ensurepip mit Hinweis auf python3-venv', async () => {
+test('probePython reports missing ensurepip and mentions python3-venv', async () => {
   const { run } = fakeRun(() => okOutput([3, 12, 4], false));
   const result = await probePython(['python3'], run);
   assert.equal(result.ok, false);
   assert.match(result.reason, /python3-venv/);
 });
 
-test('probePython führt cmd mit -c und Timeout 10 s aus', async () => {
+test('probePython runs cmd with -c and a 10 s timeout', async () => {
   let seen;
   const { run } = fakeRun((file, cmdArgs, opts) => {
     seen = { file, args: cmdArgs, opts };
@@ -80,7 +80,7 @@ test('probePython führt cmd mit -c und Timeout 10 s aus', async () => {
   assert.equal(seen.opts.timeout, 10000);
 });
 
-test('findSystemPython probiert unter win32 py -3, python, python3 in dieser Reihenfolge', async () => {
+test('findSystemPython tries py -3, python, python3 in this order on win32', async () => {
   const { run, calls } = fakeRun((file) => {
     if (file === 'py' || file === 'python') throw enoent(file);
     return okOutput([3, 11, 0]);
@@ -99,7 +99,7 @@ test('findSystemPython probiert unter win32 py -3, python, python3 in dieser Rei
   );
 });
 
-test('findSystemPython probiert unter linux python3, dann python', async () => {
+test('findSystemPython tries python3, then python on linux', async () => {
   const { run, calls } = fakeRun((file) => {
     if (file === 'python3') throw enoent(file);
     return okOutput([3, 12, 4]);
@@ -111,7 +111,7 @@ test('findSystemPython probiert unter linux python3, dann python', async () => {
   assert.deepEqual(result.rejected[0].cmd, ['python3']);
 });
 
-test('findSystemPython liefert null, wenn nichts Geeignetes gefunden wird', async () => {
+test('findSystemPython returns null when nothing suitable is found', async () => {
   const { run } = fakeRun((file) => {
     throw enoent(file);
   });

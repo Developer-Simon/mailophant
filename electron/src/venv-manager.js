@@ -17,7 +17,7 @@ const execFileAsync = promisify(execFile);
 const defaultRun = (file, args, opts) => execFileAsync(file, args, { ...opts, windowsHide: true });
 
 /**
- * Pfad zum Interpreter in einer venv.
+ * Path to the interpreter in a venv.
  * @param {string} venvDir
  * @param {string} [platform]
  */
@@ -36,7 +36,7 @@ async function readStamp(fs, stampPath) {
   }
 }
 
-// Schreibt über eine Temp-Datei, damit ein Abbruch keinen halben Stamp hinterlässt.
+// Writes through a temp file, so an abort doesn't leave half a stamp behind.
 async function writeStamp(fs, stampPath, stamp) {
   const tmp = `${stampPath}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(stamp, null, 2) + '\n', 'utf8');
@@ -53,8 +53,8 @@ async function exists(fs, p) {
 }
 
 /**
- * Ein Installationsversuch für pypff: erst Wheel, dann Quellbuild.
- * @returns {Promise<boolean>} ob pypff installiert ist
+ * One install attempt for pypff: wheel first, then a source build.
+ * @returns {Promise<boolean>} whether pypff is installed
  */
 async function installPypff(run, python, onProgress) {
   onProgress?.(t('electron.loading.install_pst'));
@@ -64,7 +64,7 @@ async function installPypff(run, python, onProgress) {
     });
     return true;
   } catch {
-    // weiter mit dem Quellbuild
+    // go on with the source build
   }
   onProgress?.(t('electron.loading.build_pst'));
   try {
@@ -76,9 +76,9 @@ async function installPypff(run, python, onProgress) {
 }
 
 /**
- * Stellt sicher, dass in `venvDir` eine passende venv mit pypff existiert.
- * Wirft, wenn die venv selbst nicht angelegt werden kann; pypff-Fehler werden
- * als `pypff: false` gemeldet.
+ * Makes sure a matching venv with pypff exists in `venvDir`.
+ * Throws if the venv itself can't be created; pypff errors are
+ * reported as `pypff: false`.
  *
  * @param {{ probe: { cmd: string[], version: number[] }, venvDir: string,
  *           onProgress?: (msg: string) => void, retryPypff?: boolean,
@@ -122,7 +122,7 @@ async function ensureVenv({
     throw new Error(t('electron.venv.no_interpreter', { python }));
   }
 
-  // complete bleibt false, bis pypff entschieden ist; so erkennt ein Abbruch den Zustand.
+  // complete stays false until pypff is settled; that way an abort is recognised.
   await writeStamp(fs, stampPath, { python: wantedVersion, pypff: false, complete: false });
   const pypff = await installPypff(run, python, onProgress);
   await writeStamp(fs, stampPath, { python: wantedVersion, pypff, complete: true });

@@ -16,22 +16,22 @@ const WEB_PREFERENCES = {
   contextIsolation: true, nodeIntegration: false, sandbox: true, preload: path.join(__dirname, 'preload.js'),
 };
 const TITLE = 'Mailophant';
-/** Höhe der eigenen Kopfzeile (Ampel/Overlay-Buttons sitzen darin). */
+/** Height of the custom title bar (the traffic lights / overlay buttons sit in it). */
 const TITLEBAR_HEIGHT = 36;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
-/** `--smoke`: Server starten, GET / prüfen, ohne Dialoge mit Exitcode 0 bzw. 1 beenden. */
+/** `--smoke`: start the server, check GET /, quit without dialogs with exit code 0 or 1. */
 const SMOKE = process.argv.includes('--smoke');
 
-// Der Namen vor dem ersten Start setzen: entspricht dem productName der Pakete.
+// Set the name before the first start: matches the packages' productName.
 app.setName(TITLE);
-// Im Flatpak muss das Wayland-app_id der Flatpak-ID entsprechen, sonst ordnet die Shell Fenster und
-// Desktop-Datei (Icon, Name) nicht zu. Ohne desktopName setzt Electron selbst „mailophant.desktop“.
+// In the Flatpak the Wayland app_id must match the Flatpak ID, otherwise the shell doesn't match the window
+// to its desktop file (icon, name). Without desktopName, Electron sets "mailophant.desktop" itself.
 if (process.env.FLATPAK_ID) app.setDesktopName(`${process.env.FLATPAK_ID}.desktop`);
 
 /**
- * Farben der Titelleiste (Overlay unter Windows/Linux, Ladefenster), abgeleitet aus static/css/app.css:
- * color = --sidebar (hell #f0f0f3, dunkel #232326), symbolColor = --label (hell #1d1d1f, dunkel #f5f5f7).
- * Die Leiste liegt über der Seitenleiste; sie muss zu den Werten im Dark-Theme-Block dort passen.
+ * Title bar colours (overlay on Windows/Linux, loading window), taken from static/css/app.css:
+ * color = --sidebar (light #f0f0f3, dark #232326), symbolColor = --label (light #1d1d1f, dark #f5f5f7).
+ * The bar sits above the sidebar; it must match the values in the dark theme block there.
  * @param {boolean} dark
  * @returns {{ color: string, symbolColor: string }}
  */
@@ -41,12 +41,12 @@ function chromeColors(dark) {
     : { color: '#f0f0f3', symbolColor: '#1d1d1f' };
 }
 
-/** Hintergrund der Fenster, passend zu --content (sonst kurzer weißer Blitz im Dark-Theme). */
+/** Window background, matching --content (otherwise a short white flash in the dark theme). */
 function contentBackground() {
   return nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff';
 }
 
-/** Gemeinsame Fensteroptionen für rahmenlose Fenster mit eigener Kopfzeile. */
+/** Shared options for frameless windows with a custom title bar. */
 function titleBarOptions() {
   if (process.platform === 'darwin') {
     return { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 11 } };
@@ -57,7 +57,7 @@ function titleBarOptions() {
   };
 }
 
-/** Überschreibt die Overlay-Farben offener Fenster, wenn das System-Theme wechselt (nur Windows/Linux). */
+/** Updates the overlay colours of open windows when the system theme changes (Windows/Linux only). */
 function applyChromeColors() {
   if (process.platform === 'darwin') return;
   const colors = chromeColors(nativeTheme.shouldUseDarkColors);
@@ -66,7 +66,7 @@ function applyChromeColors() {
     try {
       win.setTitleBarOverlay({ ...colors, height: TITLEBAR_HEIGHT });
     } catch {
-      // Overlay ist auf dieser Plattform/Version nicht verfügbar; die Leiste behält dann ihre Farben.
+      // No overlay on this platform/version; the bar then keeps its colours.
     }
   }
 }
@@ -81,7 +81,7 @@ let serverUrl = null;
 /** @type {{ python: string[], mode: string, pypff: boolean } | null} */
 let runtime = null;
 let quitting = false;
-/** Laufende Start-/Neustart-Operation; onBeforeQuit wartet darauf. */
+/** Running start/restart operation; onBeforeQuit waits for it. */
 let backendOp = null;
 
 function getAppRoot() {
@@ -100,7 +100,7 @@ function messageOf(err) {
   return err && err.message ? err.message : String(err);
 }
 
-/** Fehlertext für den Dialog; bei ServerStartError samt Ausgabe des Servers. */
+/** Error text for the dialog; for a ServerStartError including the server's output. */
 function describeError(err) {
   if (err instanceof ServerStartError && err.stderrTail) {
     return `${err.message}\n\n${t('electron.error.server_output')}\n${err.stderrTail}`;
@@ -121,7 +121,7 @@ function escapeHtml(text) {
 function loadingPage(text) {
   const light = chromeColors(false);
   const dark = chromeColors(true);
-  // Kopfzeile wie im Hauptfenster: ziehbar, Farben spiegeln chromeColors() (Light/Dark per prefers-color-scheme).
+  // Title bar as in the main window: draggable, colours mirror chromeColors() (light/dark via prefers-color-scheme).
   const html =
     '<!doctype html><html lang="' + i18n.currentLanguage() + '"><head><meta charset="utf-8"><title>' + TITLE + '</title>' +
     '<style>' +
@@ -139,7 +139,7 @@ function loadingPage(text) {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
-/** Ladefenster anlegen bzw. den Fortschrittstext aktualisieren. */
+/** Creates the loading window or updates its progress text. */
 function showLoading(text) {
   if (quitting) return;
   if (!loadingWindow) {
@@ -158,7 +158,7 @@ function showLoading(text) {
       loadingWindow = null;
     });
   }
-  // Ein neuer loadURL bricht den vorherigen ab; das wird hier bewusst ignoriert.
+  // A new loadURL aborts the previous one; that is deliberately ignored here.
   loadingWindow.loadURL(loadingPage(text)).catch(() => {});
 }
 
@@ -186,7 +186,7 @@ function isWebUrl(url) {
   }
 }
 
-/** Externe Web-Links im Systembrowser öffnen; alles andere wird verweigert. */
+/** Opens external web links in the system browser; everything else is refused. */
 function openInSystemBrowser(url) {
   if (isWebUrl(url)) shell.openExternal(url);
 }
@@ -197,7 +197,7 @@ function guardNavigation(event, url) {
   openInSystemBrowser(url);
 }
 
-/** Hauptfenster mit dem Viewer; Navigation und neue Fenster sind auf den Server-Origin begrenzt. */
+/** Main window with the viewer; navigation and new windows are limited to the server origin. */
 function openMainWindow(url) {
   if (quitting) return;
   mainWindow = new BrowserWindow({
@@ -207,7 +207,7 @@ function openMainWindow(url) {
     title: TITLE,
     icon: ICON_PATH,
     backgroundColor: contentBackground(),
-    // Menü bleibt verborgen; die Alt-Taste blendet es ein (dort: Werkzeuge → PST-Unterstützung).
+    // The menu stays hidden; the Alt key shows it (it holds Tools → Reinstall PST support).
     autoHideMenuBar: true,
     ...titleBarOptions(),
     webPreferences: WEB_PREFERENCES,
@@ -215,7 +215,7 @@ function openMainWindow(url) {
   const contents = mainWindow.webContents;
   contents.on('will-navigate', guardNavigation);
   contents.on('will-redirect', guardNavigation);
-  // Anhänge öffnen sich per target=_blank; sie laufen im Systembrowser, kein neues Electron-Fenster.
+  // Attachments open via target=_blank; they go to the system browser, not a new Electron window.
   contents.setWindowOpenHandler(({ url: target }) => {
     openInSystemBrowser(target);
     return { action: 'deny' };
@@ -224,7 +224,7 @@ function openMainWindow(url) {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
-  mainWindow.loadURL(url).catch((err) => console.error('Viewer konnte nicht geladen werden:', err));
+  mainWindow.loadURL(url).catch((err) => console.error('Could not load the viewer:', err));
 }
 
 function focusWindow() {
@@ -241,8 +241,8 @@ async function stopServer() {
 }
 
 /**
- * Führt eine Start-/Neustart-Operation aus. Solange eine läuft (oder die App beendet wird),
- * wird jeder weitere Aufruf ignoriert und null geliefert.
+ * Runs a start/restart operation. While one is running (or the app is quitting),
+ * every further call is ignored and returns null.
  * @param {() => Promise<void>} fn
  * @returns {Promise<void> | null}
  */
@@ -258,7 +258,7 @@ function runExclusive(fn) {
   return backendOp;
 }
 
-/** Startet den Server mit der gewählten Laufzeit. Stoppt ihn sofort, falls die App inzwischen beendet wird. */
+/** Starts the server with the chosen runtime. Stops it right away if the app is quitting in the meantime. */
 async function startBackend() {
   const handle = await startServer({
     python: runtime.python,
@@ -272,21 +272,21 @@ async function startBackend() {
   return handle;
 }
 
-/** Server neu starten und das Hauptfenster neu laden. */
+/** Restarts the server and reloads the main window. */
 async function restartBackend() {
   await stopServer();
   showLoading(t('electron.loading.start_viewer'));
   await startBackend();
   if (quitting) return;
   if (mainWindow) {
-    mainWindow.loadURL(serverUrl).catch((err) => console.error('Viewer konnte nicht geladen werden:', err));
+    mainWindow.loadURL(serverUrl).catch((err) => console.error('Could not load the viewer:', err));
   } else {
     openMainWindow(serverUrl);
   }
   closeLoading();
 }
 
-/** Menüpunkt: PST-Unterstützung (pypff) im System-venv nachinstallieren, dann Server neu starten. */
+/** Menu item: install PST support (pypff) into the system venv again, then restart the server. */
 async function reinstallPst() {
   try {
     const found = await findSystemPython();
@@ -304,7 +304,7 @@ async function reinstallPst() {
   } catch (err) {
     closeLoading();
     dialog.showErrorBox(t('electron.dialog.pst'), describeError(err));
-    // Ohne laufenden Server ist der Viewer nicht mehr nutzbar.
+    // Without a running server the viewer is no longer usable.
     if (!server) app.quit();
   }
 }
@@ -332,8 +332,8 @@ function buildMenu() {
 }
 
 /**
- * Übernimmt die config.json eines früheren Programmnamens (userData-Ordner vor der Umbenennung).
- * Fehler werden nur protokolliert; der Start läuft in jedem Fall weiter.
+ * Takes over the config.json of a former app name (userData folder before the rename).
+ * Errors are only logged; the start continues either way.
  */
 async function importLegacyConfig() {
   try {
@@ -341,9 +341,9 @@ async function importLegacyConfig() {
       appDataDir: app.getPath('appData'),
       userDataDir: app.getPath('userData'),
     });
-    if (source) console.log(`Konfiguration übernommen aus: ${source}`);
+    if (source) console.log(`Took over the configuration from: ${source}`);
   } catch (err) {
-    console.error('Alte Konfiguration konnte nicht übernommen werden:', err);
+    console.error('Could not take over the old configuration:', err);
   }
 }
 
@@ -380,12 +380,12 @@ async function startup() {
   closeLoading();
 }
 
-/** Rauchtest: GET / gegen den laufenden Server, dann Server stoppen und mit 0 bzw. 1 beenden. */
+/** Smoke test: GET / against the running server, then stop the server and quit with 0 or 1. */
 async function finishSmoke() {
   const ok = await runSmoke(serverUrl);
   console.log(ok ? `Rauchtest bestanden: ${serverUrl}` : `Rauchtest fehlgeschlagen: ${serverUrl}`);
   await stopServer();
-  // Das Ladefenster bleibt bis app.exit offen, damit kein window-all-closed-Quit dazwischenfunkt.
+  // The loading window stays open until app.exit, so no window-all-closed quit gets in between.
   app.exit(ok ? 0 : 1);
 }
 
@@ -393,11 +393,11 @@ function onBeforeQuit(event) {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  // Eine laufende Start-/Neustart-Operation zuerst abwarten (Fehler ignorieren), damit danach kein Server übrig bleibt.
+  // Wait for a running start/restart operation first (ignoring errors), so no server is left behind.
   const pending = backendOp ? backendOp.catch(() => {}) : Promise.resolve();
   pending
     .then(() => stopServer())
-    .catch((err) => console.error('Server konnte nicht beendet werden:', err))
+    .catch((err) => console.error('Could not stop the server:', err))
     .finally(() => app.quit());
 }
 
@@ -410,22 +410,22 @@ async function run() {
   } catch (err) {
     if (SMOKE) {
       console.error(describeError(err));
-      // app.exit umgeht before-quit; server ist hier noch null, daher ist nichts zu stoppen.
+      // app.exit skips before-quit; server is still null here, so there is nothing to stop.
       app.exit(1);
       return;
     }
     closeLoading();
-    // Während des Beendens kein Fehlerdialog; onBeforeQuit beendet die App ohnehin.
+    // No error dialog while quitting; onBeforeQuit quits the app anyway.
     if (quitting) return;
     dialog.showErrorBox(t('electron.dialog.start_failed'), describeError(err));
-    // app.exit umgeht before-quit; server ist hier noch null, daher ist nichts zu stoppen.
+    // app.exit skips before-quit; server is still null here, so there is nothing to stop.
     app.exit(1);
   }
 }
 
 if (!app.requestSingleInstanceLock()) {
   if (SMOKE) {
-    console.error('Eine andere Instanz läuft bereits.');
+    console.error('Another instance is already running.');
     app.exit(1);
   } else {
     app.quit();

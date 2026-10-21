@@ -16,7 +16,7 @@ const VENV_PY = path.posix.join(USER_DATA, 'venv', 'bin', 'python');
 const BUNDLED = path.posix.join(RESOURCES, 'python', 'bin', 'python3');
 const NO_VENV_REASON = 'venv/ensurepip fehlt (unter Debian/Ubuntu: Paket python3-venv installieren)';
 
-// Fakes: kein Netzwerk, kein echtes Python.
+// Fakes: no network, no real Python.
 function fakes({ found = SYS_PROBE, ensureError = null, bundledExists = false, runError = null } = {}) {
   const calls = { ensure: [], run: [] };
   const deps = {
@@ -45,28 +45,28 @@ function fakes({ found = SYS_PROBE, ensureError = null, bundledExists = false, r
 const resolve = (deps, extra = {}) =>
   resolveRuntime({ userDataDir: USER_DATA, resourcesDir: RESOURCES, deps, ...extra });
 
-test('bundledPython liefert den Pfad je Plattform', () => {
+test('bundledPython returns the path per platform', () => {
   assert.equal(bundledPython(RESOURCES, 'linux'), path.posix.join(RESOURCES, 'python', 'bin', 'python3'));
   assert.equal(bundledPython('C:\\app\\resources', 'win32'), path.win32.join('C:\\app\\resources', 'python', 'python.exe'));
 });
 
-test('System-Python vorhanden und ensure gelingt -> mode system, python ist [venvPython]', async () => {
+test('system Python present and ensure succeeds -> mode system, python is [venvPython]', async () => {
   const { deps, calls } = fakes();
   const result = await resolve(deps);
   assert.deepEqual(result, { python: [VENV_PY], mode: 'system', pypff: true });
   assert.equal(calls.ensure.length, 1);
   assert.equal(calls.ensure[0].venvDir, path.join(USER_DATA, 'venv'));
   assert.deepEqual(calls.ensure[0].probe, SYS_PROBE);
-  assert.equal(calls.run.length, 0, 'bei System-Modus wird kein pypff-Check nötig');
+  assert.equal(calls.run.length, 0, 'system mode needs no pypff check');
 });
 
-test('System-Python vorhanden, ensure wirft, Bundled existiert -> mode bundled', async () => {
+test('system Python present, ensure throws, bundled exists -> mode bundled', async () => {
   const { deps } = fakes({ ensureError: new Error('venv kaputt'), bundledExists: true });
   const result = await resolve(deps);
   assert.deepEqual(result, { python: [BUNDLED], mode: 'bundled', pypff: true });
 });
 
-test('kein System-Python, Bundled existiert -> mode bundled', async () => {
+test('no system Python, bundled exists -> mode bundled', async () => {
   const { deps, calls } = fakes({ found: null, bundledExists: true });
   const result = await resolve(deps);
   assert.deepEqual(result, { python: [BUNDLED], mode: 'bundled', pypff: true });
@@ -75,7 +75,7 @@ test('kein System-Python, Bundled existiert -> mode bundled', async () => {
   assert.deepEqual(calls.run[0].args, ['-c', 'import pypff']);
 });
 
-test('Bundled ohne pypff -> pypff false, kein Fehler', async () => {
+test('bundled without pypff -> pypff false, no error', async () => {
   const { deps } = fakes({
     found: null,
     bundledExists: true,
@@ -85,7 +85,7 @@ test('Bundled ohne pypff -> pypff false, kein Fehler', async () => {
   assert.deepEqual(result, { python: [BUNDLED], mode: 'bundled', pypff: false });
 });
 
-test('nichts vorhanden -> RuntimeUnavailableError mit Ablehnungsgrund', async () => {
+test('nothing present -> RuntimeUnavailableError with the rejection reason', async () => {
   const { deps } = fakes({ found: null, bundledExists: false });
   await assert.rejects(resolve(deps), (err) => {
     assert.ok(err instanceof RuntimeUnavailableError);
@@ -97,7 +97,7 @@ test('nichts vorhanden -> RuntimeUnavailableError mit Ablehnungsgrund', async ()
   });
 });
 
-test('MAILOPHANT_PYTHON gesetzt -> dieser Interpreter ohne venv, mode bundled, pypff geprüft', async () => {
+test('MAILOPHANT_PYTHON set -> that interpreter without a venv, mode bundled, pypff checked', async () => {
   const { deps, calls } = fakes();
   deps.env = { MAILOPHANT_PYTHON: '/usr/bin/python3' };
   const result = await resolve(deps);
@@ -106,7 +106,7 @@ test('MAILOPHANT_PYTHON gesetzt -> dieser Interpreter ohne venv, mode bundled, p
   assert.deepEqual(calls.run.map((c) => c.file), ['/usr/bin/python3']);
 });
 
-test('MAILOPHANT_PYTHON ohne pypff -> pypff false', async () => {
+test('MAILOPHANT_PYTHON without pypff -> pypff false', async () => {
   const { deps } = fakes({ runError: new Error('No module named pypff') });
   deps.env = { MAILOPHANT_PYTHON: '/usr/bin/python3' };
   assert.equal((await resolve(deps)).pypff, false);

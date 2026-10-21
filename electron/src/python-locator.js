@@ -7,7 +7,7 @@ const { promisify } = require('node:util');
 const MIN_PYTHON = [3, 10];
 const PROBE_TIMEOUT_MS = 10000;
 
-// Einzeiler: gibt Version und Verfügbarkeit von ensurepip/venv als JSON aus.
+// One-liner: prints the version and whether ensurepip/venv are available, as JSON.
 const PROBE_SCRIPT =
   'import json,sys,importlib.util as u;' +
   'print(json.dumps({"v":list(sys.version_info[:3]),' +
@@ -26,8 +26,8 @@ function isAtLeast(version, min) {
 }
 
 /**
- * Prüft, ob `cmd` ein nutzbares Python (>= MIN_PYTHON mit venv/ensurepip) ist.
- * @param {string[]} cmd z. B. ["python3"] oder ["py", "-3"]
+ * Checks whether `cmd` is a usable Python (>= MIN_PYTHON with venv/ensurepip).
+ * @param {string[]} cmd e.g. ["python3"] or ["py", "-3"]
  * @param {RunFn} [run]
  */
 async function probePython(cmd, run = defaultRun) {
@@ -72,7 +72,7 @@ async function probePython(cmd, run = defaultRun) {
 }
 
 /**
- * Sucht das erste geeignete System-Python für die Plattform.
+ * Finds the first suitable system Python for the platform.
  * @param {string} [platform]
  * @param {RunFn} [run]
  */

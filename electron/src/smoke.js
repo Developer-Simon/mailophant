@@ -5,8 +5,8 @@ const http = require('node:http');
 const SMOKE_TIMEOUT_MS = 10 * 1000;
 
 /**
- * Ruft die Startseite des Servers ab. Erfolg: Status 200 und ein HTML-Dokument mit <title.
- * Ein Netzwerkfehler oder Timeout gilt als Misserfolg; die Funktion wirft nicht.
+ * Requests the server's start page. Success: status 200 and an HTML document with <title.
+ * A network error or timeout counts as failure; the function doesn't throw.
  * @param {string} url
  * @returns {Promise<boolean>}
  */

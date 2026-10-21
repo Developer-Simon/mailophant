@@ -1,15 +1,15 @@
 'use strict';
 
 /**
- * System-Dateidialog für die Ordner- und Dateiauswahl der Seite. Nur mit MAILOPHANT_NATIVE_PICKER=1 (Flatpak):
- * dort sieht die App ohne Home-Zugriff nur, was über diesen Dialog (das Datei-Portal) gewählt wurde.
+ * System file dialog for the page's folder and file choices. Only with MAILOPHANT_NATIVE_PICKER=1 (Flatpak):
+ * without home access, the app there only sees what was chosen in this dialog (the document portal).
  */
 
 const enabled = (env = process.env) => env.MAILOPHANT_NATIVE_PICKER === '1';
 
 /**
- * Optionen für dialog.showOpenDialog.
- * @param {{ kind?: string, title?: string, filterName?: string }} req von der Seite
+ * Options for dialog.showOpenDialog.
+ * @param {{ kind?: string, title?: string, filterName?: string }} req from the page
  */
 function pickerOptions(req) {
   const title = typeof req?.title === 'string' ? req.title.slice(0, 200) : undefined;
@@ -21,7 +21,7 @@ function pickerOptions(req) {
 }
 
 /**
- * Meldet die Handler an. Anfragen anderer Origins als des Servers werden abgelehnt.
+ * Registers the handlers. Requests from origins other than the server's are refused.
  * @param {{ ipcMain: import('electron').IpcMain, dialog: import('electron').Dialog,
  *           isAllowed: (url: string) => boolean, env?: object }} deps
  */

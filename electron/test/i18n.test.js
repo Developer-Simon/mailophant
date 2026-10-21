@@ -11,7 +11,7 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'mbv-i18n-'));
 }
 
-test('resolveLanguage folgt Einstellung, dann Systemsprache', () => {
+test('resolveLanguage follows the setting, then the system language', () => {
   const av = ['en', 'de'];
   assert.equal(resolveLanguage('de', ['en-US'], av), 'de');
   assert.equal(resolveLanguage(null, ['de-CH'], av), 'de');
@@ -22,7 +22,7 @@ test('resolveLanguage folgt Einstellung, dann Systemsprache', () => {
   assert.equal(resolveLanguage(null, undefined, av), 'en');
 });
 
-test('readSetting verträgt fehlende und beschädigte Dateien', () => {
+test('readSetting copes with missing and broken files', () => {
   const dir = tmpDir();
   const file = path.join(dir, 'config.json');
   assert.equal(readSetting(file), null);
@@ -34,7 +34,7 @@ test('readSetting verträgt fehlende und beschädigte Dateien', () => {
   assert.equal(readSetting(file), 'de');
 });
 
-test('t setzt Parameter ein und fällt auf Englisch zurück', () => {
+test('t fills in parameters and falls back to English', () => {
   const dir = tmpDir();
   fs.writeFileSync(path.join(dir, 'languages.json'), '[{"code":"en","name":"English"},{"code":"de","name":"Deutsch"}]');
   fs.writeFileSync(path.join(dir, 'en.json'), JSON.stringify({ a: 'A {x}', only_en: 'Only English', n: { one: '{count} item', other: '{count} items' } }));
@@ -49,7 +49,7 @@ test('t setzt Parameter ein und fällt auf Englisch zurück', () => {
   assert.equal(init({ dir, setting: null, preferred: ['fr'] }), 'en');
 });
 
-test('Menütexte gibt es in allen Sprachen', () => {
+test('menu texts exist in every language', () => {
   init({ setting: 'de', preferred: [] });
   assert.equal(t('electron.menu.tools'), 'Werkzeuge');
   init({ setting: 'en', preferred: [] });

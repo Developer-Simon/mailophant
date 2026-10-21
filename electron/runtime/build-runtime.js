@@ -1,8 +1,8 @@
 'use strict';
 
-// Baut den mitgelieferten Python-Interpreter nach electron/build/python/.
-// Lädt das in runtime.lock.json gepinnte python-build-standalone-Asset,
-// prüft die SHA-256-Summe, entpackt es und installiert libpff-python als Wheel.
+// Builds the bundled Python interpreter into electron/build/python/.
+// Downloads the python-build-standalone asset pinned in runtime.lock.json,
+// checks its SHA-256 sum, unpacks it and installs libpff-python as a wheel.
 //
 // CLI: node runtime/build-runtime.js [--target <key>] [--allow-no-pypff]
 
@@ -24,7 +24,7 @@ function targetKey(platform, arch) {
   const key = `${platform}-${arch}`;
   if (!Object.prototype.hasOwnProperty.call(lock.targets, key)) {
     throw new Error(
-      `Nicht unterstützte Plattform: ${key}. Unterstützt: ${Object.keys(lock.targets).join(', ')}`,
+      `Unsupported platform: ${key}. Supported: ${Object.keys(lock.targets).join(', ')}`,
     );
   }
   return key;
@@ -49,7 +49,7 @@ function hashFile(file) {
 async function verifySha256(file, expected) {
   const actual = await hashFile(file);
   if (actual !== expected.toLowerCase()) {
-    throw new Error(`SHA-256-Abweichung für ${file}: erwartet ${expected}, berechnet ${actual}`);
+    throw new Error(`SHA-256 mismatch for ${file}: expected ${expected}, computed ${actual}`);
   }
 }
 
@@ -81,14 +81,14 @@ async function ensureArchive(entry, release) {
   return archive;
 }
 
-// Unter Windows das tar von Windows (bsdtar): Das GNU-tar aus Git Bash liest "D:\..." als entfernten Host "D".
+// On Windows, Windows' own tar (bsdtar): the GNU tar from Git Bash reads "D:\..." as a remote host "D".
 function tarCommand(platform = process.platform, env = process.env) {
   return platform === 'win32' ? path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 }
 
 function extractArchive(archive) {
   fs.rmSync(PYTHON_DIR, { recursive: true, force: true });
-  // Das Archiv enthält ein Top-Level-Verzeichnis python/, das nach build/ entpackt wird.
+  // The archive holds a top-level directory python/, which is unpacked into build/.
   const res = spawnSync(tarCommand(), ['-xzf', archive, '-C', BUILD_DIR], { stdio: 'inherit' });
   if (res.error || res.status !== 0) {
     throw new Error(`Entpacken fehlgeschlagen: ${archive}`);
@@ -107,19 +107,19 @@ function run(python, args) {
 }
 
 function installPypff(python, key, pythonVersion, allowNoPypff) {
-  console.log('Installiere libpff-python (nur Wheels) ...');
+  console.log('Installing libpff-python (wheels only) ...');
   const res = run(python, ['-m', 'pip', 'install', '--only-binary=:all:', 'libpff-python']);
   if (res.status === 0) {
     return true;
   }
   const msg =
-    `libpff-python konnte nicht als Wheel für ${key} / Python ${pythonVersion} installiert werden ` +
-    `(kein passendes Wheel oder Netzwerkfehler).`;
+    `Could not install libpff-python as a wheel for ${key} / Python ${pythonVersion} ` +
+    `(no matching wheel or a network error).`;
   if (allowNoPypff) {
-    console.warn(`WARNUNG: ${msg} Build wird ohne pypff erzeugt (--allow-no-pypff).`);
+    console.warn(`WARNING: ${msg} Building without pypff (--allow-no-pypff).`);
     return false;
   }
-  throw new Error(`${msg} Mit --allow-no-pypff ohne pypff bauen.`);
+  throw new Error(`${msg} Use --allow-no-pypff to build without pypff.`);
 }
 
 function smokeTest(python, expectPypff) {
@@ -127,7 +127,7 @@ function smokeTest(python, expectPypff) {
     throw new Error(`Rauchtest fehlgeschlagen: ${python}`);
   }
   if (expectPypff && run(python, ['-c', 'import pypff']).status !== 0) {
-    throw new Error('Rauchtest fehlgeschlagen: "import pypff" schlägt fehl');
+    throw new Error('Smoke test failed: "import pypff" fails');
   }
 }
 
@@ -157,7 +157,7 @@ async function main(argv) {
 
   const python = pythonBinary(key);
   if (!fs.existsSync(python)) {
-    throw new Error(`Interpreter nach dem Entpacken nicht gefunden: ${python}`);
+    throw new Error(`Interpreter not found after unpacking: ${python}`);
   }
 
   const hasPypff = installPypff(python, key, lock.python, opts.allowNoPypff);

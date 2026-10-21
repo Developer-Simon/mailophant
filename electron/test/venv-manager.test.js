@@ -18,14 +18,14 @@ async function setup(t) {
   return path.join(root, 'venv');
 }
 
-// Fake-Runner: legt bei `-m venv` den Interpreter im Temp-Verzeichnis an
-// und lässt pip-Aufrufe je nach Vorgabe gelingen oder scheitern.
+// Fake runner: creates the interpreter in the temp directory on `-m venv`
+// and lets pip calls succeed or fail as configured.
 function makeRun({ venvFails = false, wheelFails = false, sourceFails = false } = {}) {
   const calls = [];
   const run = async (file, args, opts) => {
     calls.push({ file, args, timeout: opts && opts.timeout });
     if (args.includes('venv')) {
-      if (venvFails) throw new Error('venv nicht möglich');
+      if (venvFails) throw new Error('venv not possible');
       const dir = args[args.length - 1];
       await fs.mkdir(path.dirname(venvPython(dir)), { recursive: true });
       await fs.writeFile(venvPython(dir), '');
@@ -33,7 +33,7 @@ function makeRun({ venvFails = false, wheelFails = false, sourceFails = false } 
     }
     if (args.includes('pip')) {
       const wheel = args.includes('--only-binary=:all:');
-      if (wheel ? wheelFails : sourceFails) throw new Error('pip fehlgeschlagen');
+      if (wheel ? wheelFails : sourceFails) throw new Error('pip failed');
       return { stdout: '', stderr: '' };
     }
     throw new Error(`unerwarteter Aufruf: ${file} ${args.join(' ')}`);
@@ -59,12 +59,12 @@ async function exists(p) {
   }
 }
 
-test('venvPython liefert bin/python unter Unix und Scripts\\python.exe unter Windows', () => {
+test('venvPython returns bin/python on Unix and Scripts\\python.exe on Windows', () => {
   assert.equal(venvPython('/x/venv', 'linux'), path.posix.join('/x/venv', 'bin', 'python'));
   assert.equal(venvPython('C:\\v', 'win32'), path.win32.join('C:\\v', 'Scripts', 'python.exe'));
 });
 
-test('erster Aufruf legt die venv an und installiert pypff per Wheel', async (t) => {
+test('first call creates the venv and installs pypff from a wheel', async (t) => {
   const venvDir = await setup(t);
   const { run, calls } = makeRun();
 
@@ -79,7 +79,7 @@ test('erster Aufruf legt die venv an und installiert pypff per Wheel', async (t)
   assert.deepEqual(await readStamp(venvDir), { python: '3.12', pypff: true, complete: true });
 });
 
-test('zweiter Aufruf mit gleichem Stamp macht keine Aufrufe', async (t) => {
+test('second call with the same stamp makes no calls', async (t) => {
   const venvDir = await setup(t);
   const { run, calls } = makeRun();
   await ensureVenv({ probe: PROBE, venvDir, run });
@@ -91,12 +91,12 @@ test('zweiter Aufruf mit gleichem Stamp macht keine Aufrufe', async (t) => {
   assert.equal(calls.length, 0);
 });
 
-test('Stamp mit complete: false führt zu einem Neuaufbau des Ordners', async (t) => {
+test('a stamp with complete: false rebuilds the folder', async (t) => {
   const venvDir = await setup(t);
   await writeStamp(venvDir, { python: '3.12', pypff: true, complete: false });
   await fs.mkdir(path.dirname(venvPython(venvDir)), { recursive: true });
   await fs.writeFile(venvPython(venvDir), '');
-  await fs.writeFile(path.join(venvDir, 'stale.txt'), 'alt');
+  await fs.writeFile(path.join(venvDir, 'stale.txt'), 'old');
   const { run, calls } = makeRun();
 
   const result = await ensureVenv({ probe: PROBE, venvDir, run });
@@ -106,7 +106,7 @@ test('Stamp mit complete: false führt zu einem Neuaufbau des Ordners', async (t
   assert.deepEqual(calls[0].args, ['-m', 'venv', venvDir]);
 });
 
-test('Stamp-Version 3.11 mit Probe 3.13 führt zu einem Neuaufbau', async (t) => {
+test('stamp version 3.11 with probe 3.13 rebuilds', async (t) => {
   const venvDir = await setup(t);
   await writeStamp(venvDir, { python: '3.11', pypff: true, complete: true });
   await fs.mkdir(path.dirname(venvPython(venvDir)), { recursive: true });
@@ -124,7 +124,7 @@ test('Stamp-Version 3.11 mit Probe 3.13 führt zu einem Neuaufbau', async (t) =>
   assert.deepEqual(await readStamp(venvDir), { python: '3.13', pypff: true, complete: true });
 });
 
-test('Wheel schlägt fehl, Quellbuild gelingt: pypff true', async (t) => {
+test('wheel fails, source build succeeds: pypff true', async (t) => {
   const venvDir = await setup(t);
   const { run, calls } = makeRun({ wheelFails: true });
 
@@ -137,7 +137,7 @@ test('Wheel schlägt fehl, Quellbuild gelingt: pypff true', async (t) => {
   assert.deepEqual(await readStamp(venvDir), { python: '3.12', pypff: true, complete: true });
 });
 
-test('Wheel und Quellbuild schlagen fehl: kein Wurf, pypff false im Stamp', async (t) => {
+test('wheel and source build fail: no throw, pypff false in the stamp', async (t) => {
   const venvDir = await setup(t);
   const { run } = makeRun({ wheelFails: true, sourceFails: true });
 
@@ -147,7 +147,7 @@ test('Wheel und Quellbuild schlagen fehl: kein Wurf, pypff false im Stamp', asyn
   assert.deepEqual(await readStamp(venvDir), { python: '3.12', pypff: false, complete: true });
 });
 
-test('Folgeaufruf bei pypff false macht keinen pip-Aufruf', async (t) => {
+test('a later call with pypff false makes no pip call', async (t) => {
   const venvDir = await setup(t);
   await ensureVenv({ probe: PROBE, venvDir, run: makeRun({ wheelFails: true, sourceFails: true }).run });
   const { run, calls } = makeRun();
@@ -158,7 +158,7 @@ test('Folgeaufruf bei pypff false macht keinen pip-Aufruf', async (t) => {
   assert.equal(calls.length, 0);
 });
 
-test('retryPypff: true unternimmt genau einen Installationsversuch', async (t) => {
+test('retryPypff: true makes exactly one install attempt', async (t) => {
   const venvDir = await setup(t);
   await ensureVenv({ probe: PROBE, venvDir, run: makeRun({ wheelFails: true, sourceFails: true }).run });
   const { run, calls } = makeRun({ wheelFails: true, sourceFails: true });
@@ -171,7 +171,7 @@ test('retryPypff: true unternimmt genau einen Installationsversuch', async (t) =
   assert.deepEqual(calls[1].args, PIP_SOURCE);
 });
 
-test('retryPypff: true mit Erfolg aktualisiert den Stamp auf pypff true', async (t) => {
+test('retryPypff: true with success updates the stamp to pypff true', async (t) => {
   const venvDir = await setup(t);
   await ensureVenv({ probe: PROBE, venvDir, run: makeRun({ wheelFails: true, sourceFails: true }).run });
   const { run, calls } = makeRun();
@@ -184,14 +184,14 @@ test('retryPypff: true mit Erfolg aktualisiert den Stamp auf pypff true', async 
   assert.deepEqual(await readStamp(venvDir), { python: '3.12', pypff: true, complete: true });
 });
 
-test('venv-Anlage schlägt fehl: ensureVenv wirft', async (t) => {
+test('creating the venv fails: ensureVenv throws', async (t) => {
   const venvDir = await setup(t);
   const { run } = makeRun({ venvFails: true });
 
-  await assert.rejects(ensureVenv({ probe: PROBE, venvDir, run }), /venv nicht möglich/);
+  await assert.rejects(ensureVenv({ probe: PROBE, venvDir, run }), /venv not possible/);
 });
 
-test('onProgress meldet die Schritte', async (t) => {
+test('onProgress reports the steps', async (t) => {
   const venvDir = await setup(t);
   const { run } = makeRun();
   const messages = [];

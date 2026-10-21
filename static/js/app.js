@@ -344,7 +344,7 @@ let openMenu = null; // { button, list } of the open row menu
 let folderReturn = null; // where focus goes when the dialog closes: { key } of the row, or { add: true } for the top-level button
 let folderDrag = null; // { key, sid } while an archive folder row is dragged
 
-// "Neuer Ordner…" at the top level: shown while exactly one archive is the selection.
+// "New folder…" at the top level: shown while exactly one archive is the selection.
 function updateFolderAdd() {
   const ids = activeSourceIds();
   const src = ids.length === 1 ? sourceById(ids[0]) : null;
@@ -639,7 +639,7 @@ function setTransferBusy(busy) {
   updateTransferSubmit();
 }
 
-// The submit needs an archive and a folder, or "Neuer Ordner…" with a name.
+// The submit needs an archive and a folder, or "New folder…" with a name.
 function updateTransferSubmit() {
   const ctx = transferCtx;
   const name = $('transfer-new-name').value.trim();
@@ -730,7 +730,7 @@ async function loadTransferFolders() {
   if (preset && !preset.id) $('transfer-parent').value = preset.parent ?? '';
 }
 
-// Radio list of the archive's folders as a tree, "Neuer Ordner…" last; its parent picker lists the same folders.
+// Radio list of the archive's folders as a tree, "New folder…" last; its parent picker lists the same folders.
 function renderTransferFolders() {
   const ctx = transferCtx;
   const rows = ctx.nodes.map((node) => {
@@ -1859,7 +1859,7 @@ $('fetch-form').addEventListener('submit', async (e) => {
   }
 });
 
-/* ---------- Bibliothek und Quelle hinzufügen (Verzeichnis-Auswahl) ---------- */
+/* ---------- Adding a library and a source (directory picker) ---------- */
 const dirState = { path: '', parent: null, home: '', openable: false, library: false, seq: 0, file: null };
 let libBusy = false;
 
@@ -2657,7 +2657,7 @@ function renderSettingsTags() {
     : [el('li', { class: 'group-row muted', text: t('ui.settings.no_tags') })]));
 }
 
-/* ---------- Duplikate aufräumen (Einstellungen) ---------- */
+/* ---------- Cleaning up duplicates (settings) ---------- */
 // The preview is valid only for the target, reference and action it was made for: any change clears it.
 let cleanupPreview = null; // { key, action, data } of the last preview
 let cleanupSeq = 0; // a preview answer that arrives after a change is dropped
@@ -2704,7 +2704,7 @@ function resetCleanupPreview() {
   updateCleanupControls();
 }
 
-// The link option is off when the pair cannot be linked; "Aufräumen…" needs a preview with something to do.
+// The link option is off when the pair cannot be linked; "Clean up…" needs a preview with something to do.
 function updateCleanupControls() {
   const usable = !$('cleanup-fields').disabled;
   const p = cleanupPreview;

@@ -18,7 +18,7 @@ electron/build/
 electron/dist/
 npm-debug.log*
 
-# --- Secrets und lokale Umgebung ---
+# --- Secrets and local environment ---
 .env
 .env.*
 !.env.example
@@ -27,7 +27,7 @@ npm-debug.log*
 *.p12
 *.pfx
 
-# --- Mail-Daten (Sicherheitsnetz, falls eine Bibliothek oder ein Export im Repo landet) ---
+# --- Mail data (safety net in case a library or an export ends up in the repo) ---
 library.json
 *.db
 *.db-journal

@@ -213,6 +213,9 @@ node screenshots.mjs
 | `scripts/docs/` | Demo library and screenshot script |
 | `tests/` | Python tests |
 
+Much of the code was written with an AI coding assistant. Pull requests must
+say which AI tools, if any, helped. Details in [AI-DISCLAIMER.md](AI-DISCLAIMER.md).
+
 ## License
 
 [MIT](LICENSE). Mailophant is not affiliated with Proton AG or Microsoft.

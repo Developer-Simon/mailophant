@@ -64,7 +64,7 @@ class GestureMathTest(unittest.TestCase):
 
     def test_should_go_back(self):
         self.assertTrue(run_js("shouldGoBack(10, 1000, 400)"))    # kurzer, schneller Wisch
-        self.assertFalse(run_js("shouldGoBack(300, -800, 400)"))  # weit gezogen, aber zurückgeworfen
+        self.assertFalse(run_js("shouldGoBack(300, -800, 400)"))  # dragged far, but flung back
         self.assertTrue(run_js("shouldGoBack(250, 0, 400)"))
         self.assertFalse(run_js("shouldGoBack(150, 0, 400)"))
 
@@ -72,13 +72,13 @@ class GestureMathTest(unittest.TestCase):
         xs = run_js("(() => { let s = {x: 0, v: 0}; const xs = [];"
                     " for (let i = 0; i < 240; i++) { s = springStep(s, 1, 1/240); xs.push(s.x); }"
                     " return xs; })()")
-        self.assertLessEqual(max(xs), 1.0 + 1e-6)   # kritisch gedämpft: kein Überschwingen
+        self.assertLessEqual(max(xs), 1.0 + 1e-6)   # critically damped: no overshoot
         self.assertGreater(xs[-1], 0.995)           # nach 1 s angekommen
         self.assertTrue(all(b >= a - 1e-9 for a, b in zip(xs, xs[1:])))
 
     def test_spring_keeps_initial_velocity(self):
         s = run_js("springStep({x: 0, v: 5}, 0, 1/240)")
-        self.assertGreater(s["x"], 0)  # Startgeschwindigkeit wird übernommen
+        self.assertGreater(s["x"], 0)  # the initial velocity carries over
 
 
 # Folder fixtures: F(key, name, path, order, extra). Helpers return plain data so Node's output is comparable.
@@ -121,7 +121,7 @@ class FolderTreeTest(unittest.TestCase):
         want = [["Reisen", 0, True, [["2024", 1, True, [["Frankreich", 2, False, []],
                                                        ["Italien", 2, False, []]]]]]]
         self.assertEqual(got, want)
-        # Ein vorhandener Ordner mit gleichem Pfad (ohne Beachtung der Schreibung) ist der Elternknoten.
+        # An existing folder with the same path (ignoring case) is the parent node.
         got = run_js(folder_js("""
             return shape(buildFolderTree([F('r', 'Reisen', 'reisen'), F('x', 'x', 'Reisen/x')]));"""))
         self.assertEqual(got, [["Reisen", 0, False, [["x", 1, False, []]]]])
@@ -172,7 +172,7 @@ class FolderTreeTest(unittest.TestCase):
         self.assertEqual(got["into"], {"parentKey": "k2", "index": 2})
         self.assertEqual(got["before_child"], {"parentKey": "k2", "index": 0})
         self.assertEqual(got["after_child"], {"parentKey": "k2", "index": 1})
-        self.assertEqual(got["into_child"], {"parentKey": "k2", "index": 1})  # schon Kind: wird nicht mitgezählt
+        self.assertEqual(got["into_child"], {"parentKey": "k2", "index": 1})  # already a child: not counted
         self.assertEqual(got["root_from_child"], {"parentKey": None, "index": 0})
 
     def test_drop_into_own_subtree_is_null(self):
@@ -192,7 +192,7 @@ class FolderTreeTest(unittest.TestCase):
         self.assertIsNone(got["before_descendant"])
         self.assertIsNone(got["onto_self"])
         self.assertEqual(got["into_child_ok"], {"parentKey": "kx", "index": 1})
-        self.assertIsNone(got["beside_synthetic_parent"])  # Elternteil ist ein Platzhalter ohne Ordner
+        self.assertIsNone(got["beside_synthetic_parent"])  # the parent is a placeholder without a folder
 
     def test_child_of_system_folder(self):
         got = run_js(folder_js("""
@@ -213,14 +213,14 @@ class FolderTreeTest(unittest.TestCase):
         self.assertEqual(run_js("buildFolderTree([])"), [])
 
     def test_paths_differing_only_in_case_attach_to_first_parent(self):
-        # Pfade werden ohne Schreibung verglichen: "a/x" hängt am Ordner mit Pfad "A".
+        # Paths are compared ignoring case: "a/x" hangs below the folder with path "A".
         got = run_js(folder_js("""
             return shape(buildFolderTree([
               F('a', 'A', 'A'), F('ax', 'x', 'a/x'),
             ]));"""))
         self.assertEqual(got, [["A", 0, False, [["x", 1, False, []]]]])
-        # Gibt es zwei Ordner mit demselben Pfad, bekommt der zuerst gelieferte die Kinder;
-        # der zweite bleibt eine eigene Wurzel.
+        # With two folders on the same path, the one delivered first gets the children;
+        # the second stays a root of its own.
         got = run_js(folder_js("""
             return shape(buildFolderTree([
               F('a1', 'A', 'A'), F('a2', 'Zweite', 'a'), F('ax', 'x', 'a/x'),

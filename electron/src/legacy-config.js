@@ -5,8 +5,8 @@ const nodeFs = require('node:fs/promises');
 const { constants: fsConstants } = require('node:fs');
 
 /**
- * Frühere userData-Ordner (unterhalb von appData), in dieser Reihenfolge geprüft.
- * Der erste Ordner, der eine config.json enthält, gewinnt.
+ * Former userData folders (below appData), checked in this order.
+ * The first folder that contains a config.json wins.
  */
 const LEGACY_DIR_NAMES = ['Mail-Backup-Viewer', 'mail-backup-viewer'];
 
@@ -26,10 +26,10 @@ async function fileExists(file, fs) {
 }
 
 /**
- * Übernimmt die config.json aus einem früheren userData-Ordner, falls im aktuellen noch keine liegt.
- * Es wird nie überschrieben und nie etwas gelöscht; das venv wird bewusst nicht kopiert.
+ * Takes over the config.json from a former userData folder if the current one has none yet.
+ * Nothing is ever overwritten or deleted; the venv is deliberately not copied.
  * @param {{ appDataDir: string, userDataDir: string, fs?: typeof nodeFs }} options
- * @returns {Promise<string | null>} Quellpfad der kopierten Datei oder null, wenn nichts kopiert wurde.
+ * @returns {Promise<string | null>} source path of the copied file, or null if nothing was copied.
  */
 async function migrateLegacyConfig({ appDataDir, userDataDir, fs = nodeFs }) {
   const target = path.join(userDataDir, 'config.json');
@@ -39,7 +39,7 @@ async function migrateLegacyConfig({ appDataDir, userDataDir, fs = nodeFs }) {
     const source = path.join(appDataDir, dirName, 'config.json');
     if (!(await fileExists(source, fs))) continue;
     await fs.mkdir(userDataDir, { recursive: true });
-    // COPYFILE_EXCL: schlägt fehl statt zu überschreiben, falls die Datei inzwischen angelegt wurde.
+    // COPYFILE_EXCL: fails instead of overwriting if the file was created in the meantime.
     await fs.copyFile(source, target, fsConstants.COPYFILE_EXCL);
     return source;
   }

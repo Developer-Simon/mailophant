@@ -1,6 +1,6 @@
 'use strict';
 
-// Brücke zur Seite: nur der System-Dateidialog, siehe native-picker.js.
+// Bridge to the page: only the system file dialog, see native-picker.js.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('mailophant', {

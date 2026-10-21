@@ -1,5 +1,5 @@
-# Slim-Variante: ohne Python-Interpreter, der Viewer nutzt ein System-Python mit venv.
-# Die full-Variante steht in electron-builder.full.yml und erweitert diese Datei.
+# Slim variant: no Python interpreter, the viewer uses a system Python with a venv.
+# The full variant is in electron-builder.full.yml and extends this file.
 appId: io.github.developer-simon.mailophant
 productName: Mailophant
 directories:
@@ -24,7 +24,7 @@ extraResources:
       - "!**/*.pyc"
 linux:
   target: AppImage
-  # Einzelne Größen bis 512 px: Flatpak nimmt keine größeren Icons an, nur mit icon.png fehlte es dort ganz.
+  # Separate sizes up to 512 px: Flatpak takes no larger icons, and with only icon.png it had none at all.
   icon: assets/icons
   category: Office
   desktop:

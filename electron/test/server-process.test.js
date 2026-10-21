@@ -10,28 +10,28 @@ const APP_ROOT = path.resolve(__dirname, '..', '..');
 const CONFIG = path.join(os.tmpdir(), 'mailviewer-test-config.json');
 const SERVING = (port) => `Serving on http://127.0.0.1:${port}/ (Ctrl+C to stop)`;
 
-// Fake-"python": `node -e <body> --`. Die Argumente nach `--` (also `-m mailviewer --port ...`)
-// landen in process.argv ab Index 1 und werden vom Skript ausgewertet.
+// Fake "python": `node -e <body> --`. The arguments after `--` (i.e. `-m mailviewer --port ...`)
+// end up in process.argv from index 1 on and are evaluated by the script.
 const fake = (body) => [process.execPath, '-e', `const args = process.argv.slice(1);\n${body}`, '--'];
 const ARGV_PORT = "const port = args[args.indexOf('--port') + 1];";
 const KEEP_ALIVE = 'setInterval(() => {}, 1000);';
 
-test('PREFERRED_PORT ist 8025', () => {
+test('PREFERRED_PORT is 8025', () => {
   assert.equal(PREFERRED_PORT, 8025);
 });
 
-test('parsePort erkennt die Serving-Zeile', () => {
+test('parsePort recognises the serving line', () => {
   assert.equal(parsePort(SERVING(8025)), 8025);
   assert.equal(parsePort('Serving on http://127.0.0.1:51234/'), 51234);
 });
 
-test('parsePort liefert null für andere Zeilen', () => {
+test('parsePort returns null for other lines', () => {
   assert.equal(parsePort('Traceback (most recent call last):'), null);
   assert.equal(parsePort('error: [Errno 98] Address already in use'), null);
   assert.equal(parsePort(''), null);
 });
 
-test('startServer löst mit Port und URL aus der Serving-Zeile auf', async (t) => {
+test('startServer resolves with port and URL from the serving line', async (t) => {
   const python = fake(`${ARGV_PORT}
 setTimeout(() => process.stderr.write('Serving on http://127.0.0.1:' + port + '/ (Ctrl+C to stop)\\n'), 100);
 ${KEEP_ALIVE}`);
@@ -41,7 +41,7 @@ ${KEEP_ALIVE}`);
   assert.equal(server.url, `http://127.0.0.1:${PREFERRED_PORT}/`);
 });
 
-test('startServer übergibt -m mailviewer, --port, --config und extraArgs', async (t) => {
+test('startServer passes -m mailviewer, --port, --config and extraArgs', async (t) => {
   const expected = `-m mailviewer --port ${PREFERRED_PORT} --config ${CONFIG} --cli x`;
   const python = fake(`if (args.join(' ') !== ${JSON.stringify(expected)}) process.exit(3);
 process.stderr.write('${SERVING(PREFERRED_PORT)}\\n');
@@ -53,7 +53,7 @@ ${KEEP_ALIVE}`);
   assert.equal(server.port, PREFERRED_PORT);
 });
 
-test('startServer setzt PYTHONUNBUFFERED, PYTHONUTF8 und PYTHONPATH', async (t) => {
+test('startServer sets PYTHONUNBUFFERED, PYTHONUTF8 and PYTHONPATH', async (t) => {
   const python = fake(`const ok = process.env.PYTHONUNBUFFERED === '1' && process.env.PYTHONUTF8 === '1'
   && process.env.PYTHONPATH === ${JSON.stringify(APP_ROOT)};
 if (!ok) process.exit(4);
@@ -64,20 +64,20 @@ ${KEEP_ALIVE}`);
   assert.equal(server.port, PREFERRED_PORT);
 });
 
-test('startServer isoliert die Umgebung: PYTHONNOUSERSITE=1, PYTHONHOME entfernt', async (t) => {
+test('startServer isolates the environment: PYTHONNOUSERSITE=1, PYTHONHOME removed', async (t) => {
   const python = fake(`if (process.env.PYTHONHOME !== undefined) process.exit(5);
 if (process.env.PYTHONNOUSERSITE !== '1') process.exit(6);
 process.stderr.write('${SERVING(PREFERRED_PORT)}\\n');
 ${KEEP_ALIVE}`);
   const server = await startServer({
     python, appRoot: APP_ROOT, configPath: CONFIG, timeoutMs: 5000,
-    env: { PYTHONHOME: '/nicht/vorhanden' },
+    env: { PYTHONHOME: '/does/not/exist' },
   });
   t.after(() => server.stop());
   assert.equal(server.port, PREFERRED_PORT);
 });
 
-test('startServer scheitert sofort mit stderrTail, ohne timeoutMs abzuwarten', async () => {
+test('startServer fails right away with stderrTail, without waiting for timeoutMs', async () => {
   const python = fake(`process.stderr.write('boom\\n'); process.exit(1);`);
   const started = Date.now();
   await assert.rejects(
@@ -89,10 +89,10 @@ test('startServer scheitert sofort mit stderrTail, ohne timeoutMs abzuwarten', a
       return true;
     },
   );
-  assert.ok(Date.now() - started < 5000, 'darf nicht bis timeoutMs warten');
+  assert.ok(Date.now() - started < 5000, 'must not wait until timeoutMs');
 });
 
-test('startServer scheitert nach timeoutMs, wenn nichts ausgegeben wird', async () => {
+test('startServer fails after timeoutMs when nothing is printed', async () => {
   const python = fake(KEEP_ALIVE);
   const started = Date.now();
   await assert.rejects(
@@ -102,7 +102,7 @@ test('startServer scheitert nach timeoutMs, wenn nichts ausgegeben wird', async 
   assert.ok(Date.now() - started < 3000);
 });
 
-test('startServer wiederholt mit --port 0, wenn 8025 belegt ist', async (t) => {
+test('startServer retries with --port 0 when 8025 is taken', async (t) => {
   const python = fake(`${ARGV_PORT}
 if (port === '${PREFERRED_PORT}') {
   process.stderr.write('OSError: [Errno 98] Address already in use\\n');
@@ -116,7 +116,7 @@ ${KEEP_ALIVE}`);
   assert.equal(server.url, 'http://127.0.0.1:4321/');
 });
 
-test('stop() beendet den Prozess vollständig und ist idempotent', async (t) => {
+test('stop() ends the process completely and is idempotent', async (t) => {
   const python = fake(`${ARGV_PORT}
 process.stderr.write('${SERVING(PREFERRED_PORT)}\\n');
 ${KEEP_ALIVE}`);

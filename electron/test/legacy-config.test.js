@@ -28,7 +28,7 @@ function writeLegacy(dirName, content) {
   fs.writeFileSync(path.join(dir, 'config.json'), content);
 }
 
-test('kopiert die config.json aus dem Ordner Mail-Backup-Viewer', async () => {
+test('copies the config.json from the Mail-Backup-Viewer folder', async () => {
   writeLegacy('Mail-Backup-Viewer', '{"library":"/a"}');
 
   const source = await migrateLegacyConfig({ appDataDir, userDataDir });
@@ -37,7 +37,7 @@ test('kopiert die config.json aus dem Ordner Mail-Backup-Viewer', async () => {
   assert.equal(fs.readFileSync(path.join(userDataDir, 'config.json'), 'utf8'), '{"library":"/a"}');
 });
 
-test('überschreibt eine vorhandene config.json nicht', async () => {
+test('does not overwrite an existing config.json', async () => {
   writeLegacy('Mail-Backup-Viewer', '{"library":"/alt"}');
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.writeFileSync(path.join(userDataDir, 'config.json'), '{"library":"/neu"}');
@@ -48,7 +48,7 @@ test('überschreibt eine vorhandene config.json nicht', async () => {
   assert.equal(fs.readFileSync(path.join(userDataDir, 'config.json'), 'utf8'), '{"library":"/neu"}');
 });
 
-test('nimmt den ersten vorhandenen Altordner und lässt den zweiten unberührt', async () => {
+test('takes the first existing old folder and leaves the second alone', async () => {
   writeLegacy('Mail-Backup-Viewer', '{"from":"first"}');
   writeLegacy('mail-backup-viewer', '{"from":"second"}');
 
@@ -62,7 +62,7 @@ test('nimmt den ersten vorhandenen Altordner und lässt den zweiten unberührt',
   );
 });
 
-test('nimmt den Kleinschreibungs-Ordner, wenn der andere fehlt', async () => {
+test('takes the lower-case folder when the other one is missing', async () => {
   writeLegacy('mail-backup-viewer', '{"from":"lower"}');
 
   const source = await migrateLegacyConfig({ appDataDir, userDataDir });
@@ -71,7 +71,7 @@ test('nimmt den Kleinschreibungs-Ordner, wenn der andere fehlt', async () => {
   assert.equal(fs.readFileSync(path.join(userDataDir, 'config.json'), 'utf8'), '{"from":"lower"}');
 });
 
-test('liefert null, wenn es keine Quelle gibt', async () => {
+test('returns null when there is no source', async () => {
   fs.mkdirSync(path.join(appDataDir, 'Mail-Backup-Viewer'), { recursive: true });
 
   const source = await migrateLegacyConfig({ appDataDir, userDataDir });

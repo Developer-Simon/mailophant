@@ -10,7 +10,7 @@ const path = require('node:path');
 const { targetKey, tarCommand, verifySha256 } = require('../runtime/build-runtime.js');
 const lock = require('../runtime/runtime.lock.json');
 
-test('tarCommand: Windows-tar unter win32, sonst tar aus dem PATH', () => {
+test('tarCommand: Windows tar on win32, otherwise tar from PATH', () => {
   assert.equal(tarCommand('win32', { SystemRoot: 'C:\\Windows' }), 'C:\\Windows\\System32\\tar.exe');
   assert.equal(tarCommand('linux', {}), 'tar');
 });

@@ -4,12 +4,12 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { enabled, pickerOptions, registerPicker } = require('../src/native-picker');
 
-test('enabled nur mit MAILOPHANT_NATIVE_PICKER=1', () => {
+test('enabled only with MAILOPHANT_NATIVE_PICKER=1', () => {
   assert.equal(enabled({ MAILOPHANT_NATIVE_PICKER: '1' }), true);
   assert.equal(enabled({}), false);
 });
 
-test('pickerOptions: Ordner, oder Outlook-Datei mit Filter', () => {
+test('pickerOptions: folder, or Outlook file with a filter', () => {
   assert.deepEqual(pickerOptions({ title: 'Wählen' }), { title: 'Wählen', properties: ['openDirectory', 'createDirectory'] });
   const file = pickerOptions({ kind: 'outlook', filterName: 'Outlook-Dateien' });
   assert.deepEqual(file.properties, ['openFile']);
@@ -25,7 +25,7 @@ function harness(env, allowed = true) {
   return { handlers, calls };
 }
 
-test('ausgeschaltet: kein Dialog', async () => {
+test('switched off: no dialog', async () => {
   const { handlers, calls } = harness({});
   const e = { senderFrame: { url: 'http://127.0.0.1:1/' } };
   assert.equal(await handlers['native-picker'](e), false);
@@ -33,7 +33,7 @@ test('ausgeschaltet: kein Dialog', async () => {
   assert.equal(calls.length, 0);
 });
 
-test('fremder Origin: kein Dialog', async () => {
+test('foreign origin: no dialog', async () => {
   const { handlers, calls } = harness({ MAILOPHANT_NATIVE_PICKER: '1' }, false);
   const e = { senderFrame: { url: 'https://example.com/' } };
   assert.equal(await handlers['native-picker'](e), false);

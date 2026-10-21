@@ -1,10 +1,10 @@
-# Full-Variante: wie electron-builder.yml, zusätzlich mit gebündeltem Python-Interpreter
-# (electron/build/python, erzeugt von `npm run build:runtime`).
+# Full variant: like electron-builder.yml, plus a bundled Python interpreter
+# (electron/build/python, created by `npm run build:runtime`).
 extends: ./electron-builder.yml
 appId: io.github.developer-simon.mailophant
 productName: Mailophant
-# directories und files werden hier vollständig wiederholt, damit buildResources und das Icon
-# auch dann gelten, wenn extends Objekte nicht tief zusammenführt.
+# directories and files are repeated here in full, so buildResources and the icon
+# still apply if extends doesn't merge objects deeply.
 directories:
   output: dist/full
   buildResources: assets
@@ -28,9 +28,9 @@ extraResources:
   - from: build/python
     to: python
 linux:
-  # Flatpak nur hier: in der Sandbox gibt es kein System-Python, die slim-Variante liefe dort nicht.
+  # Flatpak only here: the sandbox has no system Python, so the slim variant wouldn't run there.
   target: [AppImage, flatpak]
-  # Einzelne Größen bis 512 px: Flatpak nimmt keine größeren Icons an, nur mit icon.png fehlte es dort ganz.
+  # Separate sizes up to 512 px: Flatpak takes no larger icons, and with only icon.png it had none at all.
   icon: assets/icons
   category: Office
   desktop:
@@ -49,9 +49,9 @@ flatpak:
     - --share=ipc
     - --device=dri
     - --socket=pulseaudio      # MP3-Vorschau
-    - --share=network          # Proton-Abruf und Download der Export-CLI
-    - --filesystem=home        # Bibliothek und Exporte liegen irgendwo im Home
-    - --filesystem=/run/media  # alte Platten mit .pst-Dateien
+    - --share=network          # Proton fetch and download of the export CLI
+    - --filesystem=home        # library and exports live anywhere in home
+    - --filesystem=/run/media  # old disks with .pst files
     - --filesystem=/media
     - --talk-name=org.freedesktop.Notifications
 mac:

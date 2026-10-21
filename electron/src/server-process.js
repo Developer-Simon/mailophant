@@ -8,14 +8,14 @@ const PREFERRED_PORT = 8025;
 const DEFAULT_TIMEOUT_MS = 15000;
 const STOP_GRACE_MS = 3000;
 const TAIL_LINES = 20;
-// Serving-Zeile aus mailviewer/server.py (main), geschrieben auf stderr.
+// Serving line from mailviewer/server.py (main), written to stderr.
 const SERVING_RE = /^Serving on http:\/\/127\.0\.0\.1:(\d+)\//;
 const ADDR_IN_USE_RE = /Address already in use|WinError 10048|EADDRINUSE/;
 
 class ServerStartError extends Error {
   /**
    * @param {string} message
-   * @param {string} stderrTail letzte Zeilen der Server-Ausgabe
+   * @param {string} stderrTail last lines of the server output
    */
   constructor(message, stderrTail) {
     super(message);
@@ -25,7 +25,7 @@ class ServerStartError extends Error {
 }
 
 /**
- * Liest den Port aus der Serving-Zeile.
+ * Reads the port from the serving line.
  * @param {string} line
  * @returns {number | null}
  */
@@ -41,9 +41,9 @@ function isExited(child) {
 }
 
 /**
- * Beendet den Prozess: SIGTERM, nach STOP_GRACE_MS SIGKILL; unter Windows taskkill /T /F.
+ * Stops the process: SIGTERM, SIGKILL after STOP_GRACE_MS; taskkill /T /F on Windows.
  * @param {import('node:child_process').ChildProcess} child
- * @param {Promise<void>} exited wird beim 'close' des Prozesses aufgelöst
+ * @param {Promise<void>} exited resolves on the process's 'close'
  */
 async function terminate(child, exited) {
   if (isExited(child)) {
@@ -65,7 +65,7 @@ async function terminate(child, exited) {
 }
 
 /**
- * Ein Startversuch mit dem gegebenen Port. Löst immer auf, wirft nicht.
+ * One start attempt with the given port. Always resolves, never throws.
  * @returns {Promise<
  *   { ok: true, child: import('node:child_process').ChildProcess, exited: Promise<void>, port: number } |
  *   { ok: false, tail: string, code: number | null, signal: string | null, timedOut: boolean, error: Error | null }
@@ -76,7 +76,7 @@ function launch(opts, port) {
   const [file, ...prefix] = python;
   const args = [...prefix, '-m', 'mailviewer', '--port', String(port), '--config', configPath, ...extraArgs];
 
-  // PYTHONNOUSERSITE: keine Pakete aus ~/.local; PYTHONHOME: fremde Stdlib nicht übernehmen.
+  // PYTHONNOUSERSITE: no packages from ~/.local; PYTHONHOME: don't pick up a foreign stdlib.
   const childEnv = {
     ...process.env,
     ...env,
@@ -161,8 +161,8 @@ function makeHandle(ready) {
 }
 
 /**
- * Startet `python -m mailviewer --port <p> --config <configPath> ...extraArgs`.
- * Zuerst PREFERRED_PORT; ist der Port belegt, ein zweiter Versuch mit `--port 0`.
+ * Starts `python -m mailviewer --port <p> --config <configPath> ...extraArgs`.
+ * PREFERRED_PORT first; if that port is taken, a second attempt with `--port 0`.
  * @param {{ python: string[], appRoot: string, configPath: string, extraArgs?: string[],
  *           env?: NodeJS.ProcessEnv, timeoutMs?: number }} opts
  * @returns {Promise<{ port: number, url: string, pid: number | undefined, stop: () => Promise<void> }>}

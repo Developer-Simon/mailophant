@@ -25,7 +25,7 @@ async function defaultExists(p) {
 }
 
 /**
- * Pfad zum mitgelieferten Python.
+ * Path to the bundled Python.
  * @param {string} resourcesDir
  * @param {string} [platform]
  */
@@ -37,7 +37,7 @@ function bundledPython(resourcesDir, platform = process.platform) {
 
 class RuntimeUnavailableError extends Error {
   /**
-   * @param {{ cmd: string[], reason: string }[]} rejected alle Ablehnungsgründe
+   * @param {{ cmd: string[], reason: string }[]} rejected all rejection reasons
    */
   constructor(rejected) {
     const lines = rejected.map((r) => `  - ${r.cmd.join(' ')}: ${r.reason}`);
@@ -49,7 +49,7 @@ class RuntimeUnavailableError extends Error {
 }
 
 /**
- * Prüft, ob pypff im mitgelieferten Python importierbar ist.
+ * Checks whether pypff can be imported in the bundled Python.
  * @returns {Promise<boolean>}
  */
 async function checkPypff(run, python) {
@@ -62,8 +62,8 @@ async function checkPypff(run, python) {
 }
 
 /**
- * Wählt den Interpreter: MAILOPHANT_PYTHON, wenn gesetzt (Flatpak: Python der Runtime, pypff im Paket),
- * sonst System-Python mit venv, sonst das mitgelieferte.
+ * Picks the interpreter: MAILOPHANT_PYTHON if set (Flatpak: the runtime's Python, pypff in the package),
+ * otherwise system Python with a venv, otherwise the bundled one.
  * @param {{ userDataDir: string, resourcesDir: string, onProgress?: (m: string) => void,
  *           deps?: { find?: Function, ensure?: Function, exists?: Function, run?: Function, env?: object } }} opts
  * @returns {Promise<{ python: string[], mode: 'system' | 'bundled', pypff: boolean }>}

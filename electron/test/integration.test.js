@@ -14,7 +14,7 @@ const { runSmoke } = require('../src/smoke');
 
 const APP_ROOT = path.resolve(__dirname, '..', '..');
 
-/** Freier Port, der kurz danach nichts mehr annimmt. */
+/** A free port that stops accepting connections right after. */
 async function deadUrl() {
   const srv = net.createServer();
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
@@ -23,17 +23,17 @@ async function deadUrl() {
   return `http://127.0.0.1:${port}/`;
 }
 
-// Nur wenn ein System-Python vorhanden ist; sonst wird der Test übersprungen.
+// Only when a system Python is present; otherwise the test is skipped.
 const probeResult = findSystemPython().then((r) => r.python);
 
-test('Server mit System-Python: GET / und GET /api/config', async (t) => {
+test('server with system Python: GET / and GET /api/config', async (t) => {
   const probe = await probeResult;
   if (!probe) {
-    t.skip('kein System-Python gefunden');
+    t.skip('no system Python found');
     return;
   }
   if (probe.cmd.length !== 1) {
-    t.skip('Fake-ensure kann nur einfache Befehle (ein Element) abbilden');
+    t.skip('the fake ensure only handles single-element commands');
     return;
   }
 
@@ -41,7 +41,7 @@ test('Server mit System-Python: GET / und GET /api/config', async (t) => {
   t.after(() => fs.rmSync(userDataDir, { recursive: true, force: true }));
   const configPath = path.join(userDataDir, 'config.json');
 
-  // Echtes System-Python durchreichen, aber ensure ohne venv-Anlage und ohne pypff-Installation.
+  // Pass the real system Python through, but ensure without creating a venv or installing pypff.
   const runtime = await resolveRuntime({
     userDataDir,
     resourcesDir: path.join(userDataDir, 'no-resources'),
@@ -50,7 +50,7 @@ test('Server mit System-Python: GET / und GET /api/config', async (t) => {
       ensure: async ({ probe: p }) => ({ python: p.cmd[0], pypff: false, rebuilt: false }),
       exists: async () => false,
       run: async () => {
-        throw new Error('kein Netzwerk im Test');
+        throw new Error('no network in tests');
       },
     },
   });
@@ -79,15 +79,15 @@ test('Server mit System-Python: GET / und GET /api/config', async (t) => {
   await server.stop();
 });
 
-test('runSmoke: toter Port liefert false', async () => {
+test('runSmoke: a dead port gives false', async () => {
   assert.equal(await runSmoke(await deadUrl()), false);
 });
 
-test('runSmoke: Status ≠ 200 oder ohne <title liefert false', async (t) => {
+test('runSmoke: status ≠ 200 or no <title gives false', async (t) => {
   const srv = http.createServer((req, res) => {
     if (req.url === '/ok') {
       res.writeHead(200, { 'content-type': 'text/html' });
-      res.end('<html><body>kein Titel</body></html>');
+      res.end('<html><body>no title</body></html>');
     } else {
       res.writeHead(500, { 'content-type': 'text/html' });
       res.end('<title>Fehler</title>');
