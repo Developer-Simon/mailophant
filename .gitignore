@@ -26,6 +26,7 @@ npm-debug.log*
 *.key
 *.p12
 *.pfx
+.secrets/
 
 # --- Mail data (safety net in case a library or an export ends up in the repo) ---
 library.json

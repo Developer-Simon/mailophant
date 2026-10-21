@@ -48,7 +48,7 @@ can't be swapped without breaking updates: keep a backup of the private key offl
 
 Setup, once:
 
-    gh secret set FLATPAK_REPO_GPG_KEY < flatpak-repo-private.asc   # armored private key, no passphrase
+    gh secret set FLATPAK_REPO_GPG_KEY < .secrets/flatpak-repo-private.asc   # armored, no passphrase
     gh api -X POST repos/Developer-Simon/mailophant/pages -f build_type=workflow
     gh api -X POST repos/Developer-Simon/mailophant/environments/github-pages/deployment-branch-policies \
       -f name='v*' -f type=tag
